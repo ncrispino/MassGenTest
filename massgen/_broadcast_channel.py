@@ -1,0 +1,316 @@
+# -*- coding: utf-8 -*-
+"""Broadcast channel for agent-to-agent and agent-to-human communication."""
+
+import asyncio
+import uuid
+from datetime import datetime
+from typing import TYPE_CHECKING, Dict, List, Optional
+
+from massgen.broadcast.broadcast_dataclasses import (
+    BroadcastRequest,
+    BroadcastResponse,
+    BroadcastStatus,
+)
+
+if TYPE_CHECKING:
+    from massgen.orchestrator import Orchestrator
+
+
+class BroadcastChannel:
+    """Manages broadcast communication between agents and optionally humans.
+
+    The BroadcastChannel handles the lifecycle of broadcast requests:
+    1. Create broadcast request
+    2. Inject question into agent queues
+    3. Collect responses asynchronously
+    4. Optionally wait for responses (blocking mode)
+    5. Provide status and response retrieval
+
+    Attributes:
+        orchestrator: Reference to the orchestrator
+        active_broadcasts: Dict of request_id -> BroadcastRequest
+        broadcast_responses: Dict of request_id -> List[BroadcastResponse]
+        response_events: Dict of request_id -> asyncio.Event (signals when responses complete)
+        _lock: Lock for thread-safe operations
+    """
+
+    def __init__(self, orchestrator: "Orchestrator"):
+        """Initialize the broadcast channel.
+
+        Args:
+            orchestrator: The orchestrator managing agents
+        """
+        self.orchestrator = orchestrator
+        self.active_broadcasts: Dict[str, BroadcastRequest] = {}
+        self.broadcast_responses: Dict[str, List[BroadcastResponse]] = {}
+        self.response_events: Dict[str, asyncio.Event] = {}
+        self._lock = asyncio.Lock()
+
+    async def create_broadcast(
+        self,
+        sender_agent_id: str,
+        question: str,
+        response_mode: str = "inline",
+        timeout: Optional[int] = None,
+    ) -> str:
+        """Create a new broadcast request.
+
+        Args:
+            sender_agent_id: ID of the agent sending the broadcast
+            question: The question to broadcast
+            response_mode: How agents should respond ("inline" or "background")
+            timeout: Maximum time to wait for responses (uses config default if None)
+
+        Returns:
+            The request_id for this broadcast
+
+        Raises:
+            ValueError: If sender_agent_id doesn't exist or rate limit exceeded
+        """
+        async with self._lock:
+            # Check rate limiting
+            sender_broadcasts = [b for b in self.active_broadcasts.values() if b.sender_agent_id == sender_agent_id]
+            max_broadcasts = self.orchestrator.config.coordination_config.max_broadcasts_per_agent
+            if len(sender_broadcasts) >= max_broadcasts:
+                raise ValueError(
+                    f"Agent {sender_agent_id} has reached the maximum number of " f"active broadcasts ({max_broadcasts})",
+                )
+
+            # Create broadcast request
+            request_id = str(uuid.uuid4())
+            if timeout is None:
+                timeout = self.orchestrator.config.coordination_config.broadcast_timeout
+
+            # Count expected responses (all agents except sender + human if enabled)
+            expected_count = len(self.orchestrator.agents) - 1
+            if self.orchestrator.config.coordination_config.broadcast == "human":
+                expected_count += 1  # Human can respond
+
+            broadcast = BroadcastRequest(
+                id=request_id,
+                sender_agent_id=sender_agent_id,
+                question=question,
+                timestamp=datetime.now(),
+                response_mode=response_mode,
+                timeout=timeout,
+                expected_response_count=expected_count,
+            )
+
+            self.active_broadcasts[request_id] = broadcast
+            self.broadcast_responses[request_id] = []
+            self.response_events[request_id] = asyncio.Event()
+
+            return request_id
+
+    async def inject_into_agents(self, request_id: str) -> None:
+        """Inject broadcast question into all agents except sender.
+
+        Args:
+            request_id: ID of the broadcast request
+
+        Raises:
+            ValueError: If request_id doesn't exist
+        """
+        async with self._lock:
+            if request_id not in self.active_broadcasts:
+                raise ValueError(f"Unknown broadcast request: {request_id}")
+
+            broadcast = self.active_broadcasts[request_id]
+            broadcast.status = BroadcastStatus.COLLECTING
+
+        # Inject into all agents except sender
+        for agent_id, agent in self.orchestrator.agents.items():
+            if agent_id != broadcast.sender_agent_id:
+                await agent.inject_broadcast(broadcast)
+
+        # If human mode, prompt human
+        if self.orchestrator.config.coordination_config.broadcast == "human":
+            # Start human prompt in background (non-blocking)
+            asyncio.create_task(self._prompt_human(request_id))
+
+    async def wait_for_responses(
+        self,
+        request_id: str,
+        timeout: Optional[int] = None,
+    ) -> Dict[str, any]:
+        """Wait for responses to be collected (blocking mode).
+
+        Args:
+            request_id: ID of the broadcast request
+            timeout: Maximum time to wait (uses broadcast timeout if None)
+
+        Returns:
+            Dictionary with status and responses
+
+        Raises:
+            ValueError: If request_id doesn't exist
+        """
+        if request_id not in self.active_broadcasts:
+            raise ValueError(f"Unknown broadcast request: {request_id}")
+
+        broadcast = self.active_broadcasts[request_id]
+        if timeout is None:
+            timeout = broadcast.timeout
+
+        # Wait for responses or timeout
+        try:
+            await asyncio.wait_for(
+                self.response_events[request_id].wait(),
+                timeout=timeout,
+            )
+        except asyncio.TimeoutError:
+            async with self._lock:
+                broadcast.status = BroadcastStatus.TIMEOUT
+
+        return self.get_broadcast_responses(request_id)
+
+    async def collect_response(
+        self,
+        request_id: str,
+        responder_id: str,
+        content: str,
+        is_human: bool = False,
+    ) -> None:
+        """Collect a response from an agent or human.
+
+        Args:
+            request_id: ID of the broadcast request
+            responder_id: ID of the responder (agent ID or "human")
+            content: The response content
+            is_human: Whether this is a human response
+
+        Raises:
+            ValueError: If request_id doesn't exist
+        """
+        async with self._lock:
+            if request_id not in self.active_broadcasts:
+                raise ValueError(f"Unknown broadcast request: {request_id}")
+
+            broadcast = self.active_broadcasts[request_id]
+
+            # Create response
+            response = BroadcastResponse(
+                request_id=request_id,
+                responder_id=responder_id,
+                content=content,
+                timestamp=datetime.now(),
+                is_human=is_human,
+            )
+
+            self.broadcast_responses[request_id].append(response)
+            broadcast.responses_received += 1
+
+            # Check if all responses collected
+            if broadcast.responses_received >= broadcast.expected_response_count:
+                broadcast.status = BroadcastStatus.COMPLETE
+                self.response_events[request_id].set()
+
+    def get_broadcast_status(self, request_id: str) -> Dict[str, any]:
+        """Get the current status of a broadcast request.
+
+        Args:
+            request_id: ID of the broadcast request
+
+        Returns:
+            Dictionary with status information
+
+        Raises:
+            ValueError: If request_id doesn't exist
+        """
+        if request_id not in self.active_broadcasts:
+            raise ValueError(f"Unknown broadcast request: {request_id}")
+
+        broadcast = self.active_broadcasts[request_id]
+        responses = self.broadcast_responses.get(request_id, [])
+
+        # Determine which agents are still pending
+        responding_agent_ids = {r.responder_id for r in responses if not r.is_human}
+        all_agent_ids = {aid for aid in self.orchestrator.agents.keys() if aid != broadcast.sender_agent_id}
+        waiting_for = list(all_agent_ids - responding_agent_ids)
+
+        return {
+            "status": broadcast.status.value,
+            "response_count": broadcast.responses_received,
+            "expected_count": broadcast.expected_response_count,
+            "waiting_for": waiting_for,
+        }
+
+    def get_broadcast_responses(self, request_id: str) -> Dict[str, any]:
+        """Get responses for a broadcast request.
+
+        Args:
+            request_id: ID of the broadcast request
+
+        Returns:
+            Dictionary with status and responses
+
+        Raises:
+            ValueError: If request_id doesn't exist
+        """
+        if request_id not in self.active_broadcasts:
+            raise ValueError(f"Unknown broadcast request: {request_id}")
+
+        broadcast = self.active_broadcasts[request_id]
+        responses = self.broadcast_responses.get(request_id, [])
+
+        return {
+            "status": broadcast.status.value,
+            "responses": [r.to_dict() for r in responses],
+        }
+
+    async def _prompt_human(self, request_id: str) -> None:
+        """Prompt human for response (runs in background).
+
+        Args:
+            request_id: ID of the broadcast request
+        """
+        from loguru import logger
+
+        if request_id not in self.active_broadcasts:
+            logger.warning(f"📢 [Human] Broadcast request {request_id[:8]}... not found")
+            return
+
+        broadcast = self.active_broadcasts[request_id]
+        logger.info(f"📢 [Human] Prompting human for broadcast: {broadcast.question[:50]}...")
+
+        # Use coordination UI to prompt human
+        if hasattr(self.orchestrator, "coordination_ui") and self.orchestrator.coordination_ui:
+            try:
+                human_response = await asyncio.wait_for(
+                    self.orchestrator.coordination_ui.prompt_for_broadcast_response(broadcast),
+                    timeout=broadcast.timeout,
+                )
+
+                if human_response:
+                    logger.info(f"📢 [Human] Received response: {human_response[:50]}...")
+                    await self.collect_response(
+                        request_id=request_id,
+                        responder_id="human",
+                        content=human_response,
+                        is_human=True,
+                    )
+                else:
+                    logger.info("📢 [Human] No response provided (skipped)")
+            except asyncio.TimeoutError:
+                logger.info("📢 [Human] Timeout - no response received")
+            except Exception as e:
+                logger.error(f"📢 [Human] Error prompting for response: {e}")
+        else:
+            logger.warning("📢 [Human] No coordination_ui available for prompting")
+
+    async def cleanup_broadcast(self, request_id: str) -> None:
+        """Clean up resources for a completed broadcast.
+
+        Args:
+            request_id: ID of the broadcast request
+
+        Raises:
+            ValueError: If request_id doesn't exist
+        """
+        async with self._lock:
+            if request_id in self.active_broadcasts:
+                del self.active_broadcasts[request_id]
+            if request_id in self.broadcast_responses:
+                del self.broadcast_responses[request_id]
+            if request_id in self.response_events:
+                del self.response_events[request_id]

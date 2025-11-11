@@ -4259,6 +4259,132 @@ class RichTerminalDisplay(TerminalDisplay):
             self._flush_char_delay = char_delay
             self._flush_word_delay = word_delay
 
+    async def prompt_for_broadcast_response(self, broadcast_request: Any) -> Optional[str]:
+        """Prompt human for response to a broadcast question using Rich formatting.
+
+        Args:
+            broadcast_request: BroadcastRequest object with question details
+
+        Returns:
+            Human's response string, or None if skipped/timeout
+        """
+        import asyncio
+        import sys
+        import termios
+
+        # Pause live display to show prompt
+        live_was_active = False
+        if hasattr(self, "live") and self.live and self.live.is_started:
+            live_was_active = True
+            self.live.stop()
+            # Small delay to ensure display has fully stopped and stdin is released
+            await asyncio.sleep(0.2)
+
+        # Save current terminal settings and restore to canonical mode for input
+        # This is crucial because keyboard monitoring may have set non-blocking mode
+        saved_terminal_settings = None
+        try:
+            if sys.stdin.isatty():
+                saved_terminal_settings = termios.tcgetattr(sys.stdin.fileno())
+                # Flush any pending input before restoring canonical mode
+                # This prevents stray characters from keyboard monitoring from being read
+                termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
+                # Restore canonical mode (blocking, line-buffered input)
+                new_settings = termios.tcgetattr(sys.stdin.fileno())
+                new_settings[3] = new_settings[3] | termios.ICANON | termios.ECHO
+                new_settings[6][termios.VMIN] = 1  # Blocking read
+                new_settings[6][termios.VTIME] = 0  # No timeout
+                termios.tcsetattr(sys.stdin.fileno(), termios.TCSANOW, new_settings)
+        except Exception as e:
+            from loguru import logger
+
+            logger.warning(f"📢 [Human Input] Could not save/restore terminal settings: {e}")
+
+        try:
+            # Display broadcast notification using Rich panel
+            panel_content = Text()
+            panel_content.append(f"\n{broadcast_request.question}\n\n", style="bold cyan")
+            panel_content.append("Options:\n", style="yellow")
+            panel_content.append("  • Type your response and press Enter\n")
+            panel_content.append("  • Press Enter alone to skip\n")
+            panel_content.append(f"  • You have {broadcast_request.timeout} seconds to respond\n", style="dim")
+
+            panel = Panel(
+                panel_content,
+                title=f"📢 BROADCAST FROM {broadcast_request.sender_agent_id.upper()}",
+                border_style="cyan bold",
+                box=ROUNDED,
+            )
+
+            self.console.print("\n")
+            self.console.print(panel)
+            self.console.print()
+
+            # Ensure all output is flushed before waiting for input
+            import sys
+
+            sys.stdout.flush()
+            sys.stderr.flush()
+
+            # Use asyncio to read input with timeout
+            try:
+                response = await asyncio.wait_for(
+                    asyncio.get_event_loop().run_in_executor(
+                        None,
+                        input,
+                        "Your response (or Enter to skip): ",
+                    ),
+                    timeout=float(broadcast_request.timeout),
+                )
+
+                response = response.strip()
+                if response:
+                    self.console.print(f"\n✓ Response submitted: [green]{response[:50]}{'...' if len(response) > 50 else ''}[/green]\n")
+                    return response
+                else:
+                    self.console.print("\n⏭️  [yellow]Skipped (no response)[/yellow]\n")
+                    return None
+
+            except asyncio.TimeoutError:
+                self.console.print("\n⏱️  [red]Timeout - no response submitted[/red]\n")
+                return None
+            except EOFError as eof_err:
+                self.console.print("\n❌ [red]Error: stdin not available (EOF)[/red]\n")
+                self.console.print(f"[dim]EOFError details: {eof_err}[/dim]\n")
+                self.console.print("[dim]This can happen if the terminal is not interactive or stdin is redirected[/dim]\n")
+                # DEBUG: Log to help diagnose
+                import sys
+
+                from loguru import logger
+
+                logger.error(f"📢 [Human Input] EOFError caught - stdin.isatty()={sys.stdin.isatty()}, stdin.closed={sys.stdin.closed}")
+                return None
+            except Exception as e:
+                self.console.print(f"\n❌ [red]Error getting response: {e}[/red]\n")
+                import traceback
+
+                self.console.print(f"[dim]{traceback.format_exc()}[/dim]\n")
+                # DEBUG: Log exception type
+                from loguru import logger
+
+                logger.error(f"📢 [Human Input] Unexpected exception: {type(e).__name__}: {e}")
+                return None
+
+        finally:
+            # Restore original terminal settings if we changed them
+            if saved_terminal_settings is not None:
+                try:
+                    termios.tcsetattr(sys.stdin.fileno(), termios.TCSANOW, saved_terminal_settings)
+                except Exception as e:
+                    from loguru import logger
+
+                    logger.warning(f"📢 [Human Input] Could not restore terminal settings: {e}")
+
+            # Resume live display only if it was active before
+            if live_was_active and hasattr(self, "live") and self.live:
+                await asyncio.sleep(0.1)  # Small delay before restart
+                self.live.start()
+
 
 # Convenience function to check Rich availability
 def is_rich_available() -> bool:

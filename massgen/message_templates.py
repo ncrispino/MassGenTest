@@ -1117,6 +1117,96 @@ Based on the coordination process above, present your final answer:"""
 
         return "\n".join(parts)
 
+    def get_broadcast_guidance(
+        self,
+        broadcast_mode: str,
+        wait_by_default: bool = True,
+        response_mode: str = "inline",
+    ) -> str:
+        """Generate guidance for using broadcast/communication tools.
+
+        Args:
+            broadcast_mode: "agents" or "human"
+            wait_by_default: Whether ask_others() blocks by default
+            response_mode: "inline" or "background"
+
+        Returns:
+            Formatted guidance string to append to system messages
+        """
+        if "get_broadcast_guidance" in self._template_overrides:
+            return str(self._template_overrides["get_broadcast_guidance"])
+
+        guidance = """
+
+## Agent Communication
+
+You have access to the `ask_others()` tool for collaborative problem-solving.
+
+**IMPORTANT: You are working with other specialized agents. You can use ask_others() to
+coordinate, but be strategic about when you use it to avoid deadlocks.**
+
+**When to use ask_others():**
+- **After providing an answer**: Ask others for feedback on your approach
+- **When reviewing existing answers**: Ask questions about others' implementations
+- **When you have a specific concern**: "I see agent X used approach Y. Any issues with that?"
+- **When stuck on something specific**: "How should I handle [specific issue]?"
+
+**When NOT to use ask_others():**
+- **In the first round when no answers exist yet**: Just provide your initial answer first
+- **When you haven't contributed yet**: Provide your answer, THEN ask for feedback if needed
+- **When others might also be asking**: Check if answers exist before broadcasting
+
+**Best practice:**
+1. First, provide your `new_answer` with your best approach
+2. Then, if you want feedback or see concerns, use `ask_others()`
+3. Other agents can respond while working on their own answers
+
+**How it works:**"""
+
+        if wait_by_default:
+            guidance += """
+- Call `ask_others(question)` with your question
+- The tool blocks and waits for responses from other agents"""
+            if broadcast_mode == "human":
+                guidance += " and the human user"
+            guidance += """
+- Returns all responses immediately when ready
+- You can then continue with your task"""
+        else:
+            guidance += """
+- Call `ask_others(question, wait=False)` to send question without waiting
+- Continue working on other tasks
+- Later, check status with `check_broadcast_status(request_id)`
+- Get responses with `get_broadcast_responses(request_id)` when ready"""
+
+        guidance += """
+
+**Best practices:**
+- Be specific and actionable in your questions
+- Use when you genuinely need coordination or input
+- Only broadcast when necessary (don't overuse)
+- Respond helpfully when others ask you questions
+
+**Examples:**
+- "I'm about to refactor the User model. Any concerns or suggestions?"
+- "Does anyone know which OAuth library we're using?"
+- "I'm stuck on this authentication bug. Ideas?"
+- "Should I use approach A or approach B for this feature?"
+"""
+
+        if broadcast_mode == "human":
+            guidance += """
+**Note:** The human user may also respond to your questions alongside other agents.
+"""
+
+        if response_mode == "background":
+            guidance += """
+**Technical note:** When you receive broadcast questions, you'll respond based on a snapshot
+of your current context without interrupting your main task flow.
+"""
+
+        return guidance
+
 
 # ### IMPORTANT Evaluation Note:
 # When evaluating other agents' work, focus on the CONTENT and FUNCTIONALITY of their files.

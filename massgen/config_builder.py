@@ -2497,6 +2497,36 @@ class ConfigBuilder:
                 console.print()
                 console.print("  ✅ Agent task planning enabled - agents can create and manage task plans")
 
+            # Agent Communication / Broadcasts
+            console.print()
+            console.print("  [dim]Agent Communication: Agents can ask questions to each other and optionally humans[/dim]")
+            console.print("  [dim]• Agents can use ask_others() tool to request help or coordinate[/dim]")
+            console.print("  [dim]• Enables collaborative problem-solving during coordination[/dim]")
+            console.print("  [dim]• Human can optionally participate in agent discussions[/dim]")
+            console.print()
+
+            broadcast_input = Prompt.ask(
+                "  [prompt]Enable agent communication?[/prompt]",
+                choices=["n", "a", "h"],
+                default="n",
+                show_choices=False,
+            )
+
+            console.print("  [dim]Choices: (n) No / (a) Agent-to-agent only / (h) Include human prompts[/dim]")
+
+            if broadcast_input == "a":
+                if "coordination" not in orchestrator_config:
+                    orchestrator_config["coordination"] = {}
+                orchestrator_config["coordination"]["broadcast"] = "agents"
+                console.print()
+                console.print("  ✅ Agent-to-agent communication enabled - agents can coordinate with each other")
+            elif broadcast_input == "h":
+                if "coordination" not in orchestrator_config:
+                    orchestrator_config["coordination"] = {}
+                orchestrator_config["coordination"]["broadcast"] = "human"
+                console.print()
+                console.print("  ✅ Agent and human communication enabled - you'll be prompted when agents ask questions")
+
             # Orchestration Restart Feature
             console.print()
             console.print("  [dim]Orchestration Restart: Automatic quality checks with self-correction[/dim]")

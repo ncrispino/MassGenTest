@@ -29,6 +29,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Optional
 
+from ._broadcast_channel import BroadcastChannel
 from .agent_config import AgentConfig
 from .backend.base import StreamChunk
 from .chat_agent import ChatAgent
@@ -36,6 +37,7 @@ from .coordination_tracker import CoordinationTracker
 
 if TYPE_CHECKING:
     from .dspy_paraphraser import QuestionParaphraser
+
 from .logger_config import get_log_session_dir  # Import to get log directory
 from .logger_config import logger  # Import logger directly for INFO logging
 from .logger_config import (
@@ -163,11 +165,15 @@ class Orchestrator(ChatAgent):
             voting_sensitivity=self.config.voting_sensitivity,
             answer_novelty_requirement=self.config.answer_novelty_requirement,
         )
-        # Create workflow tools for agents (vote and new_answer) using new toolkit system
+        # Create workflow tools for agents (vote, new_answer, and optionally broadcast)
+        # Will be updated with broadcast tools after coordination config is set
         self.workflow_tools = get_workflow_tools(
             valid_agent_ids=list(agents.keys()),
             template_overrides=getattr(self.message_templates, "_template_overrides", {}),
             api_format="chat_completions",  # Default format, will be overridden per backend
+            orchestrator=self,  # Pass self for broadcast tools
+            broadcast_mode=False,  # Will be updated if broadcasts enabled
+            broadcast_wait_by_default=True,
         )
 
         # MassGen-specific state
@@ -241,6 +247,16 @@ class Orchestrator(ChatAgent):
                 # Update MCP config with agent_id for Docker mode (must be after setup_orchestration_paths)
                 agent.backend.filesystem_manager.update_backend_mcp_config(agent.backend.config)
 
+        # Initialize broadcast channel for agent-to-agent communication
+        self.broadcast_channel = BroadcastChannel(self)
+        logger.info("[Orchestrator] Broadcast channel initialized")
+
+        # Set orchestrator reference on all agents
+        for agent_id, agent in self.agents.items():
+            if hasattr(agent, "_orchestrator"):
+                agent._orchestrator = self
+                logger.debug(f"[Orchestrator] Set orchestrator reference on agent: {agent_id}")
+
         # Inject planning tools if enabled
         logger.info(f"[Orchestrator] Checking planning config: coordination_config exists={hasattr(self.config, 'coordination_config')}")
         if hasattr(self.config, "coordination_config") and hasattr(self.config.coordination_config, "enable_agent_task_planning"):
@@ -251,6 +267,26 @@ class Orchestrator(ChatAgent):
                 logger.info("[Orchestrator] Planning tools injection complete")
         else:
             logger.info("[Orchestrator] Planning config not found or disabled")
+
+        # Update workflow tools with broadcast if enabled
+        if hasattr(self.config, "coordination_config") and hasattr(self.config.coordination_config, "broadcast"):
+            broadcast_mode = self.config.coordination_config.broadcast
+            if broadcast_mode and broadcast_mode is not False:
+                logger.info(f"[Orchestrator] Broadcasting enabled (mode: {broadcast_mode}). Adding broadcast tools to workflow")
+                # Recreate workflow tools with broadcast enabled
+                self.workflow_tools = get_workflow_tools(
+                    valid_agent_ids=list(self.agents.keys()),
+                    template_overrides=getattr(self.message_templates, "_template_overrides", {}),
+                    api_format="chat_completions",  # Default, overridden per backend
+                    orchestrator=self,
+                    broadcast_mode=broadcast_mode,
+                    broadcast_wait_by_default=self.config.coordination_config.broadcast_wait_by_default,
+                )
+                logger.info(f"[Orchestrator] Broadcast tools added to workflow ({len(self.workflow_tools)} total tools)")
+            else:
+                logger.info("[Orchestrator] Broadcasting disabled")
+        else:
+            logger.info("[Orchestrator] Broadcast config not found")
 
     async def _prepare_paraphrases_for_agents(self, question: str) -> None:
         """Generate and assign DSPy paraphrases for the current question."""
@@ -2244,6 +2280,22 @@ Your answer:"""
                 agent_system_message = f"{agent_system_message}{planning_instructions}" if agent_system_message else planning_instructions.strip()
                 print(f"📝 [{agent_id}] Adding planning mode instructions to system message", flush=True)
 
+            # Add broadcast communication guidance if enabled
+            if (
+                self.config
+                and hasattr(self.config, "coordination_config")
+                and self.config.coordination_config
+                and self.config.coordination_config.broadcast
+                and self.config.coordination_config.broadcast is not False
+            ):
+                broadcast_guidance = self.message_templates.get_broadcast_guidance(
+                    broadcast_mode=self.config.coordination_config.broadcast,
+                    wait_by_default=self.config.coordination_config.broadcast_wait_by_default,
+                    response_mode=self.config.coordination_config.broadcast_response_mode,
+                )
+                agent_system_message = f"{agent_system_message}{broadcast_guidance}" if agent_system_message else broadcast_guidance.strip()
+                print(f"📢 [{agent_id}] Adding broadcast communication guidance to system message", flush=True)
+
             # Build conversation with context support
             if conversation_context and conversation_context.get("conversation_history"):
                 # Use conversation context-aware building
@@ -2317,6 +2369,16 @@ Your answer:"""
             if self.config.coordination_config.enable_agent_task_planning:
                 planning_guidance = self.message_templates.get_planning_guidance()
                 system_message = system_message + planning_guidance
+
+            # Add broadcast guidance if enabled
+            if self.config.coordination_config.broadcast and self.config.coordination_config.broadcast is not False:
+                broadcast_guidance = self.message_templates.get_broadcast_guidance(
+                    broadcast_mode=self.config.coordination_config.broadcast,
+                    wait_by_default=self.config.coordination_config.broadcast_wait_by_default,
+                    response_mode=self.config.coordination_config.broadcast_response_mode,
+                )
+                system_message = system_message + broadcast_guidance
+                logger.info(f"📢 [{agent_id}] Added broadcast guidance to system message")
 
             conversation_messages = [
                 {"role": "system", "content": system_message},
@@ -2495,6 +2557,16 @@ Your answer:"""
                                     "content",
                                     f"🗳️ Voting for [{real_agent_id}] (options: {', '.join(sorted(answers.keys()))}) : {reason}",
                                 )
+                            elif tool_name == "ask_others":
+                                # Broadcast tool - display but don't process yet (will be handled below)
+                                question = tool_args.get("question", "")
+                                yield ("content", f"📢 Asking others: {question[:80]}...")
+                                log_tool_call(agent_id, "ask_others", tool_args, None, backend_name)
+                            elif tool_name in ["check_broadcast_status", "get_broadcast_responses"]:
+                                # Polling broadcast tools - display but don't process yet
+                                request_id = tool_args.get("request_id", "")
+                                yield ("content", f"📢 Checking broadcast {request_id[:8]}...")
+                                log_tool_call(agent_id, tool_name, tool_args, None, backend_name)
                             else:
                                 yield ("content", f"🔧 Using {tool_name}")
                                 log_tool_call(agent_id, tool_name, tool_args, None, backend_name)
@@ -2778,6 +2850,84 @@ Your answer:"""
                             yield ("result", ("answer", content))
                             yield ("done", None)
                             return
+                        elif tool_name == "ask_others":
+                            # Handle broadcast request
+                            # NOTE: Don't set workflow_tool_found=True so agent continues working
+                            question = tool_args.get("question", "")
+                            wait = tool_args.get("wait")
+                            if wait is None:
+                                wait = self.config.coordination_config.broadcast_wait_by_default
+
+                            try:
+                                # Create and inject broadcast
+                                request_id = await self.broadcast_channel.create_broadcast(
+                                    sender_agent_id=agent_id,
+                                    question=question,
+                                )
+                                await self.broadcast_channel.inject_into_agents(request_id)
+
+                                # Track event
+                                self.coordination_tracker.add_broadcast_created(
+                                    request_id=request_id,
+                                    sender_id=agent_id,
+                                    question=question,
+                                )
+
+                                if wait:
+                                    # Blocking mode: wait for responses
+                                    logger.info(f"📢 [{agent_id}] Waiting for broadcast responses (request: {request_id[:8]}...)")
+                                    broadcast_timeout = self.config.coordination_config.broadcast_timeout
+                                    result = await self.broadcast_channel.wait_for_responses(request_id, timeout=broadcast_timeout)
+                                    self.coordination_tracker.add_broadcast_complete(request_id, result["status"])
+
+                                    logger.info(f"📢 [{agent_id}] Received {len(result.get('responses', []))} broadcast response(s)")
+
+                                    # Return responses to agent
+                                    tool_result = {
+                                        "status": result["status"],
+                                        "responses": result["responses"],
+                                    }
+                                else:
+                                    # Polling mode: return request_id immediately
+                                    tool_result = {
+                                        "request_id": request_id,
+                                        "status": "pending",
+                                    }
+
+                                # Return tool result
+                                yield ("result", ("ask_others", tool_result))
+                                # Don't return - agent continues working after broadcast
+                            except Exception as e:
+                                error_msg = f"Broadcast failed: {str(e)}"
+                                yield ("content", f"❌ {error_msg}")
+                                tool_result = {"error": error_msg, "status": "error"}
+                                yield ("result", ("ask_others", tool_result))
+
+                        elif tool_name == "check_broadcast_status":
+                            # Check broadcast status (polling mode)
+                            workflow_tool_found = True
+                            request_id = tool_args.get("request_id", "")
+
+                            try:
+                                status = self.broadcast_channel.get_broadcast_status(request_id)
+                                yield ("result", ("check_broadcast_status", status))
+                            except Exception as e:
+                                error_result = {"error": str(e), "status": "error"}
+                                yield ("result", ("check_broadcast_status", error_result))
+
+                        elif tool_name == "get_broadcast_responses":
+                            # Get broadcast responses (polling mode)
+                            workflow_tool_found = True
+                            request_id = tool_args.get("request_id", "")
+
+                            try:
+                                responses = self.broadcast_channel.get_broadcast_responses(request_id)
+                                self.coordination_tracker.add_broadcast_complete(request_id, responses["status"])
+                                yield ("result", ("get_broadcast_responses", responses))
+                            except Exception as e:
+                                error_result = {"error": str(e), "status": "error"}
+                                yield ("result", ("get_broadcast_responses", error_result))
+
                         elif tool_name.startswith("mcp"):
                             pass
                         elif tool_name.startswith("custom_tool"):

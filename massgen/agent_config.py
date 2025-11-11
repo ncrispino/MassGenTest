@@ -44,6 +44,17 @@ class CoordinationConfig:
                                     to break down complex work, track progress, and coordinate
                                     based on dependencies.
         max_tasks_per_plan: Maximum number of tasks allowed in an agent's task plan.
+        broadcast: Broadcast mode for agent-to-agent communication.
+                  - False: Broadcasting disabled (default)
+                  - "agents": Agent-to-agent communication only
+                  - "human": Agents can ask agents + human (human gets prompted)
+        broadcast_timeout: Maximum time to wait for broadcast responses (seconds).
+        broadcast_wait_by_default: If True, ask_others() blocks until responses collected (blocking mode).
+                                   If False, ask_others() returns immediately for polling (polling mode).
+        broadcast_response_mode: How agents should respond to broadcasts.
+                                - "inline": Inject question into current conversation context
+                                - "background": Separate LLM call with context snapshot
+        max_broadcasts_per_agent: Maximum number of active broadcasts per agent.
     """
 
     enable_planning_mode: bool = False
@@ -53,6 +64,11 @@ class CoordinationConfig:
     max_orchestration_restarts: int = 0
     enable_agent_task_planning: bool = False
     max_tasks_per_plan: int = 10
+    broadcast: Any = False  # False | "agents" | "human"
+    broadcast_timeout: int = 300
+    broadcast_wait_by_default: bool = True
+    broadcast_response_mode: str = "inline"  # "inline" | "background"
+    max_broadcasts_per_agent: int = 10
 
 
 @dataclass

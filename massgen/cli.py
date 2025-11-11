@@ -1299,6 +1299,11 @@ async def run_question_with_history(
             max_orchestration_restarts=coord_cfg.get("max_orchestration_restarts", 0),
             enable_agent_task_planning=coord_cfg.get("enable_agent_task_planning", False),
             max_tasks_per_plan=coord_cfg.get("max_tasks_per_plan", 10),
+            broadcast=coord_cfg.get("broadcast", False),
+            broadcast_timeout=coord_cfg.get("broadcast_timeout", 300),
+            broadcast_wait_by_default=coord_cfg.get("broadcast_wait_by_default", True),
+            broadcast_response_mode=coord_cfg.get("broadcast_response_mode", "inline"),
+            max_broadcasts_per_agent=coord_cfg.get("max_broadcasts_per_agent", 10),
         )
 
     # Get previous turns and winning agents history from session_info if already loaded,
@@ -1333,6 +1338,7 @@ async def run_question_with_history(
         display_type=ui_config.get("display_type", "rich_terminal"),
         logging_enabled=ui_config.get("logging_enabled", True),
         enable_final_presentation=True,  # Required for multi-turn: ensures final answer is saved
+        automation_mode=ui_config.get("automation_mode", False),
     )
 
     # Determine display mode text
@@ -1355,6 +1361,11 @@ async def run_question_with_history(
                 ),
                 enable_agent_task_planning=coordination_settings.get("enable_agent_task_planning", False),
                 max_tasks_per_plan=coordination_settings.get("max_tasks_per_plan", 10),
+                broadcast=coordination_settings.get("broadcast", False),
+                broadcast_timeout=coordination_settings.get("broadcast_timeout", 300),
+                broadcast_wait_by_default=coordination_settings.get("broadcast_wait_by_default", True),
+                broadcast_response_mode=coordination_settings.get("broadcast_response_mode", "inline"),
+                max_broadcasts_per_agent=coordination_settings.get("max_broadcasts_per_agent", 10),
             )
 
     print(f"\n🤖 {BRIGHT_CYAN}{mode_text}{RESET}", flush=True)
@@ -1407,6 +1418,7 @@ async def run_question_with_history(
                 display_type=ui_config.get("display_type", "rich_terminal"),
                 logging_enabled=ui_config.get("logging_enabled", True),
                 enable_final_presentation=True,
+                automation_mode=ui_config.get("automation_mode", False),
             )
 
             # Continue to next attempt
@@ -1585,6 +1597,11 @@ async def run_single_question(
                 ),
                 enable_agent_task_planning=coordination_settings.get("enable_agent_task_planning", False),
                 max_tasks_per_plan=coordination_settings.get("max_tasks_per_plan", 10),
+                broadcast=coordination_settings.get("broadcast", False),
+                broadcast_timeout=coordination_settings.get("broadcast_timeout", 300),
+                broadcast_wait_by_default=coordination_settings.get("broadcast_wait_by_default", True),
+                broadcast_response_mode=coordination_settings.get("broadcast_response_mode", "inline"),
+                max_broadcasts_per_agent=coordination_settings.get("max_broadcasts_per_agent", 10),
             )
 
         # Get orchestrator parameters from config
@@ -1627,6 +1644,11 @@ async def run_single_question(
                 max_orchestration_restarts=coord_cfg.get("max_orchestration_restarts", 0),
                 enable_agent_task_planning=coord_cfg.get("enable_agent_task_planning", False),
                 max_tasks_per_plan=coord_cfg.get("max_tasks_per_plan", 10),
+                broadcast=coord_cfg.get("broadcast", False),
+                broadcast_timeout=coord_cfg.get("broadcast_timeout", 300),
+                broadcast_wait_by_default=coord_cfg.get("broadcast_wait_by_default", True),
+                broadcast_response_mode=coord_cfg.get("broadcast_response_mode", "inline"),
+                max_broadcasts_per_agent=coord_cfg.get("max_broadcasts_per_agent", 10),
             )
 
         orchestrator = Orchestrator(
