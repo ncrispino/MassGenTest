@@ -1142,24 +1142,35 @@ Based on the coordination process above, present your final answer:"""
 
 You have access to the `ask_others()` tool for collaborative problem-solving.
 
-**IMPORTANT: You are working with other specialized agents. You can use ask_others() to
-coordinate, but be strategic about when you use it to avoid deadlocks.**
+**IMPORTANT: Call ask_others() when you need input, coordination, or collaboration from other agents"""
+        if broadcast_mode == "human":
+            guidance += " and the human user"
+        guidance += """. Use it strategically to work effectively as a team.**
 
 **When to use ask_others():**
+- **When the user explicitly asks you to**: If the prompt says "ask_others for..." then CALL THE TOOL
+- **Before making a key decision**: "Which framework should we use: Next.js or React?"
+- **When you need clarification**: "What's our approach for authentication?"
 - **After providing an answer**: Ask others for feedback on your approach
 - **When reviewing existing answers**: Ask questions about others' implementations
-- **When you have a specific concern**: "I see agent X used approach Y. Any issues with that?"
 - **When stuck on something specific**: "How should I handle [specific issue]?"
 
 **When NOT to use ask_others():**
-- **In the first round when no answers exist yet**: Just provide your initial answer first
-- **When you haven't contributed yet**: Provide your answer, THEN ask for feedback if needed
-- **When others might also be asking**: Check if answers exist before broadcasting
+- **For rhetorical questions**: Don't ask if you don't need actual responses
+- **When the answer is obvious**: Use your judgment on what needs coordination
+- **Repeatedly on the same topic**: One broadcast per decision is usually enough
 
-**Best practice:**
-1. First, provide your `new_answer` with your best approach
-2. Then, if you want feedback or see concerns, use `ask_others()`
-3. Other agents can respond while working on their own answers
+**Best practices for timing:**
+- **User says "ask_others"**: Call the tool immediately as requested
+- **Need input before deciding**: Ask first, then provide your answer based on responses
+- **Want feedback on your work**: Provide answer first, then ask for feedback
+- **Use your judgment**: You can ask at any point when collaboration would help
+
+**IMPORTANT: Include broadcast responses in your answer:**
+When you receive responses from ask_others(), INCLUDE THEM in your new_answer() text file:
+- Example: "I asked others about the framework choice. The response was: Vue. Based on this input, I will..."
+- This ensures the information persists if your execution is restarted
+- Check your answer file before calling ask_others() again - if you already documented the response, use it instead of asking again
 
 **How it works:**"""
 
@@ -1184,14 +1195,15 @@ coordinate, but be strategic about when you use it to avoid deadlocks.**
 **Best practices:**
 - Be specific and actionable in your questions
 - Use when you genuinely need coordination or input
-- Only broadcast when necessary (don't overuse)
+- Actually CALL THE TOOL (don't just mention it in your answer text)
 - Respond helpfully when others ask you questions
 
-**Examples:**
+**Examples of good questions:**
+- "Which framework should we use for this project: Next.js, Nuxt, or SvelteKit?"
 - "I'm about to refactor the User model. Any concerns or suggestions?"
 - "Does anyone know which OAuth library we're using?"
 - "I'm stuck on this authentication bug. Ideas?"
-- "Should I use approach A or approach B for this feature?"
+- "Should I implement approach A (faster) or approach B (more maintainable)?"
 """
 
         if broadcast_mode == "human":

@@ -3,6 +3,7 @@
 Broadcast toolkit for agent-to-agent and agent-to-human communication.
 """
 
+import json
 from typing import Any, Dict, List, Optional
 
 from .base import BaseToolkit, ToolType
@@ -79,16 +80,19 @@ class BroadcastToolkit(BaseToolkit):
             ask_others_tool = {
                 "name": "ask_others",
                 "description": (
-                    "Ask a question to other agents"
+                    "Call this tool to ask a question to other agents"
                     + (" and the human user" if self.broadcast_mode == "human" else "")
-                    + " for collaborative problem-solving. Use this to coordinate, get input, or discuss approaches."
+                    + " for collaborative problem-solving. Use this when you need input, coordination, or decisions from the team. "
+                    + "Example: ask_others(question='Which framework should we use: Next.js or Nuxt?')"
                 ),
                 "input_schema": {
                     "type": "object",
                     "properties": {
                         "question": {
                             "type": "string",
-                            "description": "Your question for other agents (be specific and actionable)",
+                            "description": "Your specific, actionable question for other agents"
+                            + (" and the human user" if self.broadcast_mode == "human" else "")
+                            + ". Be clear about what you need.",
                         },
                         "wait": {
                             "type": "boolean",
@@ -107,16 +111,19 @@ class BroadcastToolkit(BaseToolkit):
                 "function": {
                     "name": "ask_others",
                     "description": (
-                        "Ask a question to other agents"
+                        "Call this tool to ask a question to other agents"
                         + (" and the human user" if self.broadcast_mode == "human" else "")
-                        + " for collaborative problem-solving. Use this to coordinate, get input, or discuss approaches."
+                        + " for collaborative problem-solving. Use this when you need input, coordination, or decisions from the team. "
+                        + "Example: ask_others(question='Which framework should we use: Next.js or Nuxt?')"
                     ),
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "question": {
                                 "type": "string",
-                                "description": "Your question for other agents (be specific and actionable)",
+                                "description": "Your specific, actionable question for other agents"
+                                + (" and the human user" if self.broadcast_mode == "human" else "")
+                                + ". Be clear about what you need.",
                             },
                             "wait": {
                                 "type": "boolean",
@@ -127,6 +134,7 @@ class BroadcastToolkit(BaseToolkit):
                         },
                         "required": ["question"],
                     },
+                    "strict": True,
                 },
             }
 
@@ -208,3 +216,88 @@ class BroadcastToolkit(BaseToolkit):
             tools.append(get_responses_tool)
 
         return tools
+
+    @property
+    def requires_human_input(self) -> bool:
+        """Check if broadcast tools require human input based on mode."""
+        return self.broadcast_mode == "human"
+
+    async def execute_ask_others(self, arguments: str, agent_id: str) -> str:
+        """
+        Execute ask_others tool - to be called by backend custom tool execution.
+
+        Args:
+            arguments: JSON string with question and wait parameters
+            agent_id: ID of the calling agent
+
+        Returns:
+            JSON string with broadcast responses
+        """
+        # Parse arguments
+        args = json.loads(arguments) if isinstance(arguments, str) else arguments
+        question = args.get("question", "")
+        wait = args.get("wait")
+        if wait is None:
+            wait = self.wait_by_default
+
+        # Create and inject broadcast
+        request_id = await self.orchestrator.broadcast_channel.create_broadcast(
+            sender_agent_id=agent_id,
+            question=question,
+        )
+        await self.orchestrator.broadcast_channel.inject_into_agents(request_id)
+
+        if wait:
+            # Blocking mode: wait for responses from agents and/or human
+            result = await self.orchestrator.broadcast_channel.wait_for_responses(
+                request_id,
+                timeout=self.orchestrator.config.coordination_config.broadcast_timeout,
+            )
+            return json.dumps(
+                {
+                    "status": result["status"],
+                    "responses": result["responses"],
+                },
+            )
+        else:
+            # Polling mode: return request_id immediately
+            return json.dumps(
+                {
+                    "request_id": request_id,
+                    "status": "pending",
+                },
+            )
+
+    async def execute_check_broadcast_status(self, arguments: str, agent_id: str) -> str:
+        """
+        Execute check_broadcast_status tool.
+
+        Args:
+            arguments: JSON string with request_id
+            agent_id: ID of the calling agent
+
+        Returns:
+            JSON string with broadcast status
+        """
+        args = json.loads(arguments) if isinstance(arguments, str) else arguments
+        request_id = args.get("request_id", "")
+
+        status = self.orchestrator.broadcast_channel.get_broadcast_status(request_id)
+        return json.dumps(status)
+
+    async def execute_get_broadcast_responses(self, arguments: str, agent_id: str) -> str:
+        """
+        Execute get_broadcast_responses tool.
+
+        Args:
+            arguments: JSON string with request_id
+            agent_id: ID of the calling agent
+
+        Returns:
+            JSON string with broadcast responses
+        """
+        args = json.loads(arguments) if isinstance(arguments, str) else arguments
+        request_id = args.get("request_id", "")
+
+        responses = self.orchestrator.broadcast_channel.get_broadcast_responses(request_id)
+        return json.dumps(responses)

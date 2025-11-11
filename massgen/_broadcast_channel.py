@@ -123,10 +123,11 @@ class BroadcastChannel:
             if agent_id != broadcast.sender_agent_id:
                 await agent.inject_broadcast(broadcast)
 
-        # If human mode, prompt human
+        # If human mode, prompt human (BLOCKS until human responds or timeout)
         if self.orchestrator.config.coordination_config.broadcast == "human":
-            # Start human prompt in background (non-blocking)
-            asyncio.create_task(self._prompt_human(request_id))
+            # Await the human prompt to make it truly blocking
+            # This pauses all agent execution until the human responds
+            await self._prompt_human(request_id)
 
     async def wait_for_responses(
         self,
@@ -259,7 +260,7 @@ class BroadcastChannel:
         }
 
     async def _prompt_human(self, request_id: str) -> None:
-        """Prompt human for response (runs in background).
+        """Prompt human for response (BLOCKING - pauses all agent execution).
 
         Args:
             request_id: ID of the broadcast request

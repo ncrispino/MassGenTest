@@ -578,7 +578,40 @@ class CustomToolAndMCPBackend(LLMBackend):
         """
         import json
 
-        # Parse arguments
+        tool_name = call.get("name", "")
+
+        # Check if this is a broadcast tool - handle specially
+        if tool_name in ("ask_others", "check_broadcast_status", "get_broadcast_responses") and hasattr(self, "_broadcast_toolkit"):
+            # Parse arguments
+            arguments = call["arguments"] if isinstance(call["arguments"], str) else json.dumps(call["arguments"])
+            agent_id = self.agent_id if hasattr(self, "agent_id") and self.agent_id else "unknown"
+
+            # Call broadcast toolkit method
+            try:
+                if tool_name == "ask_others":
+                    result = await self._broadcast_toolkit.execute_ask_others(arguments, agent_id)
+                elif tool_name == "check_broadcast_status":
+                    result = await self._broadcast_toolkit.execute_check_broadcast_status(arguments, agent_id)
+                elif tool_name == "get_broadcast_responses":
+                    result = await self._broadcast_toolkit.execute_get_broadcast_responses(arguments, agent_id)
+
+                # Yield final result
+                yield CustomToolChunk(
+                    data=result,
+                    completed=True,
+                    accumulated_result=result,
+                )
+                return
+            except Exception as e:
+                error_result = json.dumps({"error": str(e), "status": "error"})
+                yield CustomToolChunk(
+                    data=error_result,
+                    completed=True,
+                    accumulated_result=error_result,
+                )
+                return
+
+        # Parse arguments for regular custom tools
         arguments = json.loads(call["arguments"]) if isinstance(call["arguments"], str) else call["arguments"]
 
         # Ensure agent_cwd is always injected if filesystem_manager is available

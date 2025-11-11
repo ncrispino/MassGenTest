@@ -283,10 +283,54 @@ class Orchestrator(ChatAgent):
                     broadcast_wait_by_default=self.config.coordination_config.broadcast_wait_by_default,
                 )
                 logger.info(f"[Orchestrator] Broadcast tools added to workflow ({len(self.workflow_tools)} total tools)")
+
+                # Register broadcast tools as custom tools with backends for recursive execution
+                self._register_broadcast_custom_tools(broadcast_mode, self.config.coordination_config.broadcast_wait_by_default)
             else:
                 logger.info("[Orchestrator] Broadcasting disabled")
         else:
             logger.info("[Orchestrator] Broadcast config not found")
+
+    def _register_broadcast_custom_tools(self, broadcast_mode: str, wait_by_default: bool) -> None:
+        """
+        Register broadcast tools as custom tools with all agent backends.
+
+        This allows broadcast tools to be executed recursively by the backend,
+        avoiding the need for orchestrator-level tool handling.
+
+        Args:
+            broadcast_mode: "agents" or "human"
+            wait_by_default: Default waiting behavior for broadcasts
+        """
+        from .tool.workflow_toolkits.broadcast import BroadcastToolkit
+
+        # Create broadcast toolkit instance
+        broadcast_toolkit = BroadcastToolkit(
+            orchestrator=self,
+            broadcast_mode=broadcast_mode,
+            wait_by_default=wait_by_default,
+        )
+
+        # Register with each agent's backend as custom tool functions
+        for agent_id, agent in self.agents.items():
+            backend = agent.backend
+
+            # Check if backend supports custom tool registration
+            if not hasattr(backend, "custom_tool_manager"):
+                logger.warning(f"[Orchestrator] Agent {agent_id} backend doesn't support custom tool manager - broadcast tools will use orchestrator handling")
+                continue
+
+            # Register ask_others as a custom tool
+            if not hasattr(backend, "_broadcast_toolkit"):
+                backend._broadcast_toolkit = broadcast_toolkit
+                backend._custom_tool_names.add("ask_others")
+                logger.info(f"[Orchestrator] Registered ask_others as custom tool for agent {agent_id}")
+
+            # Register polling tools if needed
+            if not wait_by_default:
+                backend._custom_tool_names.add("check_broadcast_status")
+                backend._custom_tool_names.add("get_broadcast_responses")
+                logger.info(f"[Orchestrator] Registered polling broadcast tools for agent {agent_id}")
 
     async def _prepare_paraphrases_for_agents(self, question: str) -> None:
         """Generate and assign DSPy paraphrases for the current question."""
@@ -2558,12 +2602,12 @@ Your answer:"""
                                     f"🗳️ Voting for [{real_agent_id}] (options: {', '.join(sorted(answers.keys()))}) : {reason}",
                                 )
                             elif tool_name == "ask_others":
-                                # Broadcast tool - display but don't process yet (will be handled below)
+                                # Broadcast tool - handled as custom tool by backend
                                 question = tool_args.get("question", "")
                                 yield ("content", f"📢 Asking others: {question[:80]}...")
                                 log_tool_call(agent_id, "ask_others", tool_args, None, backend_name)
                             elif tool_name in ["check_broadcast_status", "get_broadcast_responses"]:
-                                # Polling broadcast tools - display but don't process yet
+                                # Polling broadcast tools - handled as custom tools by backend
                                 request_id = tool_args.get("request_id", "")
                                 yield ("content", f"📢 Checking broadcast {request_id[:8]}...")
                                 log_tool_call(agent_id, tool_name, tool_args, None, backend_name)
@@ -2850,83 +2894,10 @@ Your answer:"""
                             yield ("result", ("answer", content))
                             yield ("done", None)
                             return
-                        elif tool_name == "ask_others":
-                            # Handle broadcast request
-                            # NOTE: Don't set workflow_tool_found=True so agent continues working
-                            question = tool_args.get("question", "")
-                            wait = tool_args.get("wait")
-                            if wait is None:
-                                wait = self.config.coordination_config.broadcast_wait_by_default
-
-                            try:
-                                # Create and inject broadcast
-                                request_id = await self.broadcast_channel.create_broadcast(
-                                    sender_agent_id=agent_id,
-                                    question=question,
-                                )
-                                await self.broadcast_channel.inject_into_agents(request_id)
-
-                                # Track event
-                                self.coordination_tracker.add_broadcast_created(
-                                    request_id=request_id,
-                                    sender_id=agent_id,
-                                    question=question,
-                                )
-
-                                if wait:
-                                    # Blocking mode: wait for responses
-                                    logger.info(f"📢 [{agent_id}] Waiting for broadcast responses (request: {request_id[:8]}...)")
-                                    broadcast_timeout = self.config.coordination_config.broadcast_timeout
-                                    result = await self.broadcast_channel.wait_for_responses(request_id, timeout=broadcast_timeout)
-                                    self.coordination_tracker.add_broadcast_complete(request_id, result["status"])
-
-                                    logger.info(f"📢 [{agent_id}] Received {len(result.get('responses', []))} broadcast response(s)")
-
-                                    # Return responses to agent
-                                    tool_result = {
-                                        "status": result["status"],
-                                        "responses": result["responses"],
-                                    }
-                                else:
-                                    # Polling mode: return request_id immediately
-                                    tool_result = {
-                                        "request_id": request_id,
-                                        "status": "pending",
-                                    }
-
-                                # Return tool result
-                                yield ("result", ("ask_others", tool_result))
-                                # Don't return - agent continues working after broadcast
-                            except Exception as e:
-                                error_msg = f"Broadcast failed: {str(e)}"
-                                yield ("content", f"❌ {error_msg}")
-                                tool_result = {"error": error_msg, "status": "error"}
-                                yield ("result", ("ask_others", tool_result))
-
-                        elif tool_name == "check_broadcast_status":
-                            # Check broadcast status (polling mode)
-                            workflow_tool_found = True
-                            request_id = tool_args.get("request_id", "")
-
-                            try:
-                                status = self.broadcast_channel.get_broadcast_status(request_id)
-                                yield ("result", ("check_broadcast_status", status))
-                            except Exception as e:
-                                error_result = {"error": str(e), "status": "error"}
-                                yield ("result", ("check_broadcast_status", error_result))
-
-                        elif tool_name == "get_broadcast_responses":
-                            # Get broadcast responses (polling mode)
-                            workflow_tool_found = True
-                            request_id = tool_args.get("request_id", "")
-
-                            try:
-                                responses = self.broadcast_channel.get_broadcast_responses(request_id)
-                                self.coordination_tracker.add_broadcast_complete(request_id, responses["status"])
-                                yield ("result", ("get_broadcast_responses", responses))
-                            except Exception as e:
-                                error_result = {"error": str(e), "status": "error"}
-                                yield ("result", ("get_broadcast_responses", error_result))
+                        elif tool_name in ("ask_others", "check_broadcast_status", "get_broadcast_responses"):
+                            # Broadcast tools are now handled as custom tools by the backend
+                            # Backend will execute them recursively, no orchestrator handling needed
+                            pass
 
                         elif tool_name.startswith("mcp"):
                             pass
