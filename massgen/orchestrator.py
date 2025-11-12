@@ -273,6 +273,12 @@ class Orchestrator(ChatAgent):
             broadcast_mode = self.config.coordination_config.broadcast
             if broadcast_mode and broadcast_mode is not False:
                 logger.info(f"[Orchestrator] Broadcasting enabled (mode: {broadcast_mode}). Adding broadcast tools to workflow")
+
+                # Use blocking mode (wait=True) for both agents and human
+                # Priority system prevents deadlocks by requiring agents to respond to pending broadcasts first
+                wait_by_default = True
+                logger.info("[Orchestrator] Using blocking broadcasts (wait=True) with priority system to prevent deadlocks")
+
                 # Recreate workflow tools with broadcast enabled
                 self.workflow_tools = get_workflow_tools(
                     valid_agent_ids=list(self.agents.keys()),
@@ -280,12 +286,12 @@ class Orchestrator(ChatAgent):
                     api_format="chat_completions",  # Default, overridden per backend
                     orchestrator=self,
                     broadcast_mode=broadcast_mode,
-                    broadcast_wait_by_default=self.config.coordination_config.broadcast_wait_by_default,
+                    broadcast_wait_by_default=wait_by_default,
                 )
                 logger.info(f"[Orchestrator] Broadcast tools added to workflow ({len(self.workflow_tools)} total tools)")
 
                 # Register broadcast tools as custom tools with backends for recursive execution
-                self._register_broadcast_custom_tools(broadcast_mode, self.config.coordination_config.broadcast_wait_by_default)
+                self._register_broadcast_custom_tools(broadcast_mode, wait_by_default)
             else:
                 logger.info("[Orchestrator] Broadcasting disabled")
         else:
@@ -325,6 +331,11 @@ class Orchestrator(ChatAgent):
                 backend._broadcast_toolkit = broadcast_toolkit
                 backend._custom_tool_names.add("ask_others")
                 logger.info(f"[Orchestrator] Registered ask_others as custom tool for agent {agent_id}")
+
+            # Register respond_to_broadcast for agents mode
+            if broadcast_mode == "agents":
+                backend._custom_tool_names.add("respond_to_broadcast")
+                logger.info(f"[Orchestrator] Registered respond_to_broadcast as custom tool for agent {agent_id}")
 
             # Register polling tools if needed
             if not wait_by_default:
@@ -2332,9 +2343,13 @@ Your answer:"""
                 and self.config.coordination_config.broadcast
                 and self.config.coordination_config.broadcast is not False
             ):
+                # Use blocking mode for both agents and human (priority system prevents deadlocks)
+                broadcast_mode = self.config.coordination_config.broadcast
+                wait_by_default = True
+
                 broadcast_guidance = self.message_templates.get_broadcast_guidance(
-                    broadcast_mode=self.config.coordination_config.broadcast,
-                    wait_by_default=self.config.coordination_config.broadcast_wait_by_default,
+                    broadcast_mode=broadcast_mode,
+                    wait_by_default=wait_by_default,
                     response_mode=self.config.coordination_config.broadcast_response_mode,
                 )
                 agent_system_message = f"{agent_system_message}{broadcast_guidance}" if agent_system_message else broadcast_guidance.strip()
@@ -2416,9 +2431,13 @@ Your answer:"""
 
             # Add broadcast guidance if enabled
             if self.config.coordination_config.broadcast and self.config.coordination_config.broadcast is not False:
+                # Use blocking mode for both agents and human (priority system prevents deadlocks)
+                broadcast_mode = self.config.coordination_config.broadcast
+                wait_by_default = True
+
                 broadcast_guidance = self.message_templates.get_broadcast_guidance(
-                    broadcast_mode=self.config.coordination_config.broadcast,
-                    wait_by_default=self.config.coordination_config.broadcast_wait_by_default,
+                    broadcast_mode=broadcast_mode,
+                    wait_by_default=wait_by_default,
                     response_mode=self.config.coordination_config.broadcast_response_mode,
                 )
                 system_message = system_message + broadcast_guidance

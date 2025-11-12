@@ -614,15 +614,29 @@ class SingleAgent(ChatAgent):
         broadcast_request = await self._check_broadcast_queue()
         if broadcast_request and self._orchestrator:
             try:
-                # Handle broadcast and submit response
+                # Set tracking variables for respond_to_broadcast tool
+                self._current_broadcast_request_id = broadcast_request.id
+                self._broadcast_response_submitted = False
+
+                # Handle broadcast - agent may call respond_to_broadcast tool during execution
                 response = await self._handle_broadcast(broadcast_request)
-                await self._orchestrator.broadcast_channel.collect_response(
-                    request_id=broadcast_request.id,
-                    responder_id=self.agent_id,
-                    content=response,
-                    is_human=False,
-                )
-                logger.info(f"📢 [{self.agent_id}] Submitted broadcast response")
+
+                # Check if response was already submitted via respond_to_broadcast tool
+                if not getattr(self, "_broadcast_response_submitted", False):
+                    # Fallback: submit accumulated response if tool wasn't called
+                    await self._orchestrator.broadcast_channel.collect_response(
+                        request_id=broadcast_request.id,
+                        responder_id=self.agent_id,
+                        content=response,
+                        is_human=False,
+                    )
+                    logger.info(f"📢 [{self.agent_id}] Submitted broadcast response (fallback)")
+                else:
+                    logger.info(f"📢 [{self.agent_id}] Broadcast response already submitted via tool")
+
+                # Clear tracking variables
+                self._current_broadcast_request_id = None
+                self._broadcast_response_submitted = False
 
                 # Track response event
                 if hasattr(self._orchestrator, "coordination_tracker"):
@@ -633,6 +647,9 @@ class SingleAgent(ChatAgent):
                     )
             except Exception as e:
                 logger.error(f"📢 [{self.agent_id}] Error handling broadcast: {e}")
+                # Clear tracking variables on error
+                self._current_broadcast_request_id = None
+                self._broadcast_response_submitted = False
 
         # Retrieve relevant persistent memories if available
         # ALWAYS retrieve on reset_chat (to restore recent context after restart)
@@ -796,6 +813,23 @@ class SingleAgent(ChatAgent):
         except asyncio.QueueEmpty:
             return None
 
+    def _peek_broadcast_queue(self) -> Optional["BroadcastRequest"]:
+        """Peek at pending broadcast without consuming it.
+
+        Returns:
+            BroadcastRequest if one is pending, None otherwise
+        """
+        if self._broadcast_queue.empty():
+            return None
+        # Peek at the front item without removing it
+        # Note: This is not perfectly thread-safe but sufficient for our use case
+        # where the queue is only accessed from the agent's own execution context
+        try:
+            items = list(self._broadcast_queue._queue)
+            return items[0] if items else None
+        except (AttributeError, IndexError):
+            return None
+
     async def _handle_broadcast(
         self,
         broadcast_request: "BroadcastRequest",
@@ -832,16 +866,23 @@ class SingleAgent(ChatAgent):
         Returns:
             Response content
         """
+        # Check if we're in agents broadcast mode (respond_to_broadcast tool available)
+        has_respond_tool = hasattr(self._orchestrator, "config") and hasattr(self._orchestrator.config, "coordination_config") and self._orchestrator.config.coordination_config.broadcast == "agents"
+
         # Create system message with broadcast
+        if has_respond_tool:
+            # Agents mode: instruct to use respond_to_broadcast tool
+            instruction = (
+                "Please think about the question, then call the respond_to_broadcast tool with your answer.\n"
+                "Example: respond_to_broadcast(answer='I recommend using Hugo because it is fast and generates static sites.')"
+            )
+        else:
+            # Human mode or fallback: provide response inline
+            instruction = "Please provide a brief, helpful response to this question, then continue with your current task."
+
         broadcast_message = {
             "role": "system",
-            "content": (
-                f"\n\n━━━ QUESTION FROM {broadcast_request.sender_agent_id.upper()} ━━━\n"
-                f"{broadcast_request.question}\n\n"
-                f"Please provide a brief, helpful response to this question, "
-                f"then continue with your current task.\n"
-                f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            ),
+            "content": (f"\n\n━━━ QUESTION FROM {broadcast_request.sender_agent_id.upper()} ━━━\n" f"{broadcast_request.question}\n\n" f"{instruction}\n" f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"),
         }
 
         # Generate response

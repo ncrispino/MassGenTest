@@ -678,6 +678,9 @@ def create_agents_from_config(
         if config_path:
             backend_config["_config_path"] = config_path
 
+        # Get agent_id for AgentConfig (but don't add to backend_config to avoid duplicate kwargs)
+        agent_id = agent_data.get("id", f"agent{i}")
+
         backend = create_backend(backend_type, **backend_config)
         backend_params = {k: v for k, v in backend_config.items() if k not in ("type", "_config_path")}
 
@@ -709,7 +712,7 @@ def create_agents_from_config(
         else:
             agent_config = AgentConfig(backend_params=backend_params)
 
-        agent_config.agent_id = agent_data.get("id", f"agent{i}")
+        agent_config.agent_id = agent_id
 
         # System message handling: all backends use system_message at agent level
         system_msg = agent_data.get("system_message")

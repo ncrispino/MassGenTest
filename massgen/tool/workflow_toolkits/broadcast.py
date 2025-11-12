@@ -140,7 +140,54 @@ class BroadcastToolkit(BaseToolkit):
 
         tools.append(ask_others_tool)
 
-        # Tool 2: check_broadcast_status (only for polling mode)
+        # Tool 2: respond_to_broadcast (only for agents mode, not human mode)
+        if self.broadcast_mode == "agents":
+            if api_format == "claude":
+                respond_tool = {
+                    "name": "respond_to_broadcast",
+                    "description": (
+                        "Submit your response to a broadcast question from another agent. "
+                        "Use this tool to provide a clean, direct answer when responding to ask_others() questions. "
+                        "Example: respond_to_broadcast(answer='I recommend using Hugo because it is fast and simple.')"
+                    ),
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "answer": {
+                                "type": "string",
+                                "description": "Your complete response to the broadcast question. Be clear, concise, and directly answer what was asked.",
+                            },
+                        },
+                        "required": ["answer"],
+                    },
+                }
+            else:
+                # Chat completions format (OpenAI, etc.)
+                respond_tool = {
+                    "type": "function",
+                    "function": {
+                        "name": "respond_to_broadcast",
+                        "description": (
+                            "Submit your response to a broadcast question from another agent. "
+                            "Use this tool to provide a clean, direct answer when responding to ask_others() questions. "
+                            "Example: respond_to_broadcast(answer='I recommend using Hugo because it is fast and simple.')"
+                        ),
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "answer": {
+                                    "type": "string",
+                                    "description": "Your complete response to the broadcast question. Be clear, concise, and directly answer what was asked.",
+                                },
+                            },
+                            "required": ["answer"],
+                        },
+                        "strict": True,
+                    },
+                }
+            tools.append(respond_tool)
+
+        # Tool 3: check_broadcast_status (only for polling mode)
         if not self.wait_by_default:
             if api_format == "claude":
                 check_status_tool = {
@@ -177,7 +224,7 @@ class BroadcastToolkit(BaseToolkit):
                 }
             tools.append(check_status_tool)
 
-        # Tool 3: get_broadcast_responses
+        # Tool 4: get_broadcast_responses
         if api_format == "claude":
             get_responses_tool = {
                 "name": "get_broadcast_responses",
@@ -240,6 +287,26 @@ class BroadcastToolkit(BaseToolkit):
         if wait is None:
             wait = self.wait_by_default
 
+        # Priority check: Ensure agent responds to pending broadcasts before sending new ones
+        # This prevents deadlocks where two agents wait for each other
+        agent = self.orchestrator.agents.get(agent_id)
+        if agent and hasattr(agent, "_peek_broadcast_queue"):
+            pending_broadcast = agent._peek_broadcast_queue()
+            if pending_broadcast:
+                # Enter broadcast response mode - agent MUST respond before continuing
+                agent._current_broadcast_request_id = pending_broadcast.id
+                agent._in_broadcast_response_mode = True
+                agent._broadcast_response_submitted = False
+
+                return json.dumps(
+                    {
+                        "error": "PENDING_BROADCAST",
+                        "message": f"You have a pending broadcast to respond to from {pending_broadcast.sender_agent_id}. Please call respond_to_broadcast first before asking new questions.",
+                        "pending_from": pending_broadcast.sender_agent_id,
+                        "pending_question": pending_broadcast.question[:100],
+                    },
+                )
+
         # Create and inject broadcast
         request_id = await self.orchestrator.broadcast_channel.create_broadcast(
             sender_agent_id=agent_id,
@@ -301,3 +368,58 @@ class BroadcastToolkit(BaseToolkit):
 
         responses = self.orchestrator.broadcast_channel.get_broadcast_responses(request_id)
         return json.dumps(responses)
+
+    async def execute_respond_to_broadcast(self, arguments: str, agent_id: str) -> str:
+        """
+        Execute respond_to_broadcast tool - agent submits clean answer to broadcast.
+
+        Args:
+            arguments: JSON string with answer
+            agent_id: ID of the responding agent
+
+        Returns:
+            JSON string with confirmation
+        """
+        from loguru import logger
+
+        args = json.loads(arguments) if isinstance(arguments, str) else arguments
+        answer = args.get("answer", "")
+
+        # Get the agent's current broadcast request being handled
+        agent = self.orchestrator.agents.get(agent_id)
+        if not agent:
+            logger.warning(f"📢 [{agent_id}] Agent not found")
+            return json.dumps({"status": "error", "message": "Agent not found"})
+
+        # Check for immediate response mode (set by priority check) or turn-boundary mode
+        request_id = getattr(agent, "_current_broadcast_request_id", None)
+        if not request_id:
+            logger.warning(f"📢 [{agent_id}] No active broadcast to respond to")
+            return json.dumps({"status": "error", "message": "No active broadcast request"})
+
+        # If in immediate response mode, consume the broadcast from queue
+        in_immediate_mode = getattr(agent, "_in_broadcast_response_mode", False)
+        if in_immediate_mode:
+            # Consume the broadcast from queue since we're responding immediately
+            consumed_broadcast = await agent._check_broadcast_queue()
+            if consumed_broadcast and consumed_broadcast.id == request_id:
+                logger.info(f"📢 [{agent_id}] Consumed broadcast from queue for immediate response")
+            else:
+                logger.warning(f"📢 [{agent_id}] Broadcast queue mismatch in immediate response mode")
+
+        # Submit clean response to broadcast channel
+        await self.orchestrator.broadcast_channel.collect_response(
+            request_id=request_id,
+            responder_id=agent_id,
+            content=answer,
+            is_human=False,
+        )
+
+        logger.info(f"📢 [{agent_id}] Submitted broadcast response via tool: {answer[:80]}...")
+
+        # Mark that response has been submitted and clear response mode
+        agent._broadcast_response_submitted = True
+        agent._current_broadcast_request_id = None
+        agent._in_broadcast_response_mode = False
+
+        return json.dumps({"status": "success", "message": "Response submitted"})
