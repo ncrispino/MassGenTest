@@ -118,15 +118,15 @@ repos:
     hooks:
       - id: validate-configs
         name: Validate MassGen configuration files
-        entry: python scripts/precommit_validate_configs.py
-        language: system
+        entry: scripts/precommit_validate_configs_wrapper.sh
+        language: script
         files: ^massgen/configs/.*\.(yaml|yml)$
         exclude: ^massgen/configs/rate_limits/
         pass_filenames: true
       - id: sync-readme-pypi
         name: Auto-sync README_PYPI.md when README.md changes
-        entry: python scripts/precommit_sync_readme.py
-        language: system
+        entry: scripts/precommit_sync_readme_wrapper.sh
+        language: script
         files: ^README\.md$
         pass_filenames: false
   # - repo: local

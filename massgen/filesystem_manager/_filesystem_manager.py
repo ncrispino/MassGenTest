@@ -60,6 +60,7 @@ class FilesystemManager:
         command_line_docker_packages: Optional[Dict[str, Any]] = None,
         enable_audio_generation: bool = False,
         enable_file_generation: bool = False,
+        exclude_file_operation_mcps: bool = False,
         instance_id: Optional[str] = None,
     ):
         """
@@ -83,12 +84,15 @@ class FilesystemManager:
             command_line_docker_enable_sudo: Enable sudo access in Docker containers (isolated from host system)
             command_line_docker_credentials: Credential management configuration dict
             command_line_docker_packages: Package management configuration dict
+            exclude_file_operation_mcps: If True, exclude file operation MCP tools (filesystem and workspace_tools file ops).
+                                         Agents use command-line tools instead. Keeps command execution, media generation, and planning MCPs.
             instance_id: Optional unique instance ID for parallel execution (used in Docker container naming)
         """
         self.agent_id = None  # Will be set by orchestrator via setup_orchestration_paths
         self.instance_id = instance_id  # Unique instance ID for parallel execution
         self.enable_image_generation = enable_image_generation
         self.enable_mcp_command_line = enable_mcp_command_line
+        self.exclude_file_operation_mcps = exclude_file_operation_mcps
         self.command_line_allowed_commands = command_line_allowed_commands
         self.command_line_blocked_commands = command_line_blocked_commands
         self.command_line_execution_mode = command_line_execution_mode
@@ -517,12 +521,27 @@ class FilesystemManager:
             "cwd": str(self.cwd),
         }
 
+        # Conditionally exclude file operation tools if flag is set
+        if self.exclude_file_operation_mcps:
+            config["exclude_tools"] = [
+                "copy_file",
+                "copy_files_batch",
+                "delete_file",
+                "delete_files_batch",
+                "compare_directories",
+                "compare_files",
+            ]
+
         # Conditionally exclude image generation tools if not enabled
         if not self.enable_image_generation:
-            config["exclude_tools"] = [
-                "generate_and_store_image_with_input_images",
-                "generate_and_store_image_no_input_images",
-            ]
+            if "exclude_tools" not in config:
+                config["exclude_tools"] = []
+            config["exclude_tools"].extend(
+                [
+                    "generate_and_store_image_with_input_images",
+                    "generate_and_store_image_no_input_images",
+                ],
+            )
         if not self.enable_audio_generation:
             if "exclude_tools" not in config:
                 config["exclude_tools"] = []
@@ -597,6 +616,9 @@ class FilesystemManager:
         """
         Inject filesystem and workspace tools MCP servers into backend configuration.
 
+        When exclude_file_operation_mcps is True, skips filesystem and workspace file operation
+        tools, keeping only command execution, media generation, and planning MCPs.
+
         Args:
             backend_config: Original backend configuration
 
@@ -626,15 +648,26 @@ class FilesystemManager:
             mcp_servers = []
 
         try:
-            # Add filesystem server if missing
-            if "filesystem" not in existing_names:
+            # Add filesystem server if missing and not excluded
+            if not self.exclude_file_operation_mcps and "filesystem" not in existing_names:
                 mcp_servers.append(self.get_mcp_filesystem_config())
-            else:
+            elif not self.exclude_file_operation_mcps:
                 logger.warning("[FilesystemManager.inject_filesystem_mcp] Custom filesystem MCP server already present")
+            elif "filesystem" in existing_names:
+                logger.info("[FilesystemManager.inject_filesystem_mcp] Skipping filesystem MCP (exclude_file_operation_mcps=True)")
 
-            # Add workspace tools server if missing
+            # Add workspace tools server based on configuration
             if "workspace_tools" not in existing_names:
-                mcp_servers.append(self.get_workspace_tools_mcp_config())
+                # If file ops excluded, only add workspace_tools if media generation is enabled
+                if self.exclude_file_operation_mcps:
+                    if self.enable_image_generation or self.enable_audio_generation:
+                        mcp_servers.append(self.get_workspace_tools_mcp_config())
+                        logger.info("[FilesystemManager.inject_filesystem_mcp] Added workspace_tools MCP with media tools only (exclude_file_operation_mcps=True)")
+                    else:
+                        logger.info("[FilesystemManager.inject_filesystem_mcp] Skipping workspace_tools MCP entirely (exclude_file_operation_mcps=True, no media enabled)")
+                else:
+                    # Normal case - add all workspace tools
+                    mcp_servers.append(self.get_workspace_tools_mcp_config())
             else:
                 logger.warning("[FilesystemManager.inject_filesystem_mcp] Custom workspace_tools MCP server already present")
 

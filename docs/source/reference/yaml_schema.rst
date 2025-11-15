@@ -537,6 +537,11 @@ Backend
      - No
      - ``claude_code``
      - Working directory for file operations
+   * - ``exclude_file_operation_mcps``
+     - boolean
+     - No
+     - All with MCP support
+     - Exclude file operation MCP tools (read/write/copy/delete). Agents use command-line tools instead. Keeps command execution, media generation, and planning MCPs. (default: false)
    * - ``mcp_servers``
      - list
      - No
