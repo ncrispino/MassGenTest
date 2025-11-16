@@ -479,65 +479,29 @@ async def cleanup():
         """
         code = f'''\
 """
-MassGen Tool Registry
+MCP Server Tools
 
-This module provides tool discovery and lazy loading for MCP tools.
+Auto-generated Python wrappers for MCP tools.
 
-Available tool servers:
+Available servers:
 {chr(10).join(f"- {server}" for server in servers)}
 
 Usage:
-    # Option 1: Direct import
-    from servers.weather import get_forecast
-    forecast = get_forecast("San Francisco")
+    # Import tools from servers
+    from servers.weather import get_weather
+    from servers.github import create_issue
 
-    # Option 2: Dynamic discovery
-    import servers
-    available = servers.list_tools()
-    print(available)  # ['weather.get_forecast', ...]
+    # Use the tools
+    weather = get_weather("London")
 
-    # Option 3: Lazy loading
-    tool = servers.load('weather.get_forecast')
-    result = tool("San Francisco")
+Discover tools via filesystem:
+    ls servers/                          # List available servers
+    ls servers/weather/                  # List tools in a server
+    cat servers/weather/get_weather.py   # Read tool docstring and code
 """
 
-from pathlib import Path
-from typing import List, Callable
-import importlib
-
-
-def list_tools() -> List[str]:
-    """List all available tools in server.tool format."""
-    tools = []
-    servers_dir = Path(__file__).parent
-
-    for server_dir in servers_dir.iterdir():
-        if not server_dir.is_dir() or server_dir.name.startswith('_'):
-            continue
-
-        for tool_file in server_dir.glob('*.py'):
-            if tool_file.name.startswith('_'):
-                continue
-            tool_name = tool_file.stem
-            tools.append(f"{{server_dir.name}}.{{tool_name}}")
-
-    return sorted(tools)
-
-
-def load(tool_path: str) -> Callable:
-    """Dynamically load a tool by name (e.g., 'weather.get_forecast')."""
-    server, tool = tool_path.split('.')
-    module = importlib.import_module(f'servers.{{server}}.{{tool}}')
-    return getattr(module, tool)
-
-
-def describe(tool_path: str) -> str:
-    """Get tool documentation."""
-    tool_func = load(tool_path)
-    return tool_func.__doc__ or "No documentation available"
-
-
-__all__ = ['list_tools', 'load', 'describe']
+# This file makes servers/ a Python package.
+# Agents discover tools using filesystem commands: ls, cat, grep
 '''
 
         return code

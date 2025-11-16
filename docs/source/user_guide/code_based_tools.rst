@@ -53,9 +53,9 @@ When ``enable_code_based_tools: true`` is set, MassGen:
 
    workspace/
    ├── servers/              # Auto-generated MCP wrappers
-   │   ├── __init__.py      # Tool registry (list_tools, load, describe)
+   │   ├── __init__.py      # Package marker (import from here)
    │   ├── weather/
-   │   │   ├── __init__.py
+   │   │   ├── __init__.py  # Exports: get_forecast, get_current
    │   │   ├── get_forecast.py
    │   │   └── get_current.py
    │   └── github/
@@ -123,28 +123,21 @@ Agent Usage Patterns
 1. Tool Discovery
 ~~~~~~~~~~~~~~~~~
 
-Agents can discover tools in two ways:
-
-**Via tool registry:**
-
-.. code-block:: python
-
-   # List all available tools
-   import servers
-   tools = servers.list_tools()
-   # ['weather.get_forecast', 'weather.get_current', 'github.create_issue']
-
-   # Read documentation
-   print(servers.describe('weather.get_forecast'))
-
-**Via filesystem exploration:**
+Agents discover tools via filesystem exploration:
 
 .. code-block:: bash
 
-   # Explore what's available
+   # Discover available servers
    ls servers/
+
+   # See tools in a server
    ls servers/weather/
-   cat servers/weather/get_forecast.py  # Read source code and docstrings
+
+   # Read tool documentation and code
+   cat servers/weather/get_forecast.py
+
+   # Search for specific functionality
+   grep -r "temperature" servers/
 
 2. Direct Tool Usage
 ~~~~~~~~~~~~~~~~~~~~
@@ -396,15 +389,23 @@ Important Notes
 Built-in MCPs Stay as MCPs
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Only **user-added MCP servers** are converted to code. Built-in framework MCPs remain as protocol tools:
+When ``enable_code_based_tools: true``:
 
-* ``command_line`` - Command execution (bash is implicitly available)
-* ``workspace_tools`` - File operations, media generation
-* ``filesystem`` - Filesystem operations
-* ``planning`` - Task planning MCP
-* ``memory`` - Memory management MCP
+**User MCP Servers (Converted to Code-Only)**
+  * Weather, GitHub, Salesforce, etc. are **removed from MCP protocol**
+  * **Only accessible via Python code** in ``servers/``
+  * Agents cannot call them as protocol tools (must import and use)
 
-These are abstracted at the protocol level and not visible in the filesystem. For example, you can run bash commands directly without needing an ``execute_command`` function - it's automatically available.
+**Framework MCPs (Remain as Protocol)**
+  * ``command_line`` - Command execution (bash is implicitly available)
+  * ``workspace_tools`` - File operations, media generation
+  * ``filesystem`` - Filesystem operations
+  * ``planning`` - Task planning MCP
+  * ``memory`` - Memory management MCP
+
+These framework MCPs are abstracted at the protocol level and not visible in the filesystem. For example, agents can run bash commands directly without needing an ``execute_command`` function - it's automatically available.
+
+**Important**: User MCP tools are **completely filtered out** of the agent's MCP tool list. This forces agents to use the generated Python wrappers, achieving the 98% context reduction benefit.
 
 Non-blocking Code Generation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

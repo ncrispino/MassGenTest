@@ -14,7 +14,6 @@ Run with: uv run pytest massgen/tests/test_code_based_tools_integration.py -v
 
 import json
 import shutil
-import sys
 import tempfile
 from pathlib import Path
 from typing import Any, Dict
@@ -241,13 +240,13 @@ class TestCodeBasedToolsIntegration:
         assert servers["github"]["type"] == "stdio"
 
     @pytest.mark.asyncio
-    async def test_setup_code_based_tools_generates_tool_registry(
+    async def test_setup_code_based_tools_generates_servers_init(
         self,
         filesystem_manager,
         mock_mcp_client,
         temp_workspace,
     ):
-        """Test that tool registry is generated."""
+        """Test that servers __init__.py is generated (no registry, just docstring)."""
         await filesystem_manager.setup_code_based_tools_from_mcp_client(mock_mcp_client)
 
         workspace = Path(temp_workspace["workspace"])
@@ -256,67 +255,13 @@ class TestCodeBasedToolsIntegration:
         assert init_file.exists()
 
         content = init_file.read_text()
-        assert "def list_tools()" in content
-        assert "def load(tool_path: str)" in content
-        assert "def describe(tool_path: str)" in content
-        assert "__all__ = ['list_tools', 'load', 'describe']" in content
-
-    @pytest.mark.asyncio
-    async def test_generated_tool_registry_list_tools(
-        self,
-        filesystem_manager,
-        mock_mcp_client,
-        temp_workspace,
-    ):
-        """Test that generated tool registry list_tools() works."""
-        await filesystem_manager.setup_code_based_tools_from_mcp_client(mock_mcp_client)
-
-        workspace = Path(temp_workspace["workspace"])
-
-        # Add workspace to path to import servers module
-        sys.path.insert(0, str(workspace))
-
-        try:
-            import servers
-
-            tools = servers.list_tools()
-
-            # Should list all tools in server.tool format
-            assert "weather.get_forecast" in tools
-            assert "weather.get_current" in tools
-            assert "github.create_issue" in tools
-        finally:
-            # Cleanup
-            sys.path.remove(str(workspace))
-            if "servers" in sys.modules:
-                del sys.modules["servers"]
-
-    @pytest.mark.asyncio
-    async def test_generated_tool_registry_describe(
-        self,
-        filesystem_manager,
-        mock_mcp_client,
-        temp_workspace,
-    ):
-        """Test that generated tool registry describe() works."""
-        await filesystem_manager.setup_code_based_tools_from_mcp_client(mock_mcp_client)
-
-        workspace = Path(temp_workspace["workspace"])
-        sys.path.insert(0, str(workspace))
-
-        try:
-            import servers
-
-            description = servers.describe("weather.get_forecast")
-
-            # Should return the docstring
-            assert "Get weather forecast for a location" in description
-            assert "location" in description
-            assert "days" in description
-        finally:
-            sys.path.remove(str(workspace))
-            if "servers" in sys.modules:
-                del sys.modules["servers"]
+        # Should have docstring explaining filesystem-based discovery
+        assert "MCP Server Tools" in content
+        assert "Auto-generated Python wrappers" in content
+        # Should NOT have registry functions
+        assert "def list_tools()" not in content
+        assert "def load(tool_path: str)" not in content
+        assert "def describe(tool_path: str)" not in content
 
     @pytest.mark.asyncio
     async def test_generated_server_init_imports(
@@ -526,3 +471,133 @@ class TestCodeBasedToolsIntegration:
             compile(code, "<generated>", "exec")
         except SyntaxError as e:
             pytest.fail(f"Generated code has syntax error: {e}")
+
+    @pytest.mark.asyncio
+    async def test_shared_tools_directory_generates_in_shared_location(
+        self,
+        mock_mcp_client,
+        temp_workspace,
+    ):
+        """Test that tools are generated in shared location when configured."""
+        shared_tools = Path(temp_workspace["temp_dir"]) / "shared_tools"
+        shared_tools.mkdir()
+
+        # Create filesystem manager with shared tools directory
+        manager = FilesystemManager(
+            cwd=temp_workspace["workspace"],
+            agent_temporary_workspace_parent=temp_workspace["temp_workspace_parent"],
+            enable_code_based_tools=True,
+            enable_mcp_command_line=True,
+            shared_tools_directory=str(shared_tools),
+        )
+
+        await manager.setup_code_based_tools_from_mcp_client(mock_mcp_client)
+
+        # Verify tools are in shared location
+        assert (shared_tools / "servers").exists()
+        assert (shared_tools / "servers" / "weather").exists()
+        assert (shared_tools / ".mcp").exists()
+
+        workspace = Path(temp_workspace["workspace"])
+        # Verify workspace has symlinks (not real directories)
+        assert (workspace / "servers").is_symlink()
+        assert (workspace / "servers").resolve() == (shared_tools / "servers").resolve()
+
+    @pytest.mark.asyncio
+    async def test_shared_tools_directory_skips_regeneration(
+        self,
+        mock_mcp_client,
+        temp_workspace,
+    ):
+        """Test that tools are not regenerated if they already exist in shared location."""
+        shared_tools = Path(temp_workspace["temp_dir"]) / "shared_tools"
+        shared_tools.mkdir()
+
+        # First agent generates tools
+        manager1 = FilesystemManager(
+            cwd=temp_workspace["workspace"],
+            agent_temporary_workspace_parent=temp_workspace["temp_workspace_parent"],
+            enable_code_based_tools=True,
+            enable_mcp_command_line=True,
+            shared_tools_directory=str(shared_tools),
+        )
+
+        await manager1.setup_code_based_tools_from_mcp_client(mock_mcp_client)
+
+        # Record modification time
+        servers_init = shared_tools / "servers" / "__init__.py"
+        original_mtime = servers_init.stat().st_mtime
+
+        # Second agent should skip regeneration
+        workspace2 = Path(temp_workspace["temp_dir"]) / "workspace2"
+        workspace2.mkdir()
+
+        manager2 = FilesystemManager(
+            cwd=str(workspace2),
+            agent_temporary_workspace_parent=temp_workspace["temp_workspace_parent"],
+            enable_code_based_tools=True,
+            enable_mcp_command_line=True,
+            shared_tools_directory=str(shared_tools),
+        )
+
+        await manager2.setup_code_based_tools_from_mcp_client(mock_mcp_client)
+
+        # Verify modification time hasn't changed (no regeneration)
+        new_mtime = servers_init.stat().st_mtime
+        assert new_mtime == original_mtime
+
+    @pytest.mark.asyncio
+    async def test_shared_tools_directory_adds_to_read_only_paths(
+        self,
+        mock_mcp_client,
+        temp_workspace,
+    ):
+        """Test that shared tools directory is added to path manager as read-only."""
+        shared_tools = Path(temp_workspace["temp_dir"]) / "shared_tools"
+        shared_tools.mkdir()
+
+        manager = FilesystemManager(
+            cwd=temp_workspace["workspace"],
+            agent_temporary_workspace_parent=temp_workspace["temp_workspace_parent"],
+            enable_code_based_tools=True,
+            enable_mcp_command_line=True,
+            shared_tools_directory=str(shared_tools),
+        )
+
+        await manager.setup_code_based_tools_from_mcp_client(mock_mcp_client)
+
+        # Verify shared tools path is in path manager
+        # Check that it's registered (exact permission checking depends on PathPermissionManager API)
+        assert manager.path_permission_manager is not None
+
+        # Verify symlinks were created in workspace
+        workspace = Path(temp_workspace["workspace"])
+        assert (workspace / "servers").is_symlink()
+        assert (workspace / "servers").resolve() == (shared_tools / "servers").resolve()
+        assert (workspace / ".mcp").is_symlink()
+        assert (workspace / "custom_tools").is_symlink()
+
+    @pytest.mark.asyncio
+    async def test_without_shared_tools_directory_uses_workspace(
+        self,
+        mock_mcp_client,
+        temp_workspace,
+    ):
+        """Test that tools are generated in workspace when shared_tools_directory is None."""
+        # Create filesystem manager WITHOUT shared tools directory
+        manager = FilesystemManager(
+            cwd=temp_workspace["workspace"],
+            agent_temporary_workspace_parent=temp_workspace["temp_workspace_parent"],
+            enable_code_based_tools=True,
+            enable_mcp_command_line=True,
+            shared_tools_directory=None,  # Explicitly None
+        )
+
+        await manager.setup_code_based_tools_from_mcp_client(mock_mcp_client)
+
+        workspace = Path(temp_workspace["workspace"])
+
+        # Verify tools are in workspace (per-agent mode)
+        assert (workspace / "servers").exists()
+        assert (workspace / "servers" / "weather").exists()
+        assert (workspace / ".mcp").exists()

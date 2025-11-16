@@ -939,6 +939,35 @@ class CustomToolAndMCPBackend(LLMBackend):
 
             # Setup code-based tools if enabled (CodeAct paradigm)
             if self.filesystem_manager and self.filesystem_manager.enable_code_based_tools:
+                # Filter out user MCP tools from protocol access (they're accessible via code)
+                # Framework MCPs remain as protocol tools
+                FRAMEWORK_MCPS = {
+                    "command_line",  # Command execution
+                    "workspace_tools",  # Workspace operations (file ops, media generation)
+                    "filesystem",  # Filesystem operations
+                    "planning",  # Task planning MCP
+                    "memory",  # Memory management MCP
+                }
+
+                # Remove user MCP tools from _mcp_functions
+                filtered_functions = {}
+                removed_tools = []
+                for tool_name, function in self._mcp_functions.items():
+                    # Get server name from tool name (format: server__tool or just tool)
+                    server_name = self._mcp_client._tool_to_server.get(tool_name) if self._mcp_client else None
+
+                    if server_name and server_name in FRAMEWORK_MCPS:
+                        filtered_functions[tool_name] = function
+                    elif not server_name:
+                        # Unknown server, keep it to be safe
+                        filtered_functions[tool_name] = function
+                    else:
+                        removed_tools.append(tool_name)
+
+                if removed_tools:
+                    logger.info(f"[MCP] Filtered out user MCP tools (accessible via code): {removed_tools}")
+
+                self._mcp_functions = filtered_functions
                 try:
                     logger.info("[MCP] Setting up code-based tools from MCP client")
                     await self.filesystem_manager.setup_code_based_tools_from_mcp_client(self._mcp_client)

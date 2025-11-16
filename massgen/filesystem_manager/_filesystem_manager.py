@@ -63,6 +63,7 @@ class FilesystemManager:
         exclude_file_operation_mcps: bool = False,
         enable_code_based_tools: bool = False,
         custom_tools_path: Optional[str] = None,
+        shared_tools_directory: Optional[str] = None,
         instance_id: Optional[str] = None,
     ):
         """
@@ -91,6 +92,9 @@ class FilesystemManager:
             enable_code_based_tools: If True, generate Python wrapper code for MCP tools in servers/ directory.
                                      Agents discover and call tools via filesystem (CodeAct paradigm).
             custom_tools_path: Optional path to custom tools directory to copy into workspace
+            shared_tools_directory: Optional shared directory for code-based tools (servers/, custom_tools/, .mcp/).
+                                    If provided, tools are generated once in shared location (read-only for all agents).
+                                    If None, tools are generated in each agent's workspace (per-agent, in snapshots).
             instance_id: Optional unique instance ID for parallel execution (used in Docker container naming)
         """
         self.agent_id = None  # Will be set by orchestrator via setup_orchestration_paths
@@ -100,6 +104,15 @@ class FilesystemManager:
         self.exclude_file_operation_mcps = exclude_file_operation_mcps
         self.enable_code_based_tools = enable_code_based_tools
         self.custom_tools_path = Path(custom_tools_path) if custom_tools_path else None
+
+        # Convert shared_tools_directory to absolute path if provided
+        if shared_tools_directory:
+            shared_tools_path = Path(shared_tools_directory)
+            if not shared_tools_path.is_absolute():
+                shared_tools_path = shared_tools_path.resolve()
+            self.shared_tools_directory = shared_tools_path
+        else:
+            self.shared_tools_directory = None
         self.command_line_allowed_commands = command_line_allowed_commands
         self.command_line_blocked_commands = command_line_blocked_commands
         self.command_line_execution_mode = command_line_execution_mode
@@ -403,13 +416,39 @@ class FilesystemManager:
 
         writer = ToolCodeWriter()
 
+        # Determine where to generate tools
+        if self.shared_tools_directory:
+            # Shared location: generate once, used by all agents (read-only)
+            target_path = self.shared_tools_directory
+
+            # Check if tools already exist in shared location (skip regeneration)
+            servers_dir = target_path / "servers"
+            if servers_dir.exists() and list(servers_dir.iterdir()):
+                logger.info(f"[FilesystemManager] Code-based tools already exist in shared location: {target_path}")
+                logger.info("[FilesystemManager] Skipping regeneration (tools are shared across agents)")
+
+                # Add shared tools to read-only paths for this agent
+                self._add_shared_tools_to_allowed_paths(target_path)
+                return
+
+            logger.info(f"[FilesystemManager] Generating code-based tools in shared location: {target_path}")
+        else:
+            # Per-agent location: generate in workspace (included in snapshots)
+            target_path = self.cwd
+            logger.info(f"[FilesystemManager] Generating code-based tools in agent workspace: {target_path}")
+
         try:
             writer.setup_code_based_tools(
-                workspace_path=self.cwd,
+                workspace_path=target_path,
                 mcp_servers=servers_with_tools,
                 custom_tools_path=self.custom_tools_path,
             )
-            logger.info(f"[FilesystemManager] Code-based tools setup complete in {self.cwd}")
+            logger.info(f"[FilesystemManager] Code-based tools setup complete in {target_path}")
+
+            # If using shared location, add to read-only paths
+            if self.shared_tools_directory:
+                self._add_shared_tools_to_allowed_paths(target_path)
+
         except Exception as e:
             logger.error(f"[FilesystemManager] Error setting up code-based tools: {e}", exc_info=True)
             raise
@@ -510,6 +549,43 @@ class FilesystemManager:
             logger.info(f"[FilesystemManager] Server '{server['name']}': {len(server['tools'])} tools")
 
         return result
+
+    def _add_shared_tools_to_allowed_paths(self, shared_tools_path: Path) -> None:
+        """Add shared tools directory to allowed paths as read-only.
+
+        Makes shared code-based tools (servers/, custom_tools/, .mcp/) accessible
+        to the agent without write permissions. Creates symlinks in workspace for
+        Python imports to work correctly.
+
+        Args:
+            shared_tools_path: Path to shared tools directory
+        """
+        # Add shared tools directory to path manager (read-only)
+        self.path_permission_manager.add_path(
+            shared_tools_path,
+            Permission.READ,
+            "shared_tools",
+        )
+        logger.info(f"[FilesystemManager] Added shared tools directory to read-only paths: {shared_tools_path}")
+
+        # Create symlinks in workspace for Python imports
+        # This allows agents to import from servers/, custom_tools/, utils/ as if they were local
+        workspace = self.cwd
+
+        # Directories to symlink
+        tool_dirs = ["servers", "custom_tools", "utils", ".mcp"]
+
+        for dir_name in tool_dirs:
+            source_dir = shared_tools_path / dir_name
+            target_link = workspace / dir_name
+
+            # Only create symlink if source exists and target doesn't
+            if source_dir.exists() and not target_link.exists():
+                try:
+                    target_link.symlink_to(source_dir, target_is_directory=True)
+                    logger.info(f"[FilesystemManager] Created symlink: {target_link} -> {source_dir}")
+                except Exception as e:
+                    logger.warning(f"[FilesystemManager] Failed to create symlink for {dir_name}: {e}")
 
     def update_backend_mcp_config(self, backend_config: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -724,6 +800,9 @@ class FilesystemManager:
         if "DOCKER_HOST" in os.environ:
             env["DOCKER_HOST"] = os.environ["DOCKER_HOST"]
 
+        # Note: PYTHONPATH not needed - workspace is already cwd and has symlinks to shared_tools
+        # Python imports work: `from servers.weather import get_weather`
+
         config = {
             "name": "command_line",
             "type": "stdio",
@@ -767,6 +846,9 @@ class FilesystemManager:
         When exclude_file_operation_mcps is True, skips filesystem and workspace file operation
         tools, keeping only command execution, media generation, and planning MCPs.
 
+        When enable_code_based_tools is True, filters out user MCP servers (they're accessible
+        via generated Python code instead), keeping only framework MCPs.
+
         Args:
             backend_config: Original backend configuration
 
@@ -794,6 +876,10 @@ class FilesystemManager:
         else:
             existing_names = []
             mcp_servers = []
+
+        # Note: We do NOT filter user MCP servers here when code-based tools are enabled
+        # The servers need to connect so we can extract their tool schemas for code generation
+        # Tool filtering happens later in the backend after conversion to Function objects
 
         try:
             # Add filesystem server if missing and not excluded

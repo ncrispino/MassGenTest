@@ -324,29 +324,38 @@ class CodeBasedToolsSection(SystemPromptSection):
     MEDIUM priority - important for tool discovery and usage.
     """
 
-    def __init__(self, workspace_path: str):
+    def __init__(self, workspace_path: str, shared_tools_path: str = None):
         super().__init__(
             title="Code-Based Tools",
             priority=Priority.MEDIUM,
             xml_tag="code_based_tools",
         )
         self.workspace_path = workspace_path
+        self.shared_tools_path = shared_tools_path
+        # Use shared tools path if available, otherwise workspace
+        self.tools_location = shared_tools_path if shared_tools_path else workspace_path
 
     def build_content(self) -> str:
         """Build code-based tools guidance."""
+        location_note = ""
+        if self.shared_tools_path:
+            location_note = f"\n\n**Note**: Tools are in a shared read-only location (`{self.shared_tools_path}`) accessible to all agents."
+
         return f"""## Available Tools (Code-Based Access)
 
-Tools are available as **Python code** in your workspace filesystem. Discover and call them like regular Python modules.
+Tools are available as **Python code** in your workspace filesystem. Discover and call them like regular Python modules (e.g., use normal search tools such as `rg` or `sg`){location_note}
 
 **Directory Structure:**
 ```
-{self.workspace_path}/
+{self.tools_location}/
 ├── servers/              # MCP tool wrappers (auto-generated)
-│   ├── __init__.py      # Tool registry (list_tools, load, describe)
+│   ├── __init__.py      # Package marker (import from here)
 │   ├── weather/
+│   │   ├── __init__.py  # Exports: get_forecast, get_current
 │   │   ├── get_forecast.py
 │   │   └── get_current.py
 │   └── github/
+│       ├── __init__.py  # Exports: create_issue
 │       └── create_issue.py
 ├── custom_tools/         # Full Python implementations
 │   └── [user-provided tools]
@@ -354,30 +363,30 @@ Tools are available as **Python code** in your workspace filesystem. Discover an
     └── [create your own scripts here]
 ```
 
-**Tool Discovery:**
-```python
-# List all available tools
-import servers
-available = servers.list_tools()
-print(available)  # ['weather.get_forecast', 'github.create_issue', ...]
-
-# Get tool documentation
-print(servers.describe('weather.get_forecast'))
-
-# Or explore filesystem
+**Tool Discovery (Filesystem-Based):**
+```bash
+# Discover available servers
 ls servers/
-cat servers/weather/get_forecast.py  # Read source & docstring
+
+# See tools in a server
+ls servers/weather/
+
+# Read tool documentation and code
+cat servers/weather/get_forecast.py
+
+# Search for specific functionality
+grep -r "temperature" servers/
 ```
 
 **Usage Pattern:**
 ```python
-# Import and use directly
+# Import tools directly
 from servers.weather import get_forecast
-result = get_forecast("San Francisco", days=3)
+from servers.github import create_issue
 
-# Or load dynamically
-tool = servers.load('weather.get_forecast')
-result = tool("San Francisco", days=3)
+# Use the tools
+weather = get_forecast("San Francisco", days=3)
+issue = create_issue(repo="myrepo", title="Bug fix")
 ```
 
 **Creating Workflows (utils/):**

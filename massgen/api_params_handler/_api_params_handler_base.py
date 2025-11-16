@@ -80,6 +80,7 @@ class APIParamsHandlerBase(ABC):
             # Code-based tools (CodeAct paradigm)
             "enable_code_based_tools",
             "custom_tools_path",
+            "shared_tools_directory",
             # Backend identification (handled by orchestrator)
             "type",
             "agent_id",

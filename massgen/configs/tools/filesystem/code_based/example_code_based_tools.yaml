@@ -9,6 +9,7 @@
 # - Composable (create utils/ scripts combining multiple tools)
 # - Async-friendly (write async workflows in utils/)
 # - Data filtering (process large datasets before returning)
+# - Shared tools directory (tools generated once, not duplicated in snapshots)
 #
 # Run with:
 # uv run massgen --automation \
@@ -29,6 +30,10 @@ agents:
 
       # Command line execution (required for code-based tools)
       command_line_execution_mode: "local"   # or "docker"
+
+      # Shared tools directory (optional) - tools generated once, shared across agents
+      # If not specified, tools are generated in each agent's workspace
+      shared_tools_directory: "shared_tools"
 
       # Custom tools directory - full Python implementations
       custom_tools_path: "massgen/tool/_code_based_example"
