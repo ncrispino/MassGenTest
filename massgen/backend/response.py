@@ -221,6 +221,126 @@ class ResponseBackend(CustomToolAndMCPBackend):
         }
         updated_messages.append(error_output_msg)
 
+    async def _collect_tool_chunks(
+        self,
+        call: Dict[str, Any],
+        config: ToolExecutionConfig,
+    ) -> Tuple[str, List[StreamChunk], List[Dict[str, Any]]]:
+        """Collect all chunks from a single tool execution."""
+        chunks = []
+        messages_to_append = []
+        call_id = call.get("call_id", "")
+        tool_name = call.get("name", "")
+        source_label = f"{config.source_prefix}{tool_name}"
+
+        # Local helpers to reduce duplication
+        def add_chunk(status: str, content: str) -> None:
+            chunks.append(
+                StreamChunk(
+                    type=config.chunk_type,
+                    status=status,
+                    content=content,
+                    source=source_label,
+                ),
+            )
+
+        def normalize_display_result(tool_type: str, result_text: str, result_obj: Any) -> str:
+            """Prefer richer text for MCP if present; otherwise fall back to result_text."""
+            display = result_text
+            if tool_type == "mcp" and result_obj:
+                try:
+                    if hasattr(result_obj, "content") and isinstance(result_obj.content, list):
+                        if len(result_obj.content) > 0 and hasattr(result_obj.content[0], "text"):
+                            display = result_obj.content[0].text
+                except (AttributeError, IndexError, TypeError):
+                    # Fall back to result_text
+                    pass
+            return display
+
+        # Workflow tool defense-in-depth validation
+        if tool_name in ["new_answer", "vote"]:
+            error_msg = f"CRITICAL: Workflow tool {tool_name} incorrectly routed to execution"
+            logger.error(error_msg)
+            add_chunk(config.status_error, f"{config.error_emoji} {error_msg}")
+            return (call_id, chunks, messages_to_append)
+
+        try:
+            # Yield tool called status
+            add_chunk(config.status_called, f"{config.emoji_prefix} Calling {tool_name}...")
+
+            # Yield arguments chunk
+            arguments_str = call.get("arguments", "{}")
+            add_chunk("function_call", f"Arguments for Calling {tool_name}: {arguments_str}")
+
+            # Execute tool via callback
+            result = None
+            result_str = ""
+            result_obj = None
+
+            if config.tool_type == "custom":
+                # Check if execution_callback returns an async generator (streaming)
+                callback_result = config.execution_callback(call)
+
+                # Handle async generator (streaming custom tools)
+                if hasattr(callback_result, "__aiter__"):
+                    # This is an async generator - stream intermediate results
+                    async for chunk in callback_result:
+                        # Collect intermediate chunks if available
+                        if hasattr(chunk, "data") and chunk.data and not chunk.completed:
+                            # Stream intermediate output to user
+                            add_chunk("custom_tool_output", chunk.data)
+                        elif hasattr(chunk, "completed") and chunk.completed:
+                            # Extract final accumulated result
+                            result_str = chunk.accumulated_result
+                    result = result_str
+                else:
+                    # Handle regular await (non-streaming custom tools)
+                    result = await callback_result
+                    result_str = str(result)
+            else:  # MCP
+                result_str, result_obj = await config.execution_callback(call["name"], call["arguments"])
+                result = result_str
+
+            # Check for MCP failure after retries
+            if config.tool_type == "mcp" and result_str.startswith("Error:"):
+                logger.warning(f"MCP tool {tool_name} failed after retries: {result_str}")
+                error_msg = result_str
+
+                # Add error messages that would have been appended
+                self._append_tool_error_message(messages_to_append, call, error_msg, config.tool_type)
+
+                add_chunk(config.status_error, f"{config.error_emoji} {error_msg}")
+                return (call_id, chunks, messages_to_append)
+
+            # Collect messages that would have been appended (Response API format)
+            self._append_tool_result_message(messages_to_append, call, result, config.tool_type)
+
+            # Collect results chunk
+            # For MCP tools, try to extract text from result_obj if available
+            display_result = normalize_display_result(config.tool_type, result_str, result_obj)
+
+            add_chunk("function_call_output", f"Results for Calling {tool_name}: {display_result}")
+
+            # Collect completion status
+            add_chunk(config.status_response, f"{config.success_emoji} {tool_name} completed")
+
+            logger.info(f"Executed {config.tool_type} tool: {tool_name}")
+
+        except Exception as e:
+            # Log error
+            logger.error(f"Error executing {config.tool_type} tool {tool_name}: {e}")
+
+            # Build error message
+            error_msg = f"Error executing {tool_name}: {str(e)}"
+
+            # Collect error status chunk
+            add_chunk(config.status_error, f"{config.error_emoji} {error_msg}")
+
+            # Add error messages to append
+            self._append_tool_error_message(messages_to_append, call, error_msg, config.tool_type)
+
+        return (call_id, chunks, messages_to_append)
+
     async def _execute_custom_tool(self, call: Dict[str, Any]) -> AsyncGenerator[CustomToolChunk, None]:
         """Execute custom tool with streaming support - async generator for base class.
 
@@ -464,6 +584,122 @@ class ResponseBackend(CustomToolAndMCPBackend):
                 else:
                     # Selective blocking - log but continue to check each tool individually
                     logger.info(f"[Response] Planning mode enabled - selective blocking of {len(blocked_tools)} tools")
+
+            # Combine all local tool calls for parallel/sequential execution
+            all_calls = custom_calls + mcp_calls
+
+            # Check concurrent execution setting (no default - opt-in feature)
+            concurrent_execution = all_params.get("concurrent_tool_execution")
+
+            # Execute tools based on configuration
+            if concurrent_execution and len(all_calls) > 1:
+                # PARALLEL EXECUTION WITH CONCURRENCY CONTROL
+                max_concurrent = all_params.get("max_concurrent_tools", 10)
+                logger.info(f"Executing {len(all_calls)} tools in parallel (max concurrent: {max_concurrent or 'unlimited'})")
+
+                # Create semaphore for concurrency control
+                semaphore = asyncio.Semaphore(max_concurrent) if max_concurrent else None
+
+                # Helper to execute with semaphore
+                async def execute_with_limit(call, config):
+                    if semaphore:
+                        async with semaphore:
+                            return await self._collect_tool_chunks(call, config)
+                    else:
+                        return await self._collect_tool_chunks(call, config)
+
+                # Create tasks for all tools
+                tasks = []
+                for call in all_calls:
+                    config = CUSTOM_TOOL_CONFIG if call["name"] in self._custom_tool_names else MCP_TOOL_CONFIG
+                    tasks.append(execute_with_limit(call, config))
+
+                # Execute all tasks concurrently (with semaphore limiting)
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+
+                # PHASE 1: Process results and update message history
+                # This phase merges all tool results into message history in API order
+                # before yielding any chunks, ensuring consistency and thread-safety
+                for i, result in enumerate(results):
+                    call = all_calls[i]
+
+                    if isinstance(result, Exception):
+                        # Handle exception: create error message for history
+                        error_msg = f"Tool execution failed: {result}"
+                        logger.error(error_msg, exc_info=True)
+
+                        # Add error message to history (Response API format)
+                        function_call_msg = {
+                            "type": "function_call",
+                            "call_id": call["call_id"],
+                            "name": call["name"],
+                            "arguments": call["arguments"],
+                        }
+                        updated_messages.append(function_call_msg)
+
+                        error_output_msg = {
+                            "type": "function_call_output",
+                            "call_id": call["call_id"],
+                            "output": f"Error: {str(result)}",
+                        }
+                        updated_messages.append(error_output_msg)
+                        processed_call_ids.add(call["call_id"])
+                    else:
+                        # Unpack successful result tuple
+                        call_id, chunks, messages_to_append = result
+
+                        # Add tool result messages to history (in API order)
+                        updated_messages.extend(messages_to_append)
+                        processed_call_ids.add(call_id)
+
+                # PHASE 2: Yield all chunks in API order
+                # Now that message history is consistent, stream chunks to user
+                for i, result in enumerate(results):
+                    if isinstance(result, Exception):
+                        # Yield error chunk for user feedback
+                        error_msg = f"Tool execution failed: {result}"
+                        # Map error chunk type to tool family for clearer UX
+                        call = all_calls[i]
+                        is_custom = call["name"] in self._custom_tool_names
+                        error_chunk_type = chunk_type_map["custom_tool_status"] if is_custom else chunk_type_map["mcp_status"]
+                        yield TextStreamChunk(
+                            type=error_chunk_type,
+                            status="tool_error",
+                            content=f"❌ {error_msg}",
+                            source="parallel_execution",
+                        )
+                    else:
+                        # Unpack and yield all collected chunks
+                        call_id, chunks, messages_to_append = result
+                        for chunk in chunks:
+                            yield TextStreamChunk(
+                                type=chunk_type_map.get(chunk.type, chunk.type),
+                                status=getattr(chunk, "status", None),
+                                content=getattr(chunk, "content", None),
+                                source=getattr(chunk, "source", None),
+                            )
+
+                functions_executed = True
+            else:
+                # SEQUENTIAL EXECUTION
+                reason = "disabled by config" if not concurrent_execution else "single tool"
+                logger.info(f"Executing {len(all_calls)} tools sequentially ({reason})")
+
+                # Execute custom tools using unified method
+                for call in custom_calls:
+                    async for chunk in self._execute_tool_with_logging(
+                        call,
+                        CUSTOM_TOOL_CONFIG,
+                        updated_messages,
+                        processed_call_ids,
+                    ):
+                        yield TextStreamChunk(
+                            type=chunk_type_map.get(chunk.type, chunk.type),
+                            status=getattr(chunk, "status", None),
+                            content=getattr(chunk, "content", None),
+                            source=getattr(chunk, "source", None),
+                        )
+                    functions_executed = True
 
             # Execute MCP tools using unified method
             for call in mcp_calls:
@@ -1033,7 +1269,7 @@ class ResponseBackend(CustomToolAndMCPBackend):
                 content="\n✅ [Provider Tool: Image Generation] Image generated successfully",
                 source="response_api",
             )
-        elif chunk_type == "image_generation.completed":
+        elif chunk.type == "image_generation.completed":
             # Handle the final image generation result
             if hasattr(chunk, "b64_json"):
                 log_stream_chunk("backend.response", "image_generation", "Image data received", agent_id)
@@ -1168,6 +1404,7 @@ class ResponseBackend(CustomToolAndMCPBackend):
                             status = item.get("status", "unknown")
                             code = item.get("code", "")
                             outputs = item.get("outputs")
+
                             content = f"\n🔧 Code Interpreter [{status.title()}]"
                             if code:
                                 content += f": {code}"
