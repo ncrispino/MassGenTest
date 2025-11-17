@@ -30,7 +30,7 @@ agents:
       # type: "gemini"
       # model: "gemini-2.5-pro"
       type: "openai"
-      model: "gpt-5"
+      model: "gpt-5-codex"
       cwd: "workspace"
 
       # Enable code-based tools (CodeAct paradigm)
