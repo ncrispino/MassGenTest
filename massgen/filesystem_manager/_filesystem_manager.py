@@ -497,39 +497,70 @@ class FilesystemManager:
             # Set the actual shared_tools_directory (with hash)
             self.shared_tools_directory = target_path
 
-            # Create directory
-            target_path.mkdir(parents=True, exist_ok=True)
+            # Check if tools already exist (optimization: skip regeneration)
+            tools_already_exist = target_path.exists() and (target_path / "servers").exists() and (target_path / ".mcp").exists()
 
-            logger.info(f"[FilesystemManager] Generating code-based tools in shared location: {target_path} (hash: {config_hash})")
+            if tools_already_exist:
+                logger.info(
+                    f"[FilesystemManager] Shared tools already exist at {target_path}, skipping regeneration",
+                )
+            else:
+                # Create directory and generate tools
+                target_path.mkdir(parents=True, exist_ok=True)
+                logger.info(
+                    f"[FilesystemManager] Generating code-based tools in shared location: {target_path} (hash: {config_hash})",
+                )
+
+                try:
+                    # Auto-exclude tools based on missing API keys
+                    auto_excluded = []
+                    if self.custom_tools_path:
+                        auto_excluded = self._get_auto_excluded_tools_by_api_keys(self.custom_tools_path)
+
+                    # Combine manual exclusions with auto-generated ones
+                    all_exclusions = list(set(self.exclude_custom_tools + auto_excluded))
+
+                    writer.setup_code_based_tools(
+                        workspace_path=target_path,
+                        mcp_servers=servers_with_tools,
+                        custom_tools_path=self.custom_tools_path,
+                        exclude_custom_tools=all_exclusions,
+                    )
+                    logger.info(f"[FilesystemManager] Code-based tools setup complete in {target_path}")
+
+                except Exception as e:
+                    logger.error(f"[FilesystemManager] Error setting up code-based tools: {e}", exc_info=True)
+                    raise
+
+            # ALWAYS add to allowed paths for this agent's workspace (creates symlinks)
+            # This must happen for every agent, even if tools were already generated
+            self._add_shared_tools_to_allowed_paths(target_path)
+
         else:
             # Per-agent location: generate in workspace (included in snapshots)
             target_path = self.cwd
             logger.info(f"[FilesystemManager] Generating code-based tools in agent workspace: {target_path}")
 
-        try:
-            # Auto-exclude tools based on missing API keys
-            auto_excluded = []
-            if self.custom_tools_path:
-                auto_excluded = self._get_auto_excluded_tools_by_api_keys(self.custom_tools_path)
+            try:
+                # Auto-exclude tools based on missing API keys
+                auto_excluded = []
+                if self.custom_tools_path:
+                    auto_excluded = self._get_auto_excluded_tools_by_api_keys(self.custom_tools_path)
 
-            # Combine manual exclusions with auto-generated ones
-            all_exclusions = list(set(self.exclude_custom_tools + auto_excluded))
+                # Combine manual exclusions with auto-generated ones
+                all_exclusions = list(set(self.exclude_custom_tools + auto_excluded))
 
-            writer.setup_code_based_tools(
-                workspace_path=target_path,
-                mcp_servers=servers_with_tools,
-                custom_tools_path=self.custom_tools_path,
-                exclude_custom_tools=all_exclusions,
-            )
-            logger.info(f"[FilesystemManager] Code-based tools setup complete in {target_path}")
+                writer.setup_code_based_tools(
+                    workspace_path=target_path,
+                    mcp_servers=servers_with_tools,
+                    custom_tools_path=self.custom_tools_path,
+                    exclude_custom_tools=all_exclusions,
+                )
+                logger.info(f"[FilesystemManager] Code-based tools setup complete in {target_path}")
 
-            # If using shared location, add to read-only paths
-            if self.shared_tools_directory:
-                self._add_shared_tools_to_allowed_paths(target_path)
-
-        except Exception as e:
-            logger.error(f"[FilesystemManager] Error setting up code-based tools: {e}", exc_info=True)
-            raise
+            except Exception as e:
+                logger.error(f"[FilesystemManager] Error setting up code-based tools: {e}", exc_info=True)
+                raise
 
     def _get_auto_excluded_tools_by_api_keys(
         self,

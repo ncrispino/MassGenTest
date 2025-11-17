@@ -71,7 +71,7 @@ agents:
       exclude_custom_tools:
         - "_claude_computer_use"  # Manual exclusion: Requires ANTHROPIC_API_KEY
         - "_gemini_computer_use"   # Manual exclusion: Requires GOOGLE_API_KEY
-        # - "_browser_automation"    # Manual exclusion: Requires Playwright installation
+        - "_browser_automation"    # Manual exclusion: Better to just do via CLI else image gets passed
         # - "_video_tools"           # Manual exclusion: Heavy FFmpeg dependencies
 
       # MCP servers - these will be converted to Python wrappers in servers/
@@ -123,7 +123,7 @@ agents:
       exclude_custom_tools:
         - "_claude_computer_use"  # Manual exclusion: Requires ANTHROPIC_API_KEY
         - "_gemini_computer_use"   # Manual exclusion: Requires GOOGLE_API_KEY
-        # - "_browser_automation"    # Manual exclusion: Requires Playwright installation
+        - "_browser_automation"    # Manual exclusion: Better to just do via CLI else image gets passed
         # - "_video_tools"           # Manual exclusion: Heavy FFmpeg dependencies
 
       # MCP servers - these will be converted to Python wrappers in servers/

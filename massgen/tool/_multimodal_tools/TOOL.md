@@ -1,6 +1,6 @@
 ---
 name: multimodal-tools
-description: Vision, audio, video, and file processing tools using OpenAI APIs
+description: Understand images/screenshots/charts, transcribe audio/video, analyze PDFs with AI vision
 category: multimodal
 requires_api_keys: [OPENAI_API_KEY]
 tasks:

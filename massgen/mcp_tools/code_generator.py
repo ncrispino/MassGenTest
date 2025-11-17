@@ -8,7 +8,7 @@ into importable Python functions that agents can discover via filesystem.
 This follows the CodeAct paradigm and Anthropic's code-based MCP approach:
 - MCP tools become Python functions in servers/ directory
 - Agents import and call tools using standard Python
-- Reduces context usage by ~98% (load only needed tools)
+- Reduces context usage
 - Enables async patterns and data filtering in utils/ scripts
 
 References:
@@ -29,6 +29,25 @@ class MCPToolCodeGenerator:
 
     def __init__(self):
         """Initialize the code generator."""
+
+    @staticmethod
+    def sanitize_tool_name(tool_name: str) -> str:
+        """Convert MCP tool name to valid Python identifier.
+
+        MCP tool names can contain hyphens (e.g., 'get-library-docs'),
+        but Python identifiers cannot. This converts hyphens to underscores.
+
+        Args:
+            tool_name: Original MCP tool name (may contain hyphens)
+
+        Returns:
+            Valid Python identifier (hyphens replaced with underscores)
+
+        Example:
+            >>> MCPToolCodeGenerator.sanitize_tool_name("get-library-docs")
+            'get_library_docs'
+        """
+        return tool_name.replace("-", "_")
 
     def generate_tool_wrapper(
         self,
@@ -63,6 +82,9 @@ class MCPToolCodeGenerator:
             >>> "def get_forecast(" in code
             True
         """
+        # Sanitize tool name for Python identifiers
+        sanitized_name = self.sanitize_tool_name(tool_name)
+
         description = tool_schema.get("description", f"{tool_name} from {server_name} MCP server")
         input_schema = tool_schema.get("inputSchema", {})
 
@@ -83,10 +105,12 @@ class MCPToolCodeGenerator:
         # Generate complete function
         code = f'''\
 """
-{tool_name} - MCP tool wrapper
+{sanitized_name} - MCP tool wrapper
 
 Auto-generated wrapper for the '{tool_name}' tool from the '{server_name}' MCP server.
 This wrapper handles MCP protocol communication transparently.
+
+Note: Original MCP tool name is '{tool_name}', Python function name is '{sanitized_name}'.
 """
 
 from typing import Any, Dict, Optional
@@ -102,7 +126,7 @@ if str(_mcp_path) not in sys.path:
 from client import call_mcp_tool
 
 
-def {tool_name}({param_list}) -> Any:
+def {sanitized_name}({param_list}) -> Any:
 {docstring}
     return call_mcp_tool(
         server="{server_name}",
@@ -118,10 +142,10 @@ if __name__ == "__main__":
     # Simple CLI: pass first arg as location (or other primary param)
     if len(sys.argv) > 1:
         # For simple testing - assumes first param is primary argument
-        result = {tool_name}(sys.argv[1])
+        result = {sanitized_name}(sys.argv[1])
     else:
-        print("Usage: python {tool_name}.py <arguments>")
-        print(f"\\nDocumentation:\\n{{{tool_name}.__doc__}}")
+        print("Usage: python {sanitized_name}.py <arguments>")
+        print(f"\\nDocumentation:\\n{{{sanitized_name}.__doc__}}")
         sys.exit(1)
 
     print(json.dumps(result, indent=2))
@@ -142,20 +166,23 @@ if __name__ == "__main__":
 
         Returns:
             List of parameter strings (e.g., ["location: str", "days: int = 5"])
+            Required parameters come first, then optional parameters (Python syntax requirement)
         """
-        params = []
+        required_params = []
+        optional_params = []
 
         for param_name, param_schema in properties.items():
             param_type = self._json_type_to_python_type(param_schema.get("type", "any"))
 
             if param_name in required:
-                params.append(f"{param_name}: {param_type}")
+                required_params.append(f"{param_name}: {param_type}")
             else:
                 # Optional parameter with default
                 default = self._get_default_value(param_schema)
-                params.append(f"{param_name}: Optional[{param_type}] = {default}")
+                optional_params.append(f"{param_name}: Optional[{param_type}] = {default}")
 
-        return params
+        # Required parameters must come before optional parameters in Python
+        return required_params + optional_params
 
     def _json_type_to_python_type(self, json_type: str) -> str:
         """Convert JSON schema type to Python type hint.
@@ -250,13 +277,24 @@ if __name__ == "__main__":
 
         Args:
             server_name: Name of the MCP server
-            tool_names: List of tool names in this server
+            tool_names: List of tool names in this server (original MCP names)
 
         Returns:
             __init__.py file content
         """
-        imports = [f"from .{tool} import {tool}" for tool in tool_names]
-        all_list = ", ".join(f'"{tool}"' for tool in tool_names)
+        # Sanitize tool names for Python imports
+        sanitized_names = [self.sanitize_tool_name(tool) for tool in tool_names]
+
+        imports = [f"from .{sanitized} import {sanitized}" for sanitized in sanitized_names]
+        all_list = ", ".join(f'"{sanitized}"' for sanitized in sanitized_names)
+
+        # Build tool list showing both original and Python names
+        tool_list_lines = []
+        for original, sanitized in zip(tool_names, sanitized_names):
+            if original != sanitized:
+                tool_list_lines.append(f"- {sanitized} (MCP: {original})")
+            else:
+                tool_list_lines.append(f"- {sanitized}")
 
         code = f'''\
 """
@@ -266,11 +304,11 @@ Auto-generated module containing Python wrappers for all tools
 from the '{server_name}' MCP server.
 
 Available tools:
-{chr(10).join(f"- {tool}" for tool in tool_names)}
+{chr(10).join(tool_list_lines)}
 
 Usage:
-    from servers.{server_name} import {tool_names[0] if tool_names else "tool_name"}
-    result = {tool_names[0]}(...) if tool_names else "tool_name(...)"
+    from servers.{server_name} import {sanitized_names[0] if sanitized_names else "tool_name"}
+    result = {sanitized_names[0]}(...) if sanitized_names else "tool_name(...)"
 """
 
 {chr(10).join(imports)}

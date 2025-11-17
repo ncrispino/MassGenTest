@@ -268,7 +268,7 @@ pip install massgen
 # Or with uv (faster)
 uv pip install massgen
 
-# Optional: Install skills (Claude Code, Gemini CLI capabilities)
+# Optional: Install skills
 massgen --setup-skills
 
 # Run the interactive setup wizard

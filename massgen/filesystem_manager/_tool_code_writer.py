@@ -131,10 +131,14 @@ class ToolCodeWriter:
                     tool,
                 )
 
-                # Write to file
-                tool_file = server_dir / f"{tool_name}.py"
+                # Sanitize tool name for valid Python filename
+                sanitized_name = self.generator.sanitize_tool_name(tool_name)
+
+                # Write to file (using sanitized name)
+                tool_file = server_dir / f"{sanitized_name}.py"
                 tool_file.write_text(wrapper_code)
 
+                # Store original name for __init__.py generation
                 tool_names.append(tool_name)
 
             # Generate __init__.py for server

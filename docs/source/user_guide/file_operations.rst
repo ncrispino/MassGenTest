@@ -126,19 +126,19 @@ When ``exclude_file_operation_mcps: true``, MassGen excludes redundant file oper
 
 **What gets excluded:**
 
-* Filesystem MCP (``read_file``, ``write_file``, ``list_directory``, ``grep_search``)
+* Filesystem MCP read operations (``read_file``, ``list_directory``, ``grep_search``)
 * File operation tools from Workspace Tools MCP (``copy_file``, ``delete_file``, ``compare_files``)
 
 **What is kept:**
 
+* File write operations (``write_file``, ``edit_file``) - Provides clean file creation without shell escaping issues
 * Command execution tools (``execute_command``, background shell management)
 * Media generation tools (image/audio generation, if enabled)
 * Planning tools (task management abstractions)
 
-**Agents use standard command-line tools instead:**
+**Agents use standard command-line tools for excluded operations:**
 
 * ``cat``, ``head``, ``tail`` instead of ``read_file``
-* ``echo >``, text editors instead of ``write_file``
 * ``ls``, ``find`` instead of ``list_directory``
 * ``grep``, ``rg`` instead of ``grep_search``
 * ``cp`` instead of ``copy_file``

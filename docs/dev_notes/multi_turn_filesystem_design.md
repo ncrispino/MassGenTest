@@ -440,6 +440,19 @@ if hasattr(agent.backend, 'update_context_paths'):
 5. **`massgen/backend/utils/filesystem_manager/_path_permission_manager.py`**
    - Added `add_previous_turn_paths()` (unused in current implementation)
 
+6. **`massgen/filesystem_manager/_filesystem_manager.py`**
+   - Modified `save_snapshot()` - Preserves non-empty snapshots (never overwrites with empty workspace)
+   - Modified `save_snapshot()` - Uses snapshot_storage as fallback source when workspace empty
+   - Ensures files preserved across answer → vote → final presentation flow
+
+7. **`massgen/backend/base_with_custom_tool_and_mcp.py`**
+   - Removed Docker cleanup from `__aexit__()` - Cleanup now session-level (CLI)
+   - Prevents premature container removal before final presentation
+
+8. **`massgen/cli.py`** (cleanup timing)
+   - Kept Docker cleanup in `finally` block - Runs after all agent work complete
+   - Ensures containers available throughout entire agent lifecycle
+
 ### Session Info Flow
 
 ```

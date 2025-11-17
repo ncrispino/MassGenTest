@@ -294,8 +294,9 @@ async def create_server() -> fastmcp.FastMCP:
                         "id": "prep_skills",
                         "description": (
                             "Review available skills listed in your context and think creatively about which could help "
-                            "with this task. Consider both direct applications and creative uses. Document your reasoning "
-                            "about which skills to use or why you're building from scratch."
+                            "with this task. Consider both direct applications and creative uses. REQUIRED: When marking "
+                            "complete, provide completion_notes documenting which skills you considered and your decision "
+                            "(which to use OR why you're building from scratch)."
                         ),
                         "priority": "high",
                     },
@@ -306,8 +307,10 @@ async def create_server() -> fastmcp.FastMCP:
                         "id": "prep_tools",
                         "description": (
                             "List contents of custom_tools/ and servers/ directories to understand available capabilities. "
-                            "Think about both obvious and creative applications of these tools for your task. Document which "
-                            "specific tools you plan to use and why, or explain your decision to build manually."
+                            "Search TOOL.md files for relevant functions. "
+                            "Think about both obvious and creative applications. REQUIRED: When marking complete, provide "
+                            "completion_notes documenting: (1) which tools you explored, (2) which you'll use and why, OR "
+                            "(3) why you're building manually."
                         ),
                         "priority": "high",
                     },
@@ -423,6 +426,7 @@ async def create_server() -> fastmcp.FastMCP:
     def update_task_status(
         task_id: str,
         status: str,  # Will be validated as Literal in the function
+        completion_notes: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Update the status of a task.
@@ -430,12 +434,13 @@ async def create_server() -> fastmcp.FastMCP:
         Args:
             task_id: ID of task to update
             status: New status (pending/in_progress/completed/blocked)
+            completion_notes: Optional notes documenting how the task was completed (recommended for completed status)
 
         Returns:
             Dictionary with updated task details and newly ready tasks
 
         Example:
-            update_task_status("research_oauth", "completed")
+            update_task_status("research_oauth", "completed", "Reviewed OAuth 2.0 spec and compared providers")
         """
         try:
             # Validate status
@@ -446,7 +451,7 @@ async def create_server() -> fastmcp.FastMCP:
                 )
 
             plan = _get_or_create_plan(mcp.agent_id, mcp.orchestrator_id)
-            result = plan.update_task_status(task_id, status)
+            result = plan.update_task_status(task_id, status, completion_notes)
 
             # Save to filesystem if configured
             _save_plan_to_filesystem(plan)

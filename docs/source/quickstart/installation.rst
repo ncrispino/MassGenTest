@@ -630,7 +630,7 @@ Check that skills are installed correctly:
    # On Windows
    dir %USERPROFILE%\.agent\skills\
 
-You should see directories for each installed skill (e.g., ``pdf``, ``xlsx``, ``serena``, ``semtools``, ``crawl4ai``).
+You should see directories for each installed skill (e.g., ``pdf``, ``xlsx``, ``crawl4ai``).
 
 Optional CLI Tools
 ==================

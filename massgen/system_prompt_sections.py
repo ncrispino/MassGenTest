@@ -342,6 +342,7 @@ class CodeBasedToolsSection(SystemPromptSection):
             location_note = f"\n\n**Note**: Tools are in a shared read-only location (`{self.shared_tools_path}`) accessible to all agents."
 
         # Read ExecutionResult class definition for custom tools
+        import re
         from pathlib import Path
 
         result_file = Path(__file__).parent / "tool" / "_result.py"
@@ -349,6 +350,26 @@ class CodeBasedToolsSection(SystemPromptSection):
             execution_result_code = result_file.read_text()
         except Exception:
             execution_result_code = "# ExecutionResult definition not available"
+
+        # Discover custom tools by reading TOOL.md files
+        custom_tools_list = ""
+        custom_tools_path = Path(self.tools_location) / "custom_tools"
+        if custom_tools_path.exists():
+            tool_descriptions = []
+            for tool_md in custom_tools_path.glob("*/TOOL.md"):
+                try:
+                    content = tool_md.read_text()
+                    # Extract description from YAML frontmatter
+                    match = re.search(r"^description:\s*(.+)$", content, re.MULTILINE)
+                    if match:
+                        tool_name = tool_md.parent.name
+                        description = match.group(1).strip()
+                        tool_descriptions.append(f"- **{tool_name}**: {description}")
+                except Exception:
+                    continue
+
+            if tool_descriptions:
+                custom_tools_list = "\n\n**Available Custom Tools:**\n" + "\n".join(tool_descriptions)
 
         return f"""## Available Tools (Code-Based Access)
 
@@ -372,111 +393,43 @@ Tools are available as **Python code** in your workspace filesystem. Discover an
 Your workspace/
 └── utils/               # CREATE THIS - for your scripts (workflows, async, filtering)
     └── [write your own scripts here as needed]
+```{custom_tools_list}
+
+**Important:** All tools and servers listed here are already configured and ready to use. If a tool requires API keys, they are already available - we only show tools you can actually use.
+
+**Note:** Skills provide guidance and workflows, while tools provide actual functionality. They complement each other - for
+example, a skill might guide you through a process that requires using specific tools to complete it.
+
+While it's not always necessary to use additional tools, there are some cases where they are required (e.g., multimodal
+content generation and understanding, as by default agents only handle text). In other cases, using tools can help you
+complete tasks more efficiently.
+
+**Tool Discovery (Efficient Patterns):**
+
+Custom tools (listed above) - read TOOL.md for details:
+```bash
+head -n 80 custom_tools/<tool_name>/TOOL.md
 ```
 
-**Tool Discovery - Fast, Context-Efficient Search:**
-
-**EFFICIENCY PRINCIPLES:**
-1. **Batch commands**: Combine multiple operations in ONE `execute_command()` call
-2. **Search before reading**: Use `rg`/`sg` to find candidates first
-3. **Targeted extraction**: Use `head`, `rg -A`, or `sg` to read only what you need
-4. **Full reads last resort**: Only use `cat` when you need implementation details
-
-**Discovery Workflow:**
-
-**Step 1: Parallel Structure Discovery (Single batched command)**
+MCP servers - extract function docstrings:
 ```bash
-# ✅ EFFICIENT: All discovery in one execute_command call
-execute_command(\"\"\"
-    echo '=== MCP Servers ===' && ls servers/ &&
-    echo '=== Custom Tools ===' && ls custom_tools/ &&
-    echo '=== Tool Metadata ===' && rg '^description:' custom_tools/*/TOOL.md
-\"\"\")
+# List servers and functions
+ls servers/ && ls servers/<server_name>/
 
-# Note: Use && to chain commands, or ; to continue even if one fails
+# Get function docstring (first 25 lines)
+head -n 25 servers/<server_name>/<function>.py
+
+# Extract all function signatures with ast-grep
+sg --pattern 'def $FUNC($$$):' --lang python servers/<server_name>/
 ```
 
-**Step 2: Search by Functionality (Find candidates)**
+Search patterns:
 ```bash
-# ✅ EFFICIENT: Multiple searches in one command
-execute_command(\"\"\"
-    rg 'weather|forecast|temperature' servers/ -l &&
-    rg 'github.*issue|create.*pr' servers/ -l &&
-    rg '^category: multimodal' custom_tools/*/TOOL.md -l
-\"\"\")
+# Search custom tools by capability
+rg 'tasks:' custom_tools/*/TOOL.md -A 3 | rg -i '<keyword>'
 
-# For custom tools: Search TOOL.md metadata
-execute_command(\"\"\"
-    rg 'tasks:' custom_tools/*/TOOL.md -A 5 | rg -i 'scrape|image' &&
-    rg '^requires_api_keys:' custom_tools/*/TOOL.md &&
-    env | grep 'API_KEY'
-\"\"\")
-```
-
-**Step 3: Extract Minimal Info (Context-efficient)**
-```bash
-# ✅ EFFICIENT: Get JUST function signatures using ast-grep
-execute_command(\"sg --pattern 'def \\$FUNC(\\$\\$\\$):' --lang python servers/weather/get_forecast.py\")
-
-# ✅ EFFICIENT: Get first 20-25 lines (docstring only, no implementation)
-execute_command(\"head -n 25 servers/weather/get_forecast.py\")
-
-# ✅ EFFICIENT: Get specific section with context
-execute_command(\"rg 'Args:' servers/weather/get_forecast.py -A 10\")
-
-# ❌ WASTEFUL: Reading entire file when you only need the docstring
-execute_command(\"cat servers/weather/get_forecast.py\")  # Avoid unless necessary!
-```
-
-**Step 4: Full Read Only If Implementation Needed**
-```bash
-# Only read full file if you need to understand implementation details
-execute_command(\"cat servers/weather/get_forecast.py\")
-```
-
-**Task-Based Examples:**
-
-```bash
-# Task: "I need weather data"
-# ✅ Single batched command
-execute_command(\"\"\"
-    rg 'weather|forecast' servers/ -l &&
-    ls servers/weather/ &&
-    head -n 25 servers/weather/get_current.py
-\"\"\")
-
-# Task: "Find multimodal tools that don't need API keys"
-# ✅ Combine metadata searches
-execute_command(\"\"\"
-    rg '^category: multimodal' custom_tools/*/TOOL.md -l &&
-    rg '^requires_api_keys: \\[\\]' custom_tools/*/TOOL.md -l
-\"\"\")
-
-# Task: "What can the GitHub server do?"
-# ✅ Structure + signatures (no implementations)
-execute_command(\"\"\"
-    ls servers/github/ &&
-    sg --pattern 'def \\$NAME(\\$\\$\\$):' --lang python servers/github/*.py
-\"\"\")
-
-# Task: "Understand a specific tool's parameters"
-# ✅ Extract just the Args section
-execute_command(\"rg 'Args:' servers/github/create_issue.py -A 15\")
-```
-
-**ast-grep Patterns for Efficient Extraction:**
-```bash
-# Extract all function names (no bodies)
-sg --pattern 'def \\$FUNC(\\$\\$\\$):' --lang python servers/weather/
-
-# Get function signatures with return types
-sg --pattern 'def \\$FUNC(\\$\\$\\$) -> \\$RET:' --lang python servers/
-
-# Find all imports (see dependencies)
-sg --pattern 'import \\$MOD' --lang python servers/github/create_issue.py
-
-# Get __all__ exports list
-sg --pattern '__all__ = [\\$\\$\\$]' --lang python servers/weather/__init__.py
+# Search MCP server functions by name/keyword
+rg -i '<keyword>' servers/ -l
 ```
 
 **Usage Pattern:**
@@ -576,7 +529,7 @@ def get_qualified_leads(limit: int = 50) -> list:
     return sorted(qualified, key=lambda x: x["score"], reverse=True)[:limit]
 ```
 
-This approach provides **98% context reduction** compared to loading all tool schemas upfront."""
+This approach provides context reduction compared to loading all tool schemas upfront."""
 
 
 class MemorySection(SystemPromptSection):
@@ -603,189 +556,90 @@ class MemorySection(SystemPromptSection):
         """Build memory system instructions."""
         content_parts = []
 
-        # Header with emphasis on proactive usage and persistence
+        # Header - concise overview
         content_parts.append(
-            "## Memory System: Workspace-Persistent Context\n\n"
-            "You have access to a filesystem-based memory system that persists across conversations "
-            "and is stored in your workspace. Memories are automatically saved to `workspace/memory/` "
-            "as markdown files and loaded on startup. Use memory proactively to:\n"
-            "- Save key decisions, preferences, and rationale\n"
-            "- Record important findings and patterns\n"
-            "- Build up knowledge over time within this workspace\n"
-            "- Avoid re-discovering the same information across tasks",
+            "## Memory System\n\n" "Persist important context across conversations using memory tools. " "Memories are automatically managed and stored in your workspace.\n",
         )
 
-        # Memory tiers explanation
+        # Memory tiers - simplified
         content_parts.append(
-            "\n### Memory Tiers\n\n"
-            "**short_term** (Always in-context):\n"
-            "- Auto-injected into every agent's system prompt\n"
-            "- Use for: User preferences, current project context, frequently needed info\n"
-            "- Stored in: `workspace/memory/short_term/{name}.md`\n"
-            "- Examples: user_preferences.md, project_goals.md, coding_style.md\n\n"
-            "**long_term** (Load on-demand):\n"
-            "- Requires explicitly reading the file to bring into context\n"
-            "- Use for: Historical context, reference material, less frequently needed info\n"
-            "- Stored in: `workspace/memory/long_term/{name}.md`\n"
-            "- Examples: project_history.md, known_issues.md, architecture_decisions.md",
+            "### Memory Tiers\n\n"
+            "**short_term**: Auto-loaded into context every turn. Use for frequently-needed info.\n"
+            "**long_term**: Load manually when needed. Use for reference material and history.\n",
         )
 
-        # When to save to memory - critical triggers
-        content_parts.append(
-            "\n### When to Save to Memory (Critical Triggers)\n\n"
-            "Save to memory when you encounter these patterns:\n\n"
-            "**User Information** → short_term:\n"
-            "- User shares name, preferences, or personal details\n"
-            "- User states coding style preferences (tabs/spaces, naming conventions)\n"
-            "- User mentions project goals, constraints, or requirements\n"
-            '- Example: "I prefer functional programming" → create `workspace/memory/short_term/code_preferences.md`\n\n'
-            "**Important Decisions** → short_term or long_term:\n"
-            "- Architectural decisions with rationale (why approach X over Y)\n"
-            "- Technology/library choices and reasoning\n"
-            "- Trade-offs discussed and conclusion reached\n"
-            '- Example: "Use React over Vue because team has more experience" → create `workspace/memory/long_term/tech_stack_decisions.md`\n\n'
-            "**Discoveries & Patterns** → long_term:\n"
-            "- Bug patterns affecting multiple files\n"
-            "- Recurring issues and their solutions\n"
-            "- Performance bottlenecks identified\n"
-            "- Code patterns that work well (or poorly) in this codebase\n"
-            "- Example: Found authentication bug in 3 endpoints → create `workspace/memory/long_term/known_issues.md`\n\n"
-            "**Tool & Workflow Patterns** → long_term:\n"
-            "- Successful tool usage sequences\n"
-            "- Build/deployment procedures specific to this project\n"
-            "- Testing strategies that work\n"
-            '- Example: "Always run lint before build" → append to `workspace/memory/long_term/workflow_patterns.md`\n\n'
-            "**AVOID saving:**\n"
-            "- Temporary state or ephemeral information\n"
-            "- Information already in code/docs (save insights about them instead)\n"
-            "- Specific file paths or line numbers (save high-level patterns instead)",
-        )
-
-        # Persistence explanation
-        content_parts.append(
-            "\n### Multi-Turn & Cross-Workspace Persistence\n\n"
-            "**Multi-turn persistence:**\n"
-            "- All memories persist across conversation turns automatically\n"
-            "- Memories are loaded from filesystem on agent startup\n"
-            "- Updates to memories are immediately saved to filesystem\n"
-            "- No special action needed - just create/update and they'll be there next turn\n\n"
-            "**Cross-workspace behavior:**\n"
-            "- Memories are scoped to the current workspace directory\n"
-            "- Each workspace has its own `workspace/memory/` directory\n"
-            "- To share memories across workspaces: manually copy .md files from one workspace's memory/ to another\n"
-            '- Consider creating a "global" workspace for user-level preferences used across projects',
-        )
-
-        # Short-term memory (full content if available)
+        # Show existing short-term memories (full content)
         short_term = self.memory_config.get("short_term", {})
         if short_term:
-            content_parts.append("\n### Short-Term Memory (Current Session)\n")
-
+            content_parts.append("\n### Current Short-Term Memories\n")
             short_term_content = short_term.get("content", "")
             if short_term_content:
                 content_parts.append(short_term_content)
             else:
                 content_parts.append("*No short-term memories yet*")
 
-        # Long-term memory (XML format)
+        # Show existing long-term memories (summaries only)
         long_term = self.memory_config.get("long_term", [])
         if long_term:
-            content_parts.append("\n### Long-Term Memory (Persistent)\n")
+            content_parts.append("\n### Available Long-Term Memories\n")
             content_parts.append("<available_long_term_memories>")
-
             for memory in long_term:
                 mem_id = memory.get("id", "N/A")
                 summary = memory.get("summary", "No summary")
                 created = memory.get("created_at", "Unknown")
-
                 content_parts.append("")
                 content_parts.append("<memory>")
                 content_parts.append(f"<id>{mem_id}</id>")
                 content_parts.append(f"<summary>{summary}</summary>")
                 content_parts.append(f"<created>{created}</created>")
                 content_parts.append("</memory>")
-
             content_parts.append("")
             content_parts.append("</available_long_term_memories>")
 
-        # Memory file conventions and operations
+        # Tools - minimal, focused
         content_parts.append(
-            "\n### Memory File Operations\n\n"
-            "Memories are simply markdown files in your workspace. Use standard file operations to manage them:\n\n"
-            "**File Structure:**\n"
-            "```\nworkspace/\n"
-            "└── memory/\n"
-            "    ├── short_term/\n"
-            "    │   ├── code_style.md\n"
-            "    │   └── user_preferences.md\n"
-            "    └── long_term/\n"
-            "        ├── architecture_decisions.md\n"
-            "        └── known_issues.md\n```\n\n"
-            "**File Naming:** Use descriptive, filesystem-safe names (lowercase, underscores, no spaces)\n\n"
-            "**File Format:** Markdown with optional YAML frontmatter for metadata:\n"
-            "```markdown\n---\ncreated: 2024-01-15\nupdated: 2024-01-15\n---\n# Code Style\n- Use snake_case for variables\n- Prefer functional style\n```\n\n"
-            "**Operations needed:**\n"
-            "- **Create memory:** Write a new file at `workspace/memory/short_term/code_style.md`\n"
-            "- **Read memory:** Read the file at `workspace/memory/long_term/architecture_decisions.md`\n"
-            "- **Update memory (append):** Edit the file to add new sections\n"
-            "- **Update memory (replace):** Overwrite the file with new content\n"
-            "- **List memories:** List/glob files in `workspace/memory/` to discover all memories\n"
-            "- **Delete memory:** Delete the file",
+            "\n### Memory Tools\n\n"
+            '**create_memory(name, content, tier="short_term")**\n'
+            "- Create new memory (auto-adds metadata: created, updated, agent_id)\n"
+            '- name: Descriptive identifier (e.g., "user_preferences", "known_issues")\n'
+            '- tier: "short_term" (always in context) or "long_term" (load on demand)\n\n'
+            "**append_to_memory(name, content)**\n"
+            "- Add to existing memory (most common operation)\n"
+            "- Auto-updates timestamp\n\n"
+            "**load_memory(name)**\n"
+            "- Load long-term memory into context\n"
+            "- Returns full content + metadata\n\n"
+            "**remove_memory(name)**\n"
+            "- Delete memory\n",
         )
 
-        # Concrete usage examples
+        # When to use - critical triggers only
         content_parts.append(
-            "\n### Usage Examples\n\n"
-            "**Example 1: User shares preference**\n"
-            '```\nUser: "I always use snake_case for variables"\n\n'
-            "→ Create file: workspace/memory/short_term/code_style.md\n"
-            "Content:\n"
-            "---\n"
-            "created: 2024-01-15\n"
-            "---\n"
-            "# Coding Style\n"
-            "- Variable naming: snake_case\n"
-            "- Function naming: snake_case\n```\n\n"
-            "**Example 2: Important architectural decision**\n"
-            "```\nAfter discussion about database choice:\n\n"
-            "→ Create file: workspace/memory/long_term/architecture_decisions.md\n"
-            "Content:\n"
-            "---\n"
-            "created: 2024-01-15\n"
-            "---\n"
-            "# Database Choice\n\n"
-            "**Decision:** PostgreSQL\n"
-            "**Rationale:** Need JSONB support for flexible schemas, team has PostgreSQL experience\n"
-            "**Date:** 2024-01-15\n```\n\n"
-            "**Example 3: Bug pattern discovered - append to existing memory**\n"
-            "```\nAfter finding another authentication bug:\n\n"
-            "→ Read file: workspace/memory/long_term/known_issues.md (to check what exists)\n"
-            "→ Edit file: workspace/memory/long_term/known_issues.md (append new issue)\n\n"
-            "Added content:\n"
-            "## Issue: Missing null checks\n"
-            "- Affected: auth middleware, user endpoints\n"
-            "- Fix: Add null guards before jwt.verify() calls\n"
-            "- Found: 2024-01-15\n```\n\n"
-            "**Example 4: Discover existing memories at task start**\n"
-            "```\nBefore starting a new feature:\n\n"
-            "→ List files in workspace/memory/ to see what exists\n"
-            "→ Read relevant long-term memories:\n"
-            "   - workspace/memory/long_term/architecture_decisions.md\n"
-            "   - workspace/memory/long_term/known_issues.md\n\n"
-            "Note: Short-term memories already shown in system prompt above\n```",
+            "\n### When to Save\n\n"
+            '**User preferences** → create_memory("user_prefs", ..., tier="short_term")\n'
+            "- Coding style, naming conventions, project constraints\n\n"
+            '**Important decisions** → create_memory("decisions", ..., tier="long_term")\n'
+            "- Architectural choices with rationale\n"
+            "- Technology selections and trade-offs\n\n"
+            '**Discoveries** → append_to_memory("findings", "## New pattern\\n...")\n'
+            "- Bug patterns, performance issues, code patterns\n"
+            "- Build/test procedures specific to this project\n",
         )
 
-        # Best practices
+        # Examples - minimal, concrete
         content_parts.append(
-            "\n### Best Practices\n\n"
-            "- **Start tasks by checking memories** - List files to discover memories, read them to load content\n"
-            "- **Use descriptive filenames** - Memory filenames should be clear and searchable (e.g., 'user_preferences.md', not 'temp1.md')\n"
-            "- **Append instead of replace** - If memory exists, edit to add new sections rather than overwriting\n"
-            "- **Markdown formatting** - Use markdown in content for better readability and structure\n"
-            '- **Include context** - Make memory content self-contained ("User prefers tabs over spaces" not just "tabs")\n'
-            "- **Short-term for frequent access** - Put regularly needed info in short_term/ directory\n"
-            "- **Long-term for reference** - Put historical context and reference material in long_term/ directory\n"
-            "- **Optional metadata** - Use YAML frontmatter for timestamps and other metadata, but it's not required",
+            "\n### Examples\n\n"
+            "```python\n"
+            "# User shares preference\n"
+            'create_memory(\n    name="code_style",\n    content="- Uses snake_case\\n- Prefers functional style",\n    tier="short_term"\n)\n\n'
+            "# Record architectural decision\n"
+            'create_memory(\n    name="tech_decisions",\n    content="# Database\\n**Choice:** PostgreSQL\\n**Why:** JSONB support + team experience",\n    tier="long_term"\n)\n\n'
+            "# Add new finding\n"
+            'append_to_memory(\n    name="known_issues",\n    content="## Auth timeout bug\\n- Affects /login\\n- Fixed in PR #123"\n)\n\n'
+            "# Load reference material\n"
+            'result = load_memory("tech_decisions")\n'
+            'print(result["content"])\n'
+            "```\n",
         )
 
         return "\n".join(content_parts)
@@ -859,7 +713,8 @@ class CommandExecutionSection(SystemPromptSection):
 
     def build_content(self) -> str:
         parts = ["## Command Execution"]
-        parts.append("You can run command line commands using the `execute_command` tool.\n")
+        parts.append("You can run command line commands using the `execute_command` tool.")
+        parts.append("**Efficiency**: Batch multiple commands in one call using `&&` (e.g., `ls servers/ && ls custom_tools/`)\n")
 
         if self.docker_mode:
             parts.append("**IMPORTANT: Docker Execution Environment**")

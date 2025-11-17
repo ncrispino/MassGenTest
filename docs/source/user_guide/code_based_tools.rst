@@ -1,11 +1,11 @@
 Code-Based Tools
 ================
 
-MassGen supports code-based tool access following the **CodeAct paradigm**. Instead of passing tool schemas to the model, MCP tools are presented as Python code in the workspace filesystem. Agents discover tools by reading files, import them like normal Python modules, and execute them via command-line.
+MassGen supports code-based tool access following the [CodeAct](https://machinelearning.apple.com/research/codeact) paradigm and other blog posts by [Anthropic](https://www.anthropic.com/engineering/code-execution-with-mcp) and [Cloudflare](https://blog.cloudflare.com/code-mode/)). Instead of passing tool schemas to the model, MCP tools are presented as Python code in the workspace filesystem. Agents discover tools by reading files, import them like normal Python modules, and execute them via command-line.
 
 This approach provides significant benefits:
 
-* **98% context reduction** - Load only needed tools instead of all schemas upfront (Anthropic research)
+* **Context reduction** - Load only needed tools instead of all schemas upfront
 * **Transparent tool access** - Agents read source code and docstrings to understand tools
 * **Native composition** - Combine multiple tools naturally using standard Python
 * **Async-friendly workflows** - Write async scripts for parallel tool execution
@@ -27,16 +27,21 @@ MassGen includes a working example you can try immediately:
 
 .. code-block:: bash
 
-   # Code-based tools with weather MCP
+   # Explore available tools (demonstrates tool discovery)
+   massgen --automation \
+     --config massgen/configs/tools/filesystem/code_based/example_code_based_tools.yaml \
+     "List all available tools by exploring the workspace filesystem. Show what MCP tools and custom tools are available."
+
+   # Or create a website (demonstrates skills system)
    massgen \
      --config massgen/configs/tools/filesystem/code_based/example_code_based_tools.yaml \
-     "What's the weather forecast for San Francisco and New York?"
+     "Create a website about Bob Dylan, ensuring that it is visually appealing and user friendly"
 
 The agent will:
 
-1. Explore ``workspace/servers/`` to discover available tools
-2. Read tool documentation from Python files
-3. Import and use the weather tools
+1. Explore ``workspace/`` to discover available tools (MCP tools in ``servers/``, custom tools in ``custom_tools/``)
+2. Read tool documentation from Python files and TOOL.md files
+3. Import and use the tools as needed
 4. Optionally create workflows in ``workspace/utils/`` for complex operations
 
 How It Works
@@ -504,7 +509,6 @@ Context Reduction
 
 * Only tool names visible initially (``ls servers/``)
 * Agent reads only needed tools
-* 98% reduction in tool-related context (Anthropic research)
 
 Transparency
 ~~~~~~~~~~~~
@@ -603,7 +607,7 @@ When ``enable_code_based_tools: true``:
 
 These framework MCPs are abstracted at the protocol level and not visible in the filesystem. For example, agents can run bash commands directly without needing an ``execute_command`` function - it's automatically available.
 
-**Important**: User MCP tools are **completely filtered out** of the agent's MCP tool list. This forces agents to use the generated Python wrappers, achieving the 98% context reduction benefit.
+**Important**: User MCP tools are **completely filtered out** of the agent's MCP tool list. This forces agents to use the generated Python wrappers, achieving context reduction benefit.
 
 Non-blocking Code Generation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -708,13 +712,13 @@ References
 
 This implementation is based on recent research and production systems:
 
-* **CodeAct** (Apple Research) - Shows 20% higher success rate using code as action space
+* **CodeAct** (Apple Research) -
   https://machinelearning.apple.com/research/codeact
 
-* **Cloudflare Code Mode** - TypeScript API approach for tool access
+* **Cloudflare Code Mode** -
   https://blog.cloudflare.com/code-mode/
 
-* **Anthropic MCP Code Execution** - Demonstrates 98% context reduction
+* **Anthropic MCP Code Execution** -
   https://www.anthropic.com/engineering/code-execution-with-mcp
 
 See Also

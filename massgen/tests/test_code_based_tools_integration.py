@@ -473,15 +473,18 @@ class TestCodeBasedToolsIntegration:
 
         await manager.setup_code_based_tools_from_mcp_client(mock_mcp_client)
 
-        # Verify tools are in shared location
-        assert (shared_tools / "servers").exists()
-        assert (shared_tools / "servers" / "weather").exists()
-        assert (shared_tools / ".mcp").exists()
+        # Verify tools are in shared location (with hash subdirectory)
+        actual_shared_path = manager.shared_tools_directory
+        assert actual_shared_path is not None
+        assert actual_shared_path.exists()
+        assert (actual_shared_path / "servers").exists()
+        assert (actual_shared_path / "servers" / "weather").exists()
+        assert (actual_shared_path / ".mcp").exists()
 
         workspace = Path(temp_workspace["workspace"])
         # Verify workspace has symlinks (not real directories)
         assert (workspace / "servers").is_symlink()
-        assert (workspace / "servers").resolve() == (shared_tools / "servers").resolve()
+        assert (workspace / "servers").resolve() == (actual_shared_path / "servers").resolve()
 
     @pytest.mark.asyncio
     async def test_shared_tools_directory_skips_regeneration(
@@ -504,11 +507,12 @@ class TestCodeBasedToolsIntegration:
 
         await manager1.setup_code_based_tools_from_mcp_client(mock_mcp_client)
 
-        # Record modification time
-        servers_init = shared_tools / "servers" / "__init__.py"
+        # Record modification time (tools are in hash subdirectory)
+        actual_shared_path = manager1.shared_tools_directory
+        servers_init = actual_shared_path / "servers" / "__init__.py"
         original_mtime = servers_init.stat().st_mtime
 
-        # Second agent should skip regeneration
+        # Second agent should skip regeneration but still create symlinks
         workspace2 = Path(temp_workspace["temp_dir"]) / "workspace2"
         workspace2.mkdir()
 
@@ -525,6 +529,10 @@ class TestCodeBasedToolsIntegration:
         # Verify modification time hasn't changed (no regeneration)
         new_mtime = servers_init.stat().st_mtime
         assert new_mtime == original_mtime
+
+        # Verify second workspace also has symlinks
+        assert (workspace2 / "servers").is_symlink()
+        assert (workspace2 / "servers").resolve() == (actual_shared_path / "servers").resolve()
 
     @pytest.mark.asyncio
     async def test_shared_tools_directory_adds_to_read_only_paths(
@@ -550,10 +558,11 @@ class TestCodeBasedToolsIntegration:
         # Check that it's registered (exact permission checking depends on PathPermissionManager API)
         assert manager.path_permission_manager is not None
 
-        # Verify symlinks were created in workspace
+        # Verify symlinks were created in workspace (pointing to hash subdirectory)
+        actual_shared_path = manager.shared_tools_directory
         workspace = Path(temp_workspace["workspace"])
         assert (workspace / "servers").is_symlink()
-        assert (workspace / "servers").resolve() == (shared_tools / "servers").resolve()
+        assert (workspace / "servers").resolve() == (actual_shared_path / "servers").resolve()
         assert (workspace / ".mcp").is_symlink()
         assert (workspace / "custom_tools").is_symlink()
 
