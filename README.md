@@ -268,6 +268,9 @@ pip install massgen
 # Or with uv (faster)
 uv pip install massgen
 
+# Optional: Install skills
+massgen --setup-skills
+
 # Run the interactive setup wizard
 massgen
 ```
@@ -307,7 +310,18 @@ uv pip install -e .
 
 # Optional: External framework integration
 pip install -e ".[external]"
+
+# Automated setup (Unix/Linux/macOS) - installs dependencies, skills, Docker images
+./scripts/init.sh
+
+# Or just install skills (works on all platforms)
+massgen --setup-skills
+
+# Or use the bash script (Unix/Linux/macOS only)
+./scripts/init_skills.sh
 ```
+
+> **Note:** The `--setup-skills` command works cross-platform (Windows, macOS, Linux). The bash scripts (`init.sh`, `init_skills.sh`) are Unix-only but provide additional dev setup like Docker image builds.
 
 <details>
 <summary><b>Alternative Installation Methods</b> (click to expand)</summary>

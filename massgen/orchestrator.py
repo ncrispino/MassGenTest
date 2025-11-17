@@ -267,6 +267,10 @@ class Orchestrator(ChatAgent):
                         agent.backend.filesystem_manager.setup_massgen_skill_directories(
                             massgen_skills=self.config.coordination_config.massgen_skills,
                         )
+                # Setup memory directories if memory filesystem mode is enabled
+                if hasattr(self.config, "coordination_config") and hasattr(self.config.coordination_config, "enable_memory_filesystem_mode"):
+                    if self.config.coordination_config.enable_memory_filesystem_mode:
+                        agent.backend.filesystem_manager.setup_memory_directories()
                 # Update MCP config with agent_id for Docker mode (must be after setup_orchestration_paths)
                 agent.backend.filesystem_manager.update_backend_mcp_config(agent.backend.config)
 
@@ -284,17 +288,12 @@ class Orchestrator(ChatAgent):
                 self._inject_planning_tools_for_all_agents()
                 logger.info("[Orchestrator] Planning tools injection complete")
 
-        # NOTE: Memory MCP tools have been disabled in favor of direct file operations
-        # Agents now use standard file tools (Read/Write/Edit) to manage memory files
-        # in workspace/memory/short_term/ and workspace/memory/long_term/
-        # See MemorySection in system_prompt_sections.py for guidance
-        #
-        # # Inject memory tools if enabled
-        # if hasattr(self.config, "coordination_config") and hasattr(self.config.coordination_config, "enable_memory_filesystem_mode"):
-        #     if self.config.coordination_config.enable_memory_filesystem_mode:
-        #         logger.info(f"[Orchestrator] Injecting memory tools for {len(self.agents)} agents")
-        #         self._inject_memory_tools_for_all_agents()
-        #         logger.info("[Orchestrator] Memory tools injection complete")
+        # Inject memory tools if enabled
+        if hasattr(self.config, "coordination_config") and hasattr(self.config.coordination_config, "enable_memory_filesystem_mode"):
+            if self.config.coordination_config.enable_memory_filesystem_mode:
+                logger.info(f"[Orchestrator] Injecting memory tools for {len(self.agents)} agents")
+                self._inject_memory_tools_for_all_agents()
+                logger.info("[Orchestrator] Memory tools injection complete")
 
     async def _prepare_paraphrases_for_agents(self, question: str) -> None:
         """Generate and assign DSPy paraphrases for the current question."""
@@ -509,6 +508,23 @@ class Orchestrator(ChatAgent):
                     logger.warning(f"[Orchestrator] Agent {agent_id} filesystem_manager.cwd is None")
             else:
                 logger.warning(f"[Orchestrator] Agent {agent_id} has no filesystem_manager")
+
+        # Add feature flags for auto-inserting discovery tasks
+        skills_enabled = hasattr(self.config, "coordination_config") and hasattr(self.config.coordination_config, "use_skills") and self.config.coordination_config.use_skills
+        if skills_enabled:
+            args.append("--skills-enabled")
+
+        auto_discovery_enabled = False
+        if hasattr(agent, "backend") and hasattr(agent.backend, "config"):
+            auto_discovery_enabled = agent.backend.config.get("auto_discover_custom_tools", False)
+        if auto_discovery_enabled:
+            args.append("--auto-discovery-enabled")
+
+        memory_enabled = (
+            hasattr(self.config, "coordination_config") and hasattr(self.config.coordination_config, "enable_memory_filesystem_mode") and self.config.coordination_config.enable_memory_filesystem_mode
+        )
+        if memory_enabled:
+            args.append("--memory-enabled")
 
         config = {
             "name": f"planning_{agent_id}",
