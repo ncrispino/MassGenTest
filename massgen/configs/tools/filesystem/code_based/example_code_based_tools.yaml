@@ -38,6 +38,7 @@ agents:
 
       # Command line execution (required for code-based tools)
       command_line_execution_mode: "docker"
+      command_line_docker_network_mode: "bridge"
 
       # IMPORTANT: Pass API keys to Docker (required for most custom tools)
       # Most tools in massgen/tool/ need API keys (OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.)

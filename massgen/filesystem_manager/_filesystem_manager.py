@@ -742,7 +742,7 @@ class FilesystemManager:
         workspace = self.cwd
 
         # Directories to symlink (utils/ NOT included - agents create that in their workspace)
-        tool_dirs = ["servers", "custom_tools", ".mcp"]
+        tool_dirs = ["servers", "custom_tools", ".mcp", "massgen"]
 
         for dir_name in tool_dirs:
             source_dir = shared_tools_path / dir_name

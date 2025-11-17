@@ -307,7 +307,15 @@ uv pip install -e .
 
 # Optional: External framework integration
 pip install -e ".[external]"
+
+# Automated setup (Unix/Linux/macOS) - installs dependencies, skills, Docker images
+./scripts/init.sh
+
+# Or just install skills (Anthropic + Crawl4AI)
+./scripts/init_skills.sh
 ```
+
+> **Note:** Windows support for init scripts is planned for a future release. Windows users should follow the manual installation steps in the [Installation Guide](https://docs.massgen.ai/en/latest/quickstart/installation.html).
 
 <details>
 <summary><b>Alternative Installation Methods</b> (click to expand)</summary>
