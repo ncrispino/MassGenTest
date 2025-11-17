@@ -220,3 +220,4 @@ sessions/
 .claude/
 CLAUDE.md
 .agent/
+shared_tools/
