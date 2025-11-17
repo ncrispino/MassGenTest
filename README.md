@@ -69,7 +69,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🆕 Latest Features</h3></summary>
 
-- [v0.1.11 Features](#-latest-features-v0111)
+- [v0.1.13 Features](#-latest-features-v0113)
 </details>
 
 <details open>
@@ -123,15 +123,15 @@ This project started with the "threads of thought" and "iterative refinement" id
 <summary><h3>🗺️ Roadmap</h3></summary>
 
 - Recent Achievements
-  - [v0.1.12](#recent-achievements-v0111)
-  - [v0.0.3 - v0.1.11](#previous-achievements-v003---v0110)
+  - [v0.1.13](#recent-achievements-v0113)
+  - [v0.0.3 - v0.1.12](#previous-achievements-v003---v0112)
 - [Key Future Enhancements](#key-future-enhancements)
   - Bug Fixes & Backend Improvements
   - Advanced Agent Collaboration
   - Expanded Model, Tool & Agent Integrations
   - Improved Performance & Scalability
   - Enhanced Developer Experience
-- [v0.1.13 Roadmap](#v0112-roadmap)
+- [v0.1.14 Roadmap](#v0114-roadmap)
 </details>
 
 <details open>
@@ -156,52 +156,52 @@ This project started with the "threads of thought" and "iterative refinement" id
 
 ---
 
-## 🆕 Latest Features (v0.1.12)
+## 🆕 Latest Features (v0.1.13)
 
-**🎉 Released: November 14, 2025**
+**🎉 Released: November 17, 2025**
 
-**What's New in v0.1.12:**
-- **🏗️ System Prompt Architecture Refactoring** - Complete redesign with hierarchical structure and XML-based formatting for better LLM attention
-- **🔍 Semtools & Serena Skills** - Semantic search via embeddings and symbol-level code understanding via LSP integration
-- **🤖 Multi-Agent Computer Use** - Enhanced Docker integration with VNC visualization and multi-agent coordination
+**What's New in v0.1.13:**
+- **🏗️ Code-Based Tools System (CodeAct Paradigm)** - Revolutionary tool integration via importable Python code
+- **🔍 MCP Server Registry & Auto-Discovery** - Intelligent tool routing with automatic server discovery and on-demand loading
+- **🛠️ Skills Installation System** - Cross-platform automated installer for openskills CLI, Anthropic skills, and Crawl4AI
+- **🌐 NLIP Integration** - Advanced tool routing with Natural Language Interface Protocol across all backends
 
 **Key Improvements:**
-- Hierarchical system prompt construction with improved modularity and attention management
-- Semtools skill for embedding-based semantic file search and code discovery
-- Serena skill for LSP-based symbol-level code navigation and analysis
-- Skills system local execution mode supporting non-Docker environments
-- Enhanced Gemini computer use tool with Docker integration, VNC visualization, and X11 display
-- Multi-agent computer automation combining Claude (Docker/Linux) and Gemini (Browser)
-- Browser automation tool with screenshot file saving to workspace directories
+- Code-based tool integration dramatically reduces context pollution through on-demand loading
+- MCP server registry enables automatic tool discovery without manual configuration
+- Skills installer works cross-platform (Windows, macOS, Linux) with automatic dependency management
+- NLIP provides intelligent tool routing at both agent and orchestrator levels
+- TOOL.md documentation standard with YAML frontmatter for all custom tools
 
-**Try v0.1.12 Features:**
+**Try v0.1.13 Features:**
 ```bash
 # Install or upgrade from PyPI
 pip install --upgrade massgen
 
-# Enhanced Skills System - semantic search and code understanding
-# Prerequisites:
-# - Docker daemon running (call `massgen/docker/build.sh [--sudo]` for updated containers)
-# - openskills installed: `npm i -g openskills` then `openskills install anthropics/skills --universal -y`
-uv run massgen --config massgen/configs/skills/skills_basic.yaml \
-  "Create cool algorithmic art we can use in GitHub repo"
+# Automated Skills Installation - cross-platform setup
+massgen --setup-skills  # Installs openskills CLI, Anthropic skills, and Crawl4AI
 
-# Multi-Agent Computer Use - Claude (Docker) + Gemini (Browser) coordination
-# Prerequisites:
-# - Set ANTHROPIC_API_KEY and GEMINI_API_KEY in .env
-# - Docker installed and running
-# - Run ./scripts/setup_docker_cua.sh for Claude Docker setup
-# - Install Playwright: pip install playwright && playwright install chromium
-uv run massgen --config massgen/configs/tools/custom_tools/multi_agent_computer_use_example.yaml \
-  "Search for latest Python releases online and create a summary document"
+# Code-Based Tools (CodeAct Paradigm) - 98% context reduction
+# Prerequisites: Docker running, .env file with API keys
+uv run massgen --automation \
+  --config massgen/configs/tools/filesystem/code_based/example_code_based_tools.yaml \
+  "List all available tools by exploring the workspace filesystem"
 
-# Gemini Computer Use with Docker - Linux desktop automation
-# Prerequisites:
-# - Set GEMINI_API_KEY in .env
-# - Docker running, run ./scripts/setup_docker_cua.sh
-# - pip install google-genai docker
-massgen --config massgen/configs/tools/custom_tools/gemini_computer_use_docker_example.yaml \
-  "Browse GitHub and find popular AI projects"
+# Or use with skills for advanced features:
+uv run massgen --config massgen/configs/tools/filesystem/code_based/example_code_based_tools.yaml \
+  "Create a website about Bob Dylan, ensuring that it is visually appealing and user friendly"
+
+# Minimal MCPs - command-line file operations with memory filesystem mode
+uv run massgen --config massgen/configs/tools/filesystem/exclude_mcps/test_minimal_mcps.yaml \
+  "Create a website about Bob Dylan"
+
+# NLIP Integration - natural language tool routing
+massgen --config massgen/configs/examples/nlip_openai_weather_test.yaml \
+  "What's the sum of 123 and 456? And what's the weather in Tokyo?"
+
+# Orchestrator-level NLIP - multi-agent coordination
+massgen --config massgen/configs/examples/nlip_orchestrator_test.yaml \
+  "What's the sum of 123 and 456? And what's the weather in Tokyo?"
 ```
 
 → [See full release history and examples](massgen/configs/README.md#release-history--examples)
@@ -268,6 +268,9 @@ pip install massgen
 # Or with uv (faster)
 uv pip install massgen
 
+# Optional: Install skills
+massgen --setup-skills
+
 # Run the interactive setup wizard
 massgen
 ```
@@ -307,7 +310,18 @@ uv pip install -e .
 
 # Optional: External framework integration
 pip install -e ".[external]"
+
+# Automated setup (Unix/Linux/macOS) - installs dependencies, skills, Docker images
+./scripts/init.sh
+
+# Or just install skills (works on all platforms)
+massgen --setup-skills
+
+# Or use the bash script (Unix/Linux/macOS only)
+./scripts/init_skills.sh
 ```
+
+> **Note:** The `--setup-skills` command works cross-platform (Windows, macOS, Linux). The bash scripts (`init.sh`, `init_skills.sh`) are Unix-only but provide additional dev setup like Docker image builds.
 
 <details>
 <summary><b>Alternative Installation Methods</b> (click to expand)</summary>
@@ -1070,25 +1084,29 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 ⚠️ **Early Stage Notice:** As MassGen is in active development, please expect upcoming breaking architecture changes as we continue to refine and improve the system.
 
-### Recent Achievements (v0.1.12)
+### Recent Achievements (v0.1.13)
 
-**🎉 Released: November 14, 2025**
+**🎉 Released: November 17, 2025**
 
-#### System Prompt Architecture & Semantic Skills
-- **Complete Refactoring**: Hierarchical system prompt structure with improved LLM attention management and XML-based formatting for Claude (`massgen/system_messages/system_message_builder.py`)
-- **Semtools Skill**: Semantic search capabilities using embedding-based similarity for intelligent file and code discovery (`massgen/skills/optional/semtools/`)
-- **Serena Skill**: Symbol-level code understanding via LSP integration for precise code navigation and analysis (`massgen/skills/optional/serena/`)
-- **Skills System Enhancements**: Local execution mode support enabling skills to run outside Docker environments with improved module loading
-- **Documentation**: `system_prompt_architecture_redesign.md`, `semtools_skill_integration.md`, `serena_skill_integration.md`
+#### Code-Based Tools & MCP Registry
+- **CodeAct Paradigm Implementation**: Tool integration via importable Python code instead of schema-based tools, reducing token usage (`massgen/filesystem_manager/_tool_code_writer.py`, `massgen/mcp_tools/code_generator.py`)
+- **MCP Server Registry**: Auto-discovery and intelligent tool routing with server registry infrastructure (`massgen/mcp_tools/server_registry.py`)
+- **Automatic Tool Loading**: On-demand loading of MCP tools only when needed, dramatically reducing context pollution
+- **TOOL.md Documentation Standard**: Standardized documentation format for custom tools with YAML frontmatter metadata and usage examples
 
-#### Multi-Agent Computer Use with Docker
-- **Enhanced Gemini Tool**: Docker integration for Linux desktop automation with VNC visualization and X11 display support (`massgen/tool/_gemini_computer_use/gemini_computer_use_tool.py`)
-- **Multi-Agent Coordination**: Combined Claude (Docker/Linux) and Gemini (Browser) computer use for complex automation workflows
-- **Configuration Examples**: `multi_agent_computer_use_example.yaml`, `gemini_computer_use_docker_example.yaml`, `claude_computer_use_docker_example.yaml`
-- **Visualization Tools**: VNC viewer support and real-time browser monitoring for debugging automation tasks
-- **Browser Automation**: Screenshot file saving with automatic persistence to workspace directories
+#### NLIP Integration & Skills System
+- **NLIP (Natural Language Interface Protocol)**: Advanced tool routing with multi-backend support across Claude, Gemini, and OpenAI (`massgen/backend/response.py`, orchestrator integration)
+- **Skills Installation System**: Cross-platform automated installer for openskills CLI, Anthropic skills, and Crawl4AI with comprehensive setup scripts (`massgen/utils/skills_installer.py`)
+- **Enhanced Tool Selection**: Per-agent and orchestrator-level NLIP configuration for sophisticated tool routing
+- **Configuration Examples**: Sample YAML configs for NLIP integration (`massgen/configs/examples/nlip_basic.yaml`, `nlip_orchestrator_test.yaml`, `nlip_openai_weather_test.yaml`), code-based tools (`massgen/configs/tools/filesystem/code_based/example_code_based_tools.yaml`), and skills system (`massgen/configs/skills/skills_basic.yaml`)
 
-### Previous Achievements (v0.0.3 - v0.1.11)
+### Previous Achievements (v0.0.3 - v0.1.12)
+
+✅ **System Prompt Architecture Refactoring (v0.1.12)**: Hierarchical system prompt structure with XML-based formatting for Claude, improved LLM attention management
+
+✅ **Semtools & Serena Skills (v0.1.12)**: Semantic search via embedding-based similarity, symbol-level code understanding via LSP integration, local execution mode for non-Docker environments
+
+✅ **Multi-Agent Computer Use (v0.1.12)**: Enhanced Gemini computer use with Docker integration, VNC visualization, multi-agent coordination combining Claude (Docker/Linux) and Gemini (Browser)
 
 ✅ **Skills System (v0.1.11)**: Modular prompting framework with SkillsManager for dynamic skill loading, automatic discovery with always/optional categories, file search skill, Docker-compatible mounting
 
@@ -1248,21 +1266,21 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 We welcome community contributions to achieve these goals.
 
-### v0.1.12 Roadmap
+### v0.1.14 Roadmap
 
-Version 0.1.12 focuses on intelligent tool selection and semantic search capabilities:
+Version 0.1.14 focuses on terminal evaluation and multi-agent Git workflows:
 
 #### Planned Features
-- **Automatic MCP Tool Selection**: Intelligent selection of MCP tools based on task requirements to improve performance
-- **Semtools/Serena Semantic Search Skill**: Advanced semantic search capabilities as a reusable skill
+- **MassGen Terminal Evaluation**: Self-evaluation and improvement of frontend/UI through terminal recording with asciinema, automated video generation and case study creation
+- **Git Worktrees for Multi-Agent**: Enable multiple agents to work on different Git worktrees simultaneously for parallel development workflows
 
 Key technical approach:
-- **Tool Selection**: Pre-execution tool selection based on prompts, dynamic tool refinement during execution, filesystem-first approach to reduce context pollution
-- **Semantic Search**: Implement semtools and serena for semantic code discovery, multiple embedding models support, skills framework integration
+- **Terminal Evaluation**: Terminal recording infrastructure, visual analysis capabilities, case study generation, self-improvement extended to frontend
+- **Git Worktrees**: Worktree management, branch synchronization, conflict resolution support, improved parallelism for multi-agent development
 
-**Target Release**: November 14, 2025 (Friday @ 9am PT)
+**Target Release**: November 19, 2025 (Wednesday @ 9am PT)
 
-For detailed milestones and technical specifications, see the [full v0.1.12 roadmap](ROADMAP_v0.1.12.md).
+For detailed milestones and technical specifications, see the [full v0.1.14 roadmap](ROADMAP_v0.1.14.md).
 
 ---
 

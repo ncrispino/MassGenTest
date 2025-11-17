@@ -131,6 +131,8 @@ class Orchestrator(ChatAgent):
         winning_agents_history: Optional[List[Dict[str, Any]]] = None,
         shared_conversation_memory: Optional[ConversationMemory] = None,
         shared_persistent_memory: Optional[PersistentMemoryBase] = None,
+        enable_nlip: bool = False,
+        nlip_config: Optional[Dict[str, Any]] = None,
         enable_rate_limit: bool = False,
     ):
         """
@@ -150,6 +152,8 @@ class Orchestrator(ChatAgent):
                                    Loaded from session storage to persist across orchestrator recreations
             shared_conversation_memory: Optional shared conversation memory for all agents
             shared_persistent_memory: Optional shared persistent memory for all agents
+            enable_nlip: Enable NLIP (Natural Language Interaction Protocol) support
+            nlip_config: Optional NLIP configuration
             enable_rate_limit: Whether to enable rate limiting and cooldown delays (default: False)
         """
         super().__init__(session_id, shared_conversation_memory, shared_persistent_memory)
@@ -267,6 +271,10 @@ class Orchestrator(ChatAgent):
                         agent.backend.filesystem_manager.setup_massgen_skill_directories(
                             massgen_skills=self.config.coordination_config.massgen_skills,
                         )
+                # Setup memory directories if memory filesystem mode is enabled
+                if hasattr(self.config, "coordination_config") and hasattr(self.config.coordination_config, "enable_memory_filesystem_mode"):
+                    if self.config.coordination_config.enable_memory_filesystem_mode:
+                        agent.backend.filesystem_manager.setup_memory_directories()
                 # Update MCP config with agent_id for Docker mode (must be after setup_orchestration_paths)
                 agent.backend.filesystem_manager.update_backend_mcp_config(agent.backend.config)
 
@@ -284,17 +292,67 @@ class Orchestrator(ChatAgent):
                 self._inject_planning_tools_for_all_agents()
                 logger.info("[Orchestrator] Planning tools injection complete")
 
-        # NOTE: Memory MCP tools have been disabled in favor of direct file operations
-        # Agents now use standard file tools (Read/Write/Edit) to manage memory files
-        # in workspace/memory/short_term/ and workspace/memory/long_term/
-        # See MemorySection in system_prompt_sections.py for guidance
-        #
-        # # Inject memory tools if enabled
-        # if hasattr(self.config, "coordination_config") and hasattr(self.config.coordination_config, "enable_memory_filesystem_mode"):
-        #     if self.config.coordination_config.enable_memory_filesystem_mode:
-        #         logger.info(f"[Orchestrator] Injecting memory tools for {len(self.agents)} agents")
-        #         self._inject_memory_tools_for_all_agents()
-        #         logger.info("[Orchestrator] Memory tools injection complete")
+        # Inject memory tools if enabled
+        if hasattr(self.config, "coordination_config") and hasattr(self.config.coordination_config, "enable_memory_filesystem_mode"):
+            if self.config.coordination_config.enable_memory_filesystem_mode:
+                logger.info(f"[Orchestrator] Injecting memory tools for {len(self.agents)} agents")
+                self._inject_memory_tools_for_all_agents()
+                logger.info("[Orchestrator] Memory tools injection complete")
+
+        # NLIP Configuration
+        self.enable_nlip = enable_nlip
+        self.nlip_config = nlip_config or {}
+
+        # Initialize NLIP routers for agents if enabled
+        if self.enable_nlip:
+            self._init_nlip_routing()
+
+    def _init_nlip_routing(self) -> None:
+        """Initialize NLIP routing for all agents."""
+        logger.info(f"[Orchestrator] Initializing NLIP routing for {len(self.agents)} agents")
+
+        nlip_enabled_count = 0
+        nlip_skipped_count = 0
+
+        for agent_id, agent in self.agents.items():
+            # Check if agent has config
+            if not hasattr(agent, "config"):
+                logger.debug(f"[Orchestrator] Agent {agent_id} has no config, skipping NLIP")
+                nlip_skipped_count += 1
+                continue
+
+            # Check if backend supports NLIP (has custom_tool_manager)
+            backend = getattr(agent, "backend", None)
+            if not backend:
+                logger.debug(f"[Orchestrator] Agent {agent_id} has no backend, skipping NLIP")
+                nlip_skipped_count += 1
+                continue
+
+            tool_manager = getattr(backend, "custom_tool_manager", None)
+            if not tool_manager:
+                logger.info(f"[Orchestrator] Agent {agent_id} backend does not support NLIP (no custom_tool_manager), skipping")
+                nlip_skipped_count += 1
+                continue
+
+            # Backend supports NLIP, enable it
+            agent.config.enable_nlip = True
+            agent.config.nlip_config = self.nlip_config
+
+            # Initialize NLIP router for the agent
+            mcp_executor = getattr(backend, "_execute_mcp_function_with_retry", None)
+            agent.config.init_nlip_router(tool_manager=tool_manager, mcp_executor=mcp_executor)
+
+            # Inject NLIP router into backend
+            if hasattr(backend, "set_nlip_router"):
+                backend.set_nlip_router(
+                    nlip_router=agent.config.nlip_router,
+                    enabled=True,
+                )
+
+            logger.info(f"[Orchestrator] NLIP routing enabled for agent: {agent_id}")
+            nlip_enabled_count += 1
+
+        logger.info(f"[Orchestrator] NLIP initialization complete: {nlip_enabled_count} enabled, {nlip_skipped_count} skipped")
 
     async def _prepare_paraphrases_for_agents(self, question: str) -> None:
         """Generate and assign DSPy paraphrases for the current question."""
@@ -509,6 +567,23 @@ class Orchestrator(ChatAgent):
                     logger.warning(f"[Orchestrator] Agent {agent_id} filesystem_manager.cwd is None")
             else:
                 logger.warning(f"[Orchestrator] Agent {agent_id} has no filesystem_manager")
+
+        # Add feature flags for auto-inserting discovery tasks
+        skills_enabled = hasattr(self.config, "coordination_config") and hasattr(self.config.coordination_config, "use_skills") and self.config.coordination_config.use_skills
+        if skills_enabled:
+            args.append("--skills-enabled")
+
+        auto_discovery_enabled = False
+        if hasattr(agent, "backend") and hasattr(agent.backend, "config"):
+            auto_discovery_enabled = agent.backend.config.get("auto_discover_custom_tools", False)
+        if auto_discovery_enabled:
+            args.append("--auto-discovery-enabled")
+
+        memory_enabled = (
+            hasattr(self.config, "coordination_config") and hasattr(self.config.coordination_config, "enable_memory_filesystem_mode") and self.config.coordination_config.enable_memory_filesystem_mode
+        )
+        if memory_enabled:
+            args.append("--memory-enabled")
 
         config = {
             "name": f"planning_{agent_id}",
