@@ -227,7 +227,61 @@ Most configurations use environment variables for API keys:so
 
 ## Release History & Examples
 
-### v0.1.12 - Latest
+### v0.1.13 - Latest
+**New Features:** Code-Based Tools, MCP Registry, Skills Installation & NLIP Integration
+
+**Configuration Files:**
+- `tools/filesystem/code_based/example_code_based_tools.yaml` - Code-based tools with auto-discovery and shared tools directory
+- `tools/filesystem/exclude_mcps/test_minimal_mcps.yaml` - Minimal MCPs with command-line file operations
+- `examples/nlip_basic.yaml` - Basic NLIP protocol support with router and translation settings
+- `examples/nlip_openai_weather_test.yaml` - OpenAI with NLIP integration for custom tools and MCP servers
+- `examples/nlip_orchestrator_test.yaml` - Orchestrator-level NLIP configuration for multi-agent coordination
+
+**Key Features:**
+- **Code-Based Tools (CodeAct Paradigm)**: Revolutionary tool integration via importable Python code, reducing token usage by 98%
+- **MCP Server Registry**: Auto-discovery and intelligent tool routing with on-demand loading
+- **Skills Installation System**: Cross-platform automated installer for openskills CLI, Anthropic skills, and Crawl4AI
+- **NLIP Integration**: Advanced tool routing with Natural Language Interface Protocol across all backends
+- **Shared Tools Directory**: Tools generated once and shared across all agents to avoid duplication
+- **Auto-Discover Custom Tools**: Automatically discover and load all tools from `massgen/tool/` directory
+- **Exclude File Operation MCPs**: Use command-line tools for file operations to reduce MCP overhead
+- **TOOL.md Documentation Standard**: Standardized documentation format for all custom tools
+
+**Try It:**
+```bash
+# Install or upgrade
+pip install --upgrade massgen
+
+# Automated Skills Installation - cross-platform setup
+massgen --setup-skills  # Installs openskills CLI, Anthropic skills, and Crawl4AI
+
+# Code-Based Tools with Auto-Discovery - demonstrates 98% context reduction
+# Prerequisites: Docker running, .env file with API keys (OPENAI_API_KEY, GOOGLE_API_KEY, etc.)
+uv run massgen --automation \
+  --config massgen/configs/tools/filesystem/code_based/example_code_based_tools.yaml \
+  "List all available tools by exploring the workspace filesystem. Show what MCP tools and custom tools are available."
+
+# Or use with skills for advanced features (e.g., website creation):
+uv run massgen --config massgen/configs/tools/filesystem/code_based/example_code_based_tools.yaml \
+  "Create a website about Bob Dylan, ensuring that it is visually appealing and user friendly"
+
+# Minimal MCPs - test memory and task planning with reduced tool overhead
+# Prerequisites: Docker running
+uv run massgen --config massgen/configs/tools/filesystem/exclude_mcps/test_minimal_mcps.yaml \
+  "Create a website about Bob Dylan"
+
+# NLIP Integration - natural language tool routing with OpenAI
+# Prerequisites: OPENAI_API_KEY in .env, weather MCP (npx -y @fak111/weather-mcp)
+massgen --config massgen/configs/examples/nlip_openai_weather_test.yaml \
+  "What's the sum of 123 and 456? And what's the weather in Tokyo?"
+
+# Orchestrator-level NLIP - multi-agent coordination with NLIP routing
+# Prerequisites: OPENAI_API_KEY, CEREBRAS_API_KEY in .env
+massgen --config massgen/configs/examples/nlip_orchestrator_test.yaml \
+  "What's the sum of 123 and 456? And what's the weather in Tokyo?"
+```
+
+### v0.1.12
 **New Features:** System Prompt Architecture Refactoring, Semantic Skills & Multi-Agent Computer Use
 
 **Configuration Files:**
