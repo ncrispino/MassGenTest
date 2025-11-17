@@ -69,7 +69,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🆕 Latest Features</h3></summary>
 
-- [v0.1.11 Features](#-latest-features-v0111)
+- [v0.1.13 Features](#-latest-features-v0113)
 </details>
 
 <details open>
@@ -123,15 +123,15 @@ This project started with the "threads of thought" and "iterative refinement" id
 <summary><h3>🗺️ Roadmap</h3></summary>
 
 - Recent Achievements
-  - [v0.1.11](#recent-achievements-v0111)
-  - [v0.0.3 - v0.1.10](#previous-achievements-v003---v0110)
+  - [v0.1.13](#recent-achievements-v0113)
+  - [v0.0.3 - v0.1.12](#previous-achievements-v003---v0112)
 - [Key Future Enhancements](#key-future-enhancements)
   - Bug Fixes & Backend Improvements
   - Advanced Agent Collaboration
   - Expanded Model, Tool & Agent Integrations
   - Improved Performance & Scalability
   - Enhanced Developer Experience
-- [v0.1.12 Roadmap](#v0112-roadmap)
+- [v0.1.14 Roadmap](#v0114-roadmap)
 </details>
 
 <details open>
@@ -156,48 +156,52 @@ This project started with the "threads of thought" and "iterative refinement" id
 
 ---
 
-## 🆕 Latest Features (v0.1.11)
+## 🆕 Latest Features (v0.1.13)
 
-**🎉 Released: November 12, 2025**
+**🎉 Released: November 17, 2025**
 
-**What's New in v0.1.11:**
-- **🎯 Skills System** - Modular prompting framework for enhanced agent capabilities
-- **💾 Memory MCP Tool & Filesystem Integration** - Persistent memory management with filesystem integration for advanced workflows
-- **⚙️ Rate Limiting System (Gemini)** - Multi-dimensional API rate control for Gemini models
+**What's New in v0.1.13:**
+- **🏗️ Code-Based Tools System (CodeAct Paradigm)** - Revolutionary tool integration via importable Python code
+- **🔍 MCP Server Registry & Auto-Discovery** - Intelligent tool routing with automatic server discovery and on-demand loading
+- **🛠️ Skills Installation System** - Cross-platform automated installer for openskills CLI, Anthropic skills, and Crawl4AI
+- **🌐 NLIP Integration** - Advanced tool routing with Natural Language Interface Protocol across all backends
 
 **Key Improvements:**
-- Always-available file search skill with automatic skill discovery from `massgen/skills/`
-- MCP server for memory CRUD operations with markdown-based persistence and filesystem integration
-- RPM, TPM, and RPD rate limiting for Gemini models with graceful cooldowns
-- Enhanced Claude Code backend for Windows with improved system prompt handling
+- Code-based tool integration dramatically reduces context pollution through on-demand loading
+- MCP server registry enables automatic tool discovery without manual configuration
+- Skills installer works cross-platform (Windows, macOS, Linux) with automatic dependency management
+- NLIP provides intelligent tool routing at both agent and orchestrator levels
+- TOOL.md documentation standard with YAML frontmatter for all custom tools
 
-**Try v0.1.11 Features:**
+**Try v0.1.13 Features:**
 ```bash
 # Install or upgrade from PyPI
 pip install --upgrade massgen
 
-# Skills System - enable domain-specific capabilities
-# Prerequisites:
-# - Docker daemon running (call `massgen/docker/build.sh [--sudo]` for updated containers)
-# - openskills installed and placed in ./agents/skills.
-#   - Run `npm i -g openskills` followed by `openskills install anthropics/skills --universal -y`
-uv run massgen --config massgen/configs/skills/skills_basic.yaml \
-  "Create cool algorithmic art we can use in GitHub repo"
+# Automated Skills Installation - cross-platform setup
+massgen --setup-skills  # Installs openskills CLI, Anthropic skills, and Crawl4AI
 
-# Memory with Skills and Task Planning - combined filesystem coordination
-# Prerequisites: Docker daemon running
-uv run massgen --config massgen/configs/skills/skills_with_memory.yaml \
-  "Research neural architectures and document findings"
+# Code-Based Tools (CodeAct Paradigm) - 98% context reduction
+# Prerequisites: Docker running, .env file with API keys
+uv run massgen --automation \
+  --config massgen/configs/tools/filesystem/code_based/example_code_based_tools.yaml \
+  "List all available tools by exploring the workspace filesystem"
 
-# Skills with Existing Filesystem - self-extension case study
-# Prerequisites: Docker daemon running
-uv run massgen --config massgen/configs/skills/skills_existing_filesystem.yaml \
-  "Analyze the MassGen codebase to identify common development workflows that could benefit from being codified as skills. Create 1-2 optional skills that would help future agents work more efficiently with the codebase."
+# Or use with skills for advanced features:
+uv run massgen --config massgen/configs/tools/filesystem/code_based/example_code_based_tools.yaml \
+  "Create a website about Bob Dylan, ensuring that it is visually appealing and user friendly"
 
-# Rate Limiting - manage API costs with multi-dimensional limits
-# Enable rate limiting for any configuration with --enable-rate-limiting flag
-massgen --backend gemini --model gemini-2.5-flash --enable-rate-limiting \
-  "Explain quantum computing"
+# Minimal MCPs - command-line file operations with memory filesystem mode
+uv run massgen --config massgen/configs/tools/filesystem/exclude_mcps/test_minimal_mcps.yaml \
+  "Create a website about Bob Dylan"
+
+# NLIP Integration - natural language tool routing
+massgen --config massgen/configs/examples/nlip_openai_weather_test.yaml \
+  "What's the sum of 123 and 456? And what's the weather in Tokyo?"
+
+# Orchestrator-level NLIP - multi-agent coordination
+massgen --config massgen/configs/examples/nlip_orchestrator_test.yaml \
+  "What's the sum of 123 and 456? And what's the weather in Tokyo?"
 ```
 
 → [See full release history and examples](massgen/configs/README.md#release-history--examples)
@@ -264,6 +268,9 @@ pip install massgen
 # Or with uv (faster)
 uv pip install massgen
 
+# Optional: Install skills
+massgen --setup-skills
+
 # Run the interactive setup wizard
 massgen
 ```
@@ -303,7 +310,18 @@ uv pip install -e .
 
 # Optional: External framework integration
 pip install -e ".[external]"
+
+# Automated setup (Unix/Linux/macOS) - installs dependencies, skills, Docker images
+./scripts/init.sh
+
+# Or just install skills (works on all platforms)
+massgen --setup-skills
+
+# Or use the bash script (Unix/Linux/macOS only)
+./scripts/init_skills.sh
 ```
+
+> **Note:** The `--setup-skills` command works cross-platform (Windows, macOS, Linux). The bash scripts (`init.sh`, `init_skills.sh`) are Unix-only but provide additional dev setup like Docker image builds.
 
 <details>
 <summary><b>Alternative Installation Methods</b> (click to expand)</summary>
@@ -1066,33 +1084,35 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 ⚠️ **Early Stage Notice:** As MassGen is in active development, please expect upcoming breaking architecture changes as we continue to refine and improve the system.
 
-### Recent Achievements (v0.1.11)
+### Recent Achievements (v0.1.13)
 
-**🎉 Released: November 12, 2025**
+**🎉 Released: November 17, 2025**
 
-#### Skills System
-- **Modular Prompting Framework**: SkillsManager class for dynamic skill loading and injection (`massgen/filesystem_manager/skills_manager.py`)
-- **File Search Skill**: Always-available skill for searching files and code across workspace (`massgen/skills/always/file_search/SKILL.md`)
-- **Automatic Discovery**: Skills organized into `always/` (auto-included) and `optional/` categories with Docker-compatible mounting
-- **Configuration Examples**: `skills_basic.yaml`, `skills_existing_filesystem.yaml`, `skills_with_memory.yaml`
+#### Code-Based Tools & MCP Registry
+- **CodeAct Paradigm Implementation**: Tool integration via importable Python code instead of schema-based tools, reducing token usage (`massgen/filesystem_manager/_tool_code_writer.py`, `massgen/mcp_tools/code_generator.py`)
+- **MCP Server Registry**: Auto-discovery and intelligent tool routing with server registry infrastructure (`massgen/mcp_tools/server_registry.py`)
+- **Automatic Tool Loading**: On-demand loading of MCP tools only when needed, dramatically reducing context pollution
+- **TOOL.md Documentation Standard**: Standardized documentation format for custom tools with YAML frontmatter metadata and usage examples
 
-#### Memory MCP Tool & Filesystem Integration
-- **Memory MCP Server**: MCP server for memory management with filesystem persistence (`massgen/mcp_tools/memory/`)
-- **Memory Data Models**: Short-term and long-term memory tiers with markdown-based storage format
-- **Workspace Integration**: Automatic persistence to workspace under `memory/short_term/` and `memory/long_term/` directories
-- **Cross-Agent Sharing**: Orchestrator integration for memory sharing across agents
-- **Combined Workflows**: Simultaneous memory MCP tools and filesystem operations enable advanced workflows for long-running projects requiring both code changes and learned context
-- **Enhanced Windows Support**: Improved Claude Code backend handling of long system prompts on Windows
-- **Planning MCP Updates**: Tasks saved to agent workspace instead of separate directory
+#### NLIP Integration & Skills System
+- **NLIP (Natural Language Interface Protocol)**: Advanced tool routing with multi-backend support across Claude, Gemini, and OpenAI (`massgen/backend/response.py`, orchestrator integration)
+- **Skills Installation System**: Cross-platform automated installer for openskills CLI, Anthropic skills, and Crawl4AI with comprehensive setup scripts (`massgen/utils/skills_installer.py`)
+- **Enhanced Tool Selection**: Per-agent and orchestrator-level NLIP configuration for sophisticated tool routing
+- **Configuration Examples**: Sample YAML configs for NLIP integration (`massgen/configs/examples/nlip_basic.yaml`, `nlip_orchestrator_test.yaml`, `nlip_openai_weather_test.yaml`), code-based tools (`massgen/configs/tools/filesystem/code_based/example_code_based_tools.yaml`), and skills system (`massgen/configs/skills/skills_basic.yaml`)
 
-#### Rate Limiting System (Gemini)
-- **Multi-Dimensional Limiting**: Support for RPM (requests per minute), TPM (tokens per minute), and RPD (requests per day) (`massgen/rate_limiter.py`)
-- **Model-Specific Limits**: Configurable thresholds for Gemini models with graceful cooldown periods
-- **Configuration System**: YAML-based configuration in `massgen/configs/rate_limits/rate_limits.yaml`
-- **CLI Integration**: Optional `--enable-rate-limiting` flag for opt-in rate limiting
-- **Asyncio Lock Fix**: Resolved rate limiter lock reuse across different event loops
+### Previous Achievements (v0.0.3 - v0.1.12)
 
-### Previous Achievements (v0.0.3 - v0.1.10)
+✅ **System Prompt Architecture Refactoring (v0.1.12)**: Hierarchical system prompt structure with XML-based formatting for Claude, improved LLM attention management
+
+✅ **Semtools & Serena Skills (v0.1.12)**: Semantic search via embedding-based similarity, symbol-level code understanding via LSP integration, local execution mode for non-Docker environments
+
+✅ **Multi-Agent Computer Use (v0.1.12)**: Enhanced Gemini computer use with Docker integration, VNC visualization, multi-agent coordination combining Claude (Docker/Linux) and Gemini (Browser)
+
+✅ **Skills System (v0.1.11)**: Modular prompting framework with SkillsManager for dynamic skill loading, automatic discovery with always/optional categories, file search skill, Docker-compatible mounting
+
+✅ **Memory MCP Tool & Filesystem Integration (v0.1.11)**: MCP server for memory management with markdown-based storage, short-term/long-term memory tiers, automatic workspace persistence, orchestrator integration for cross-agent memory sharing, enhanced Windows support for long system prompts
+
+✅ **Rate Limiting System (v0.1.11)**: Multi-dimensional limiting (RPM, TPM, RPD) for Gemini models with configurable thresholds, YAML-based configuration, CLI integration with --enable-rate-limiting flag, asyncio lock fix for event loop reuse
 
 ✅ **Framework Interoperability Streaming (v0.1.10)**: Real-time intermediate step streaming for LangGraph and SmoLAgent with log/output distinction, enhanced debugging for external framework reasoning steps
 
@@ -1246,21 +1266,21 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 We welcome community contributions to achieve these goals.
 
-### v0.1.12 Roadmap
+### v0.1.14 Roadmap
 
-Version 0.1.12 focuses on intelligent tool selection and semantic search capabilities:
+Version 0.1.14 focuses on terminal evaluation and multi-agent Git workflows:
 
 #### Planned Features
-- **Automatic MCP Tool Selection**: Intelligent selection of MCP tools based on task requirements to improve performance
-- **Semtools/Serena Semantic Search Skill**: Advanced semantic search capabilities as a reusable skill
+- **MassGen Terminal Evaluation**: Self-evaluation and improvement of frontend/UI through terminal recording with asciinema, automated video generation and case study creation
+- **Git Worktrees for Multi-Agent**: Enable multiple agents to work on different Git worktrees simultaneously for parallel development workflows
 
 Key technical approach:
-- **Tool Selection**: Pre-execution tool selection based on prompts, dynamic tool refinement during execution, filesystem-first approach to reduce context pollution
-- **Semantic Search**: Implement semtools and serena for semantic code discovery, multiple embedding models support, skills framework integration
+- **Terminal Evaluation**: Terminal recording infrastructure, visual analysis capabilities, case study generation, self-improvement extended to frontend
+- **Git Worktrees**: Worktree management, branch synchronization, conflict resolution support, improved parallelism for multi-agent development
 
-**Target Release**: November 14, 2025 (Friday @ 9am PT)
+**Target Release**: November 19, 2025 (Wednesday @ 9am PT)
 
-For detailed milestones and technical specifications, see the [full v0.1.12 roadmap](ROADMAP_v0.1.12.md).
+For detailed milestones and technical specifications, see the [full v0.1.14 roadmap](ROADMAP_v0.1.14.md).
 
 ---
 

@@ -201,26 +201,27 @@ async def create_server() -> fastmcp.FastMCP:
             }
 
     @mcp.tool()
-    def update_memory(
+    def append_to_memory(
         name: str,
         content: str,
-        description: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Update existing memory content and/or description.
+        """Append content to an existing memory.
+
+        This is the primary way to update memories - adding new information
+        while preserving existing content. For complete replacement, use
+        remove_memory() followed by create_memory().
 
         Args:
-            name: Name of the memory to update
-            content: New content for the memory
-            description: Optional new description (if None, keeps existing)
+            name: Name of the memory to append to
+            content: Content to append (will be added with newline separator)
 
         Returns:
             Dictionary with operation result
 
         Example:
-            update_memory(
-                name="user_preferences",
-                content="# Updated Preferences\\n- Uses spaces (changed from tabs)",
-                description="Updated user coding style preferences"
+            append_to_memory(
+                name="known_issues",
+                content="## Issue: Auth timeout\\n- Affects login endpoint\\n- Fixed in PR #123"
             )
         """
         try:
@@ -228,14 +229,12 @@ async def create_server() -> fastmcp.FastMCP:
             if name not in _memories:
                 return {
                     "success": False,
-                    "error": f"Memory '{name}' not found. Use create_memory to create it.",
+                    "error": f"Memory '{name}' not found. Use create_memory to create it first.",
                 }
 
-            # Update memory
+            # Append to memory content
             memory = _memories[name]
-            memory.content = content
-            if description is not None:
-                memory.description = description
+            memory.content = memory.content + "\n\n" + content
             memory.updated = datetime.now()
 
             # Save to filesystem
@@ -243,15 +242,15 @@ async def create_server() -> fastmcp.FastMCP:
 
             return {
                 "success": True,
-                "operation": "update_memory",
+                "operation": "append_to_memory",
                 "memory": memory.to_dict(),
             }
 
         except Exception as e:
-            logger.error(f"Error updating memory: {e}")
+            logger.error(f"Error appending to memory: {e}")
             return {
                 "success": False,
-                "operation": "update_memory",
+                "operation": "append_to_memory",
                 "error": str(e),
             }
 
