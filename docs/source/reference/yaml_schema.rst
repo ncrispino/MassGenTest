@@ -537,6 +537,111 @@ Backend
      - No
      - ``claude_code``
      - Working directory for file operations
+   * - ``exclude_file_operation_mcps``
+     - boolean
+     - No
+     - All with MCP support
+     - Exclude file operation MCP tools (read/write/copy/delete). Agents use command-line tools instead. Keeps command execution, media generation, and planning MCPs. (default: false)
+   * - ``enable_image_generation``
+     - boolean
+     - No
+     - All with MCP support
+     - Enable image generation tools (default: false)
+   * - ``enable_audio_generation``
+     - boolean
+     - No
+     - All with MCP support
+     - Enable audio generation tools (default: false)
+   * - ``enable_file_generation``
+     - boolean
+     - No
+     - All with MCP support
+     - Enable file generation tools (default: false)
+   * - ``enable_video_generation``
+     - boolean
+     - No
+     - All with MCP support
+     - Enable video generation tools (default: false)
+   * - ``enable_code_based_tools``
+     - boolean
+     - No
+     - All with MCP support
+     - Enable code-based tools (CodeAct paradigm). MCP tools presented as Python code in workspace (default: false)
+   * - ``custom_tools_path``
+     - string
+     - No
+     - All with MCP support
+     - Path to custom tools directory to copy into workspace (for code-based tools)
+   * - ``auto_discover_custom_tools``
+     - boolean
+     - No
+     - All with MCP support
+     - Auto-discover custom tools from massgen/tool/ directory (default: false)
+   * - ``exclude_custom_tools``
+     - list
+     - No
+     - All with MCP support
+     - List of custom tool directories to exclude (e.g., ["_claude_computer_use"])
+   * - ``shared_tools_directory``
+     - string
+     - No
+     - All with MCP support
+     - Shared directory for code-based tools. Tools generated once and shared across agents (default: per-agent)
+   * - ``enable_mcp_command_line``
+     - boolean
+     - No
+     - All with MCP support
+     - Enable command-line execution tool (default: false)
+   * - ``command_line_execution_mode``
+     - string
+     - No
+     - All with MCP support
+     - Execution mode: "local" or "docker" (default: "local")
+   * - ``command_line_docker_image``
+     - string
+     - No
+     - All with MCP support
+     - Docker image for command execution (default: "massgen:runtime")
+   * - ``command_line_docker_memory_limit``
+     - string
+     - No
+     - All with MCP support
+     - Docker memory limit (e.g., "2g", default: "4g")
+   * - ``command_line_docker_cpu_limit``
+     - string
+     - No
+     - All with MCP support
+     - Docker CPU limit (e.g., "2.0", default: "4.0")
+   * - ``command_line_docker_network_mode``
+     - string
+     - No
+     - All with MCP support
+     - Docker network mode: "bridge", "host", "none" (default: "none")
+   * - ``command_line_docker_enable_sudo``
+     - boolean
+     - No
+     - All with MCP support
+     - Enable sudo in Docker containers (default: false)
+   * - ``command_line_docker_credentials``
+     - object
+     - No
+     - All with MCP support
+     - Docker credentials config (env_file, env_vars, env_vars_from_file, pass_all_env)
+   * - ``command_line_docker_packages``
+     - object
+     - No
+     - All with MCP support
+     - Docker packages to install (apt, pip, npm lists)
+   * - ``command_line_allowed_commands``
+     - list
+     - No
+     - All with MCP support
+     - Whitelist of allowed command patterns
+   * - ``command_line_blocked_commands``
+     - list
+     - No
+     - All with MCP support
+     - Blacklist of blocked command patterns
    * - ``mcp_servers``
      - list
      - No

@@ -271,6 +271,46 @@ class ClaudeCodeBackend(LLMBackend):
         """
         return True
 
+    async def _setup_code_based_tools_symlinks(self) -> None:
+        """Setup symlinks to shared code-based tools if they already exist.
+
+        This is called for ClaudeCodeBackend after client connection since it doesn't
+        directly manage MCP clients like OpenAI backend does. If another backend has
+        already generated the shared tools, this creates the necessary symlinks.
+        """
+        if not self.filesystem_manager.shared_tools_base:
+            # No shared tools configured - tools are per-agent
+            return
+
+        # Compute the hash of our MCP configuration to find the shared tools path
+        # We need to extract tool schemas to compute the hash, but we don't have direct
+        # MCP client access. Instead, check if shared tools directory already exists.
+        from pathlib import Path
+
+        shared_tools_base = Path(self.filesystem_manager.shared_tools_base)
+        if not shared_tools_base.exists():
+            # No shared tools generated yet
+            return
+
+        # Find hash subdirectories in shared_tools_base
+        # In a multi-agent setup, agent_a will have generated tools, so we look for existing hash dirs
+        hash_dirs = [d for d in shared_tools_base.iterdir() if d.is_dir()]
+
+        if not hash_dirs:
+            # No hash directories found
+            return
+
+        # Use the first (and typically only) hash directory
+        # In multi-agent setups with same MCP config, there should be exactly one hash dir
+        target_path = hash_dirs[0]
+
+        # Check if tools exist in this directory
+        if (target_path / "servers").exists() and (target_path / ".mcp").exists():
+            # Set shared_tools_directory and create symlinks
+            self.filesystem_manager.shared_tools_directory = target_path
+            self.filesystem_manager._add_shared_tools_to_allowed_paths(target_path)
+            logger.info(f"[ClaudeCodeBackend] Created symlinks to existing shared tools: {target_path}")
+
     async def clear_history(self) -> None:
         """
         Clear Claude Code conversation history while preserving session.
@@ -1262,6 +1302,10 @@ class ClaudeCodeBackend(LLMBackend):
         if not client._transport:
             try:
                 await client.connect()
+
+                # Setup code-based tools after connection (creates symlinks to shared tools if they exist)
+                if self.filesystem_manager and self.filesystem_manager.enable_code_based_tools:
+                    await self._setup_code_based_tools_symlinks()
 
             except Exception as e:
                 yield StreamChunk(

@@ -183,6 +183,18 @@ class SystemMessageBuilder:
 
             builder.add_section(FileSearchSection())
 
+            # Add code-based tools section if enabled (CodeAct paradigm)
+            if agent.backend.filesystem_manager.enable_code_based_tools:
+                from massgen.system_prompt_sections import CodeBasedToolsSection
+
+                workspace_path = str(agent.backend.filesystem_manager.get_current_workspace())
+                shared_tools_path = None
+                if agent.backend.filesystem_manager.shared_tools_directory:
+                    shared_tools_path = str(agent.backend.filesystem_manager.shared_tools_directory)
+
+                builder.add_section(CodeBasedToolsSection(workspace_path, shared_tools_path))
+                logger.info(f"[SystemMessageBuilder] Added code-based tools section for {agent_id}")
+
         # PRIORITY 10 (MEDIUM): Task Planning
         if enable_task_planning:
             filesystem_mode = (
@@ -272,6 +284,19 @@ class SystemMessageBuilder:
             if cmd_exec:
                 sections_content.append(cmd_exec.build_content())
 
+            # Add code-based tools section if enabled (CodeAct paradigm)
+            if agent.backend.filesystem_manager.enable_code_based_tools:
+                from massgen.system_prompt_sections import CodeBasedToolsSection
+
+                workspace_path = str(agent.backend.filesystem_manager.get_current_workspace())
+                shared_tools_path = None
+                if agent.backend.filesystem_manager.shared_tools_directory:
+                    shared_tools_path = str(agent.backend.filesystem_manager.shared_tools_directory)
+
+                code_based_tools_section = CodeBasedToolsSection(workspace_path, shared_tools_path)
+                sections_content.append(code_based_tools_section.build_content())
+                logger.info("[SystemMessageBuilder] Added code-based tools section for presentation")
+
             # Combine: filesystem sections + presentation instructions
             filesystem_content = "\n\n".join(sections_content)
             return f"{filesystem_content}\n\n## Instructions\n{presentation_instructions}"
@@ -325,6 +350,19 @@ class SystemMessageBuilder:
 
             parts.append(fs_ops.build_content())
             parts.append(fs_best.build_content())
+
+            # Add code-based tools section if enabled (CodeAct paradigm)
+            if agent.backend.filesystem_manager.enable_code_based_tools:
+                from massgen.system_prompt_sections import CodeBasedToolsSection
+
+                workspace_path = str(agent.backend.filesystem_manager.get_current_workspace())
+                shared_tools_path = None
+                if agent.backend.filesystem_manager.shared_tools_directory:
+                    shared_tools_path = str(agent.backend.filesystem_manager.shared_tools_directory)
+
+                code_based_tools_section = CodeBasedToolsSection(workspace_path, shared_tools_path)
+                parts.append(code_based_tools_section.build_content())
+                logger.info("[SystemMessageBuilder] Added code-based tools section for post-evaluation")
 
         # Add post-evaluation instructions
         post_eval = PostEvaluationSection()
