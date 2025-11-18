@@ -110,17 +110,40 @@ async def browser_automation(
 
     try:
         async with async_playwright() as p:
-            # Launch browser
-            browser = await p.chromium.launch(headless=headless)
-            context = await browser.new_context(viewport={"width": 1920, "height": 1080})
+            # Launch browser with better rendering options
+            browser = await p.chromium.launch(
+                headless=headless,
+                args=[
+                    '--disable-blink-features=AutomationControlled',
+                    '--disable-dev-shm-usage',
+                    '--no-sandbox'
+                ]
+            )
+            
+            # Set viewport to common desktop size
+            context = await browser.new_context(
+                viewport={"width": 1920, "height": 1080},
+                device_scale_factor=1,
+                has_touch=False,
+                is_mobile=False
+            )
             page = await context.new_page()
 
             logger.info(f"Browser automation: {action} - {task}")
 
             # Navigate if URL provided (for any action)
             if url:
-                await page.goto(url, wait_until="networkidle")
-                logger.info(f"Navigated to: {url}")
+                # Use different wait strategy for local files vs remote URLs
+                if url.startswith("file://"):
+                    # For local files, wait for load event and give extra time for rendering
+                    await page.goto(url, wait_until="load", timeout=10000)
+                    # Extra wait for CSS and rendering
+                    await page.wait_for_timeout(2000)  # 2 seconds for styles to apply
+                    logger.info(f"Navigated to local file: {url}")
+                else:
+                    # For remote URLs, wait for network to be idle
+                    await page.goto(url, wait_until="networkidle", timeout=30000)
+                    logger.info(f"Navigated to: {url}")
 
             # Perform action
             if action == "navigate":
@@ -163,7 +186,11 @@ async def browser_automation(
 
             # Take screenshot if requested
             if screenshot:
-                screenshot_bytes = await page.screenshot()
+                # Wait a bit more before screenshot to ensure rendering is complete
+                await page.wait_for_timeout(1000)  # Additional 1 second wait
+                
+                # Take full page screenshot
+                screenshot_bytes = await page.screenshot(full_page=True)
                 logger.info(f"Captured screenshot ({len(screenshot_bytes)} bytes)")
 
                 # Save screenshot to workspace if filename provided
