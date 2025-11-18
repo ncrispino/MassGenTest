@@ -29,8 +29,6 @@ class ResponseAPIParamsHandler(APIParamsHandlerBase):
                 "enable_image_generation",  # Internal flag for image generation (used in system messages only)
                 "enable_audio_generation",  # Internal flag for audio generation (used in system messages only)
                 "enable_video_generation",  # Internal flag for video generation (used in system messages only)
-                "concurrent_tool_execution",  # Local execution control (not sent to API)
-                "max_concurrent_tools",  # Local execution control (not sent to API)
             },
         )
 
