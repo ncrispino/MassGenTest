@@ -114,18 +114,18 @@ async def browser_automation(
             browser = await p.chromium.launch(
                 headless=headless,
                 args=[
-                    '--disable-blink-features=AutomationControlled',
-                    '--disable-dev-shm-usage',
-                    '--no-sandbox'
-                ]
+                    "--disable-blink-features=AutomationControlled",
+                    "--disable-dev-shm-usage",
+                    "--no-sandbox",
+                ],
             )
-            
+
             # Set viewport to common desktop size
             context = await browser.new_context(
                 viewport={"width": 1920, "height": 1080},
                 device_scale_factor=1,
                 has_touch=False,
-                is_mobile=False
+                is_mobile=False,
             )
             page = await context.new_page()
 
@@ -188,7 +188,7 @@ async def browser_automation(
             if screenshot:
                 # Wait a bit more before screenshot to ensure rendering is complete
                 await page.wait_for_timeout(1000)  # Additional 1 second wait
-                
+
                 # Take full page screenshot
                 screenshot_bytes = await page.screenshot(full_page=True)
                 logger.info(f"Captured screenshot ({len(screenshot_bytes)} bytes)")

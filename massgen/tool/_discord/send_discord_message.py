@@ -9,7 +9,7 @@ presentations to Discord channels using a bot token and channel name/ID.
 import json
 import os
 from pathlib import Path
-from typing import Optional, Union
+from typing import Optional
 
 import aiohttp
 
@@ -97,7 +97,7 @@ async def send_discord_message(
         # Get bot token from parameter or environment
         if not bot_token:
             bot_token = os.getenv("DISCORD_BOT_TOKEN")
-        
+
         if not bot_token:
             result = {
                 "success": False,
@@ -114,22 +114,22 @@ async def send_discord_message(
 
         # Set up headers for Discord API
         headers = {
-            "Authorization": f"Bot {bot_token}"
+            "Authorization": f"Bot {bot_token}",
         }
 
         # Resolve channel ID
         target_channel_id = channel_id
-        
+
         # Create a single session for all operations
         session = aiohttp.ClientSession()
-        
+
         try:
             if not target_channel_id:
                 # Need to find channel by name
                 # First, get list of guilds the bot is in
                 async with session.get(
                     "https://discord.com/api/v10/users/@me/guilds",
-                    headers=headers
+                    headers=headers,
                 ) as response:
                     if response.status != 200:
                         error_text = await response.text()
@@ -139,23 +139,23 @@ async def send_discord_message(
                             "error": f"Failed to fetch guilds: {response.status} - {error_text}",
                         }
                         return ExecutionResult(output_blocks=[TextContent(data=json.dumps(result, indent=2))])
-                    
+
                     guilds = await response.json()
-                
+
                 # Search for channel in each guild
                 channel_found = False
                 for guild in guilds:
                     guild_id = guild["id"]
-                    
+
                     async with session.get(
                         f"https://discord.com/api/v10/guilds/{guild_id}/channels",
-                        headers=headers
+                        headers=headers,
                     ) as response:
                         if response.status != 200:
                             continue
-                        
+
                         channels = await response.json()
-                        
+
                         # Look for text channels matching the name
                         for channel in channels:
                             if channel.get("type") in [0, 5]:  # Text or announcement channel
@@ -164,10 +164,10 @@ async def send_discord_message(
                                     channel_found = True
                                     logger.info(f"Found channel '{channel_name}' with ID: {target_channel_id}")
                                     break
-                        
+
                         if channel_found:
                             break
-                
+
                 if not target_channel_id:
                     result = {
                         "success": False,
@@ -190,7 +190,7 @@ async def send_discord_message(
                     message_content += f"\n{content}"
             elif content:
                 message_content = content
-            
+
             if message_content:
                 payload["content"] = message_content
 
@@ -214,8 +214,7 @@ async def send_discord_message(
 
             # Handle image attachment
             image_file_path = None
-            files_to_attach = []
-            
+
             if image_path:
                 # Resolve image path
                 if Path(image_path).is_absolute():
@@ -260,7 +259,7 @@ async def send_discord_message(
                     "files[0]",
                     image_data,
                     filename="image.png",
-                    content_type=content_type
+                    content_type=content_type,
                 )
 
                 logger.info(f"Attaching image: {image_file_path} ({len(image_data)} bytes)")
@@ -269,12 +268,12 @@ async def send_discord_message(
             data.add_field(
                 "payload_json",
                 json.dumps(payload),
-                content_type="application/json"
+                content_type="application/json",
             )
 
             # Send to Discord
             api_url = f"https://discord.com/api/v10/channels/{target_channel_id}/messages"
-            
+
             async with session.post(api_url, headers=headers, data=data) as response:
                 status = response.status
                 response_text = await response.text()
@@ -305,7 +304,7 @@ async def send_discord_message(
         finally:
             # Ensure session is always closed
             await session.close()
-    
+
     except Exception as e:
         logger.error(f"Failed to send Discord message: {str(e)}")
         result = {
