@@ -7,16 +7,482 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Recent Releases
 
-**v0.1.8 (November 5, 2025)** - Automation Mode & DSPy Integration
-Complete automation infrastructure for LLM agents with real-time status tracking, silent execution mode, and DSPy-powered question paraphrasing for enhanced multi-agent diversity.
+**v0.1.13 (November 17, 2025)** - Code-Based Tools, MCP Registry & Skills Installation
+Code-based tools system implementing CodeAct paradigm, MCP server registry with auto-discovery, comprehensive skills installation system, and TOOL.md documentation standard.
 
-**v0.1.7 (November 3, 2025)** - Agent Task Planning & Background Execution
-Agent task planning system with dependency tracking, background shell execution for long-running commands, and preemption-based coordination for improved multi-agent workflows.
+**v0.1.12 (November 14, 2025)** - System Prompt Refactoring, Semantic Search & Multi-Agent Computer Use
+Major system prompt architecture redesign with new semantic search skills (semtools/serena), local skill execution support, and enhanced multi-agent computer use capabilities with Docker integration and visualization.
 
-**v0.1.6 (October 31, 2025)** - Framework Interoperability & Backend Refactoring
-External agent framework integration as tools (AG2, LangGraph, AgentScope, OpenAI Assistants, SmoLAgent), unified tool execution architecture, Gemini backend simplification, and comprehensive configuration validation.
+**v0.1.11 (November 12, 2025)** - Skills System, Memory MCP & Rate Limiting
+Modular skills system for enhanced agent prompting, MCP-based memory management with filesystem integration for advanced workflows, and multi-dimensional rate limiting for Gemini API calls.
 
 ---
+
+## [0.1.13] - 2025-11-17
+
+### Added
+- **Code-Based Tools System (CodeAct Paradigm)**: Tool integration via importable Python code instead of schema-based tools
+  - New `massgen/filesystem_manager/_tool_code_writer.py` for writing MCP tool wrappers to workspace (450 lines)
+  - New `massgen/mcp_tools/code_generator.py` for generating Python wrapper code from MCP schemas (507 lines)
+  - New `massgen/mcp_tools/server_registry.py` for MCP server catalog with auto-discovery (205 lines)
+  - Enhanced `massgen/filesystem_manager/_filesystem_manager.py` with code-based tools setup (+562 lines)
+  - Agents import and use tools as native Python functions with type hints and docstrings
+  - Reduces token usage by 98% through on-demand tool loading (Anthropic research)
+  - Pre-configured registry with popular MCP servers (Playwright, GitHub, Context7, Memory)
+  - Auto-discovery eliminates manual MCP server configuration
+
+- **NLIP (Natural Language Interface Protocol) Integration**: Advanced tool routing with natural language interface
+  - Enhanced `massgen/backend/response.py` with NLIP routing infrastructure (+134 lines)
+  - Enhanced `massgen/backend/claude.py`, `gemini.py`, `chat_completions.py` with NLIP support (+255 lines total)
+  - Enhanced `massgen/orchestrator.py` with orchestrator-level NLIP configuration (+48 lines)
+  - Routes tool execution requests through natural language interface
+  - Multi-backend support across Claude, Gemini, and OpenAI
+  - Per-agent or orchestrator-level configuration with fallback to direct execution
+  - Enables natural language task decomposition and intelligent tool selection
+
+- **Skills Installation System**: Cross-platform automated skills installer
+  - New `massgen/utils/skills_installer.py` for automated skills installation (350 lines)
+  - New `scripts/init_skills.sh` and `scripts/init.sh` for shell-based setup (650 lines total)
+  - **`massgen --setup-skills` command** for one-command installation
+  - Installs openskills CLI, Anthropic skills collection, and Crawl4AI skill
+  - Cross-platform support: Windows, macOS, Linux with idempotent installation
+  - Comprehensive progress indicators and error handling
+
+### Changed
+- **Tool Size & Command-Line Enhancements**: Increased tool capacity and improved CLI execution
+  - Updated `massgen/backend/utils.py` tool truncation threshold from 10,000 to 15,000 characters
+  - Enhanced `massgen/backend/bash_cli.py` with command-line-only mode improvements
+  - Commit: b51067b8 "Command line only mode; increase tool size from 10k to 15k"
+  - Allows more comprehensive tool documentation and examples
+  - Improved command parsing and error handling
+  - Better integration with code-based tools workflow
+
+- **Exclude File Operation MCPs**: Removed filesystem MCP tools in favor of native file operations
+  - Updated `massgen/mcp_tools/mcp_manager.py` to exclude `@modelcontextprotocol/server-filesystem` (+204 lines)
+  - Commit: 5bdf46bf "Adjusted prompts and added TOOL.md for custom tools"
+  - Prevents redundancy with MassGen's built-in filesystem operations
+  - Reduces token usage from duplicate tool definitions
+  - Clearer tool usage patterns for agents
+
+### Documentations, Configurations and Resources
+
+- **TOOL.md Documentation System**: Standardized documentation format for custom tools
+  - New `massgen/tool/_video_tools/TOOL.md` for video tools documentation (161 lines)
+  - New `massgen/tool/_web_tools/TOOL.md` for web scraping tools documentation (161 lines)
+  - New `massgen/tool/_playwright_mcp/TOOL.md` for Playwright MCP documentation (201 lines)
+  - **Standardized structure**: name, description, category, tasks, keywords, usage examples
+  - Frontmatter metadata in YAML format for tool discovery
+  - Clear "When to Use This Tool" and "When NOT to Use" sections
+  - Function signatures with parameter descriptions and return types
+  - Configuration prerequisites and setup instructions
+  - Common use cases and limitations documentation
+  - Enables agents to understand tool capabilities and make informed decisions
+  - Total: 12 new TOOL.md files across custom tools directory (~3,800 lines)
+
+- **Configuration Examples**: New YAML configurations for v0.1.13 features
+  - `massgen/configs/tools/filesystem/code_based/example_code_based_tools.yaml`: Code-based tools with auto-discovery and shared tools directory (153 lines)
+  - `massgen/configs/tools/filesystem/exclude_mcps/test_minimal_mcps.yaml`: Minimal MCPs with command-line file operations and memory filesystem mode (37 lines)
+  - `massgen/configs/examples/nlip_basic.yaml`: Basic NLIP protocol support with router and translation settings (54 lines)
+  - `massgen/configs/examples/nlip_openai_weather_test.yaml`: OpenAI with NLIP integration for custom tools and MCP servers (36 lines)
+  - `massgen/configs/examples/nlip_orchestrator_test.yaml`: Orchestrator-level NLIP configuration for multi-agent coordination (47 lines)
+
+- **Skills Installation Documentation**: Comprehensive guides for skills setup
+  - Updated `scripts/init.sh` with detailed help text and options (438 lines)
+  - Updated `scripts/init_skills.sh` with skip flags for selective installation (212 lines)
+  - Examples: `./init.sh --skip-docker`, `./init_skills.sh --skip-anthropic`
+
+- **Code-Based Tools User Guide**: Complete documentation for CodeAct paradigm implementation
+  - New `docs/source/user_guide/code_based_tools.rst` (726 lines)
+  - Quick start examples and configuration
+  - Explains 98% context reduction benefit (Anthropic research)
+  - Covers workspace structure, Python wrapper generation, async workflows
+  - Real-world examples: weather forecasting, GitHub integration, multi-tool composition
+
+- **MCP Server Registry Reference**: Documentation for built-in MCP server catalog
+  - New `docs/source/reference/mcp_server_registry.rst` (219 lines)
+  - Documents all pre-configured MCP servers (Context7, GitHub, Filesystem, Memory, etc.)
+  - Connection examples and tool listings
+  - API key requirements and configuration
+  - Auto-discovery setup instructions
+
+- **Installation Guide Updates**: Enhanced setup documentation with automation scripts
+  - Updated `docs/source/quickstart/installation.rst` (+115 lines)
+  - Automated development setup using `scripts/init.sh`
+  - Script options and flags documentation
+  - System requirements and verification steps
+  - Windows support roadmap notes
+
+- **Documentation Updates**: Enhanced existing guides with v0.1.13 features
+  - Updated `docs/source/user_guide/file_operations.rst` (+44 lines) - Code-based tools integration
+  - Updated `docs/source/user_guide/mcp_integration.rst` (+71 lines) - Registry and auto-discovery
+  - Updated `docs/source/reference/yaml_schema.rst` (+5 lines) - Code-based tools configuration options
+
+### Technical Details
+- **Major Focus**: CodeAct paradigm implementation, MCP registry infrastructure, skills installation automation, TOOL.md documentation standard, self-evolution capabilities, NLIP integration
+- **Contributors**: @qidanrui @ncrispino @franklinnwren @praneeth999 and the MassGen team
+
+## [0.1.12] - 2025-11-14
+
+### Added
+- **Semtools Skill**: Semantic search capabilities using embedding-based similarity matching
+  - New `massgen/skills/semtools/SKILL.md` for meaning-based code and document search (606 lines)
+  - Rust-based CLI for high-performance semantic search beyond keyword matching
+  - Workspace management for indexing large codebases with fast repeated searches
+  - Document parsing support for PDFs, DOCX, PPTX with optional API integration
+  - Discovery-focused search finding relevant code without knowing exact keywords
+  - Complements traditional ripgrep (keyword) and ast-grep (syntax) search tools
+
+- **Serena Skill**: Symbol-level code understanding via Language Server Protocol (LSP)
+  - New `massgen/skills/serena/SKILL.md` for IDE-like semantic code analysis (499 lines)
+  - Symbol discovery across 30+ programming languages (classes, functions, variables, types)
+  - Reference tracking to find all usage locations of symbols
+  - Precise code editing with surgical symbol-level insertions
+  - LSP-powered understanding of code structure, scope, and relationships
+  - Enables symbol-aware refactoring and navigation capabilities
+
+- **System Message Builder**: New modular system for constructing agent prompts
+  - New `massgen/system_message_builder.py` for flexible prompt composition (488 lines)
+  - Separates prompt construction logic from orchestrator
+  - Enables better organization and reusability of system prompt components
+  - Foundation for improved prompt engineering and customization
+
+### Changed
+- **System Prompt Architecture**: Complete refactoring for improved LLM attention and effectiveness
+  - Enhanced `massgen/system_prompt_sections.py` with hierarchical prompt structure (1286 lines)
+  - Reorganized prompt ordering to place critical instructions (skills, memory) at optimal positions
+  - Reduced message template redundancy in `message_templates.py` (-682 lines)
+  - Simplified orchestrator prompt assembly in `orchestrator.py` (-428 lines)
+  - Applied 2025 prompt engineering best practices: XML structure, attention management, priority signaling
+  - Improved skills and memory system visibility to agents through better positioning
+
+- **Skills System Refactoring**: Enhanced architecture with local execution support
+  - **Local Mode**: Skills can now execute directly without Docker containers
+  - **Directory Reorganization**: Moved file-search from `skills/always/file_search/` to `skills/file-search/`
+  - **Semantic Search Skills**: Promoted semtools and serena from optional to core skills directory
+  - Enhanced `massgen/filesystem_manager/skills_manager.py` for local execution support
+  - Enhanced `massgen/filesystem_manager/_code_execution_server.py` for local skill commands (+71 lines)
+  - Enhanced `massgen/filesystem_manager/_filesystem_manager.py` with local mode capabilities (+173 lines)
+  - Enhanced `massgen/filesystem_manager/_docker_manager.py` for skills integration (+59 lines)
+  - Updated `massgen/backend/claude_code.py` for local skill execution (+26 lines)
+
+- **Gemini Computer Use Tool**: Multi-agent support with Docker integration
+  - Enhanced `massgen/tool/_gemini_computer_use/gemini_computer_use_tool.py` (949 lines total, +446 lines)
+  - Added Docker container support for browser and desktop automation
+  - New screenshot capture functions for Docker environments (`take_screenshot_docker`)
+  - New action execution system for Docker (`execute_docker_action`)
+  - X11 display integration with xdotool for precise control
+  - VNC compatibility for remote visualization and debugging
+  - Multi-agent coordination capabilities for collaborative computer use
+
+- **Browser Automation Tool**: Enhanced screenshot management
+  - Updated `massgen/tool/_browser_automation/browser_automation_tool.py` to save screenshots as files (+39 lines)
+  - New `output_filename` parameter to save screenshots directly to agent workspace
+  - Automatic workspace path resolution with `agent_cwd` parameter
+  - Reduces token usage by avoiding base64-encoded screenshot returns
+  - Better integration with file-based workflows and serena skill
+
+### Documentations, Configurations and Resources
+
+- **System Prompt Architecture Documentation**: Comprehensive design document for prompt refactoring
+  - New `docs/dev_notes/system_prompt_architecture_redesign.md` (593 lines)
+  - Documents LLM attention management and hierarchical structure principles
+  - Explains XML-based prompt engineering for Claude models
+  - Covers priority signaling and position-based emphasis strategies
+  - Implementation roadmap for future prompt improvements
+
+- **Computer Use Visualization Guide**: Multi-agent computer use documentation
+  - New `docs/backend/docs/COMPUTER_USE_VISUALIZATION.md` (455 lines)
+  - Covers VNC setup and remote visualization workflows
+  - Documents multi-agent coordination patterns for computer use
+  - Troubleshooting guide for Docker-based automation
+  - Architecture diagrams for computer use tool integration
+
+- **Skills Documentation Update**: Enhanced skills system guide
+  - Updated `docs/source/user_guide/skills.rst` with local mode documentation (+222 lines)
+  - Covers new semantic search skills (semtools/serena)
+  - Documents skill directory reorganization
+  - Local vs Docker execution trade-offs and best practices
+
+- **YAML Schema Documentation**: Configuration reference updates
+  - Updated `docs/source/reference/yaml_schema.rst` with skills configuration options (+36 lines)
+  - Documents local mode parameters and skill settings
+
+- **Computer Use Tools Guide**: Enhanced documentation
+  - Updated `docs/backend/docs/COMPUTER_USE_TOOLS_GUIDE.md` with Gemini Docker support (+94 lines)
+  - Multi-agent computer use configuration examples
+  - VNC viewer setup instructions
+
+- **Configuration Examples**: New YAML configurations for v0.1.12 features
+  - `massgen/configs/tools/custom_tools/multi_agent_computer_use_example.yaml`: Multi-agent coordination for computer use (194 lines)
+  - `massgen/configs/tools/custom_tools/gemini_computer_use_docker_example.yaml`: Gemini with Docker automation (84 lines)
+  - Updated `massgen/configs/tools/custom_tools/simple_browser_automation_example.yaml`: File-based screenshot workflow
+
+- **VNC Viewer Script**: Automated VNC setup for computer use visualization
+  - New `scripts/enable_vnc_viewer.sh` for quick VNC configuration (40 lines)
+  - Streamlines Docker-based computer use debugging and monitoring
+
+### Technical Details
+- **Major Focus**: System prompt architecture refactoring, semantic search skills (semtools/serena), local skill execution, multi-agent computer use with Docker
+- **Contributors**: @ncrispino @franklinnwren @Henry-811 and the MassGen team
+
+## [0.1.11] - 2025-11-12
+
+### Added
+- **Skills System**: Modular prompting framework for enhancing agent capabilities
+  - New `SkillsManager` class in `massgen/filesystem_manager/skills_manager.py` for dynamic skill loading and injection (158 lines)
+  - **File Search Skill**: Always-available skill for searching files and code across workspace (`massgen/skills/always/file_search/SKILL.md`, 280 lines)
+  - Automatic skill discovery and loading from `massgen/skills/` directory structure
+  - Docker-compatible skill mounting and environment setup
+  - Skills organized into `always/` (auto-included) and `optional/` categories
+  - Flexible skill injection into agent system prompts via orchestrator
+  - Configuration examples in `massgen/configs/skills/` (skills_basic.yaml, skills_existing_filesystem.yaml, skills_with_memory.yaml)
+
+- **Memory MCP Tool & Filesystem Integration**: MCP server for agent memory management with filesystem persistence and combined workflows
+  - New `massgen/mcp_tools/memory/` module with memory MCP server implementation (513 lines total)
+  - **MemoryMCPServer** in `_memory_mcp_server.py` (352 lines) for memory CRUD operations with automatic filesystem sync
+  - **Memory data models** in `_memory_models.py` (161 lines) with short-term and long-term memory tiers
+  - Memory persistence to workspace under `memory/short_term/` and `memory/long_term/` directories
+  - Markdown-based memory storage format for human readability
+  - Integration with orchestrator for cross-agent memory sharing (+218 lines in orchestrator.py)
+  - Memory-specific message templates for memory operations (+95 lines in message_templates.py)
+  - **Combined workflows**: Simultaneous use of memory MCP tools and filesystem operations for advanced workflows
+  - Enables agents to maintain persistent memory while manipulating files
+  - Configuration examples demonstrating integrated workflows for long-running projects requiring both code changes and learned context
+  - Inspired by Letta's context hierarchy design pattern
+
+- **Rate Limiting System (Gemini)**: Multi-dimensional rate limiting for Gemini API calls and agent startup
+  - New `massgen/backend/rate_limiter.py` (321 lines) with comprehensive rate limiting infrastructure
+  - Support for multiple limit types: requests per minute (RPM), tokens per minute (TPM), requests per day (RPD)
+  - Model-specific rate limits with configurable thresholds for Gemini models
+  - Graceful cooldown periods with exponential backoff
+  - Agent startup rate limiting to prevent API quota exhaustion
+  - Test suite in `massgen/tests/test_rate_limiter.py` (122 lines)
+  - Configuration system in `massgen/configs/rate_limits/` with rate_limits.yaml and rate_limit_config.py (180 lines)
+  - CLI flag `--enable-rate-limiting` for opt-in rate limiting
+
+### Changed
+- **Claude Code Backend**: Improved Windows support for long system prompts
+  - Enhanced handling of long system prompts on Windows platforms
+  - Resolved command-line length limitations and encoding issues
+  - Updated `massgen/backend/claude_code.py` with more robust Windows compatibility (27 lines changed)
+
+- **Planning MCP Server**: Added filesystem task persistence within workspace
+  - Tasks now saved to agent workspace instead of separate tasks/ directory
+  - Improved task organization and workspace management
+  - Enhanced `massgen/mcp_tools/planning/_planning_mcp_server.py` (+84 lines)
+  - Removed standalone tasks/ skill in favor of integrated planning
+
+### Fixed
+- **Rate Limiter Asyncio Lock**: Resolved asyncio lock event loop error
+  - Fixed asyncio lock reuse across different event loops causing errors
+  - Improved rate limiter thread safety and event loop handling
+  - Updated `massgen/backend/rate_limiter.py` and added comprehensive tests
+
+### Documentations, Configurations and Resources
+
+- **Skills System Documentation**: Comprehensive guide for using and creating skills
+  - New `docs/source/user_guide/skills.rst` (473 lines)
+  - Covers skill structure, loading mechanisms, and best practices
+  - Examples of creating custom skills for specific agent capabilities
+
+- **Memory-Filesystem Mode Documentation**: Guide for integrated memory and filesystem workflows
+  - New `docs/source/user_guide/memory_filesystem_mode.rst` (883 lines)
+  - Demonstrates combining memory MCP tools with filesystem operations
+  - Configuration examples and use case scenarios
+
+- **Rate Limiting Documentation**: Complete rate limiting configuration guide
+  - New `docs/rate_limiting.md` (254 lines)
+  - Model-specific rate limits and configuration examples
+  - Best practices for managing API quotas
+  - New `massgen/configs/rate_limits/README.md` (108 lines)
+
+- **Skills Configuration Examples**: Three YAML configurations for skills usage
+  - `massgen/configs/skills/skills_basic.yaml`: Basic skills setup
+  - `massgen/configs/skills/skills_existing_filesystem.yaml`: Skills with filesystem integration
+  - `massgen/configs/skills/skills_with_memory.yaml`: Skills with memory MCP integration
+
+- **Filesystem Tool Discovery Design**: Comprehensive design document for new tool paradigm
+  - New `docs/dev_notes/filesystem_tool_discovery_design.md` (1,582 lines)
+  - Proposes shift from context-based to filesystem-based tool discovery
+  - Enables attaching 100+ MCP servers without context pollution
+  - Details progressive disclosure and code-based tool composition
+  - Includes implementation proposals and technical architecture
+
+### Technical Details
+- **Major Focus**: Skills system for modular agent prompting, memory MCP tool with filesystem persistence, multi-dimensional rate limiting, memory-filesystem integration mode
+- **Contributors**: @ncrispino @abhimanyuaryan @qidanrui @sonichi @Henry-811 and the MassGen team
+
+## [0.1.10] - 2025-11-10
+
+### Added
+- **Docker Custom Image Support**: Example Dockerfile for extending MassGen base image with custom packages
+  - New `massgen/docker/Dockerfile.custom-example` demonstrating how to add ML/data science packages, development tools, and system utilities
+  - Template for creating specialized Docker images for specific project needs
+
+### Changed
+- **Docker Authentication Configuration**: Restructured to nested dictionary format for better organization
+  - New `command_line_docker_credentials` structure consolidating all credential-related settings
+  - Nested `mount` array for credential file mounting (`ssh_keys`, `git_config`, `gh_config`, `npm_config`, `pypi_config`)
+  - Nested `env_file`, `env_vars`, and `pass_all_env` for environment variable management
+  - Nested `additional_mounts` for custom volume mounting
+  - Migration from flat parameters (`command_line_docker_mount_ssh_keys`, `command_line_docker_pass_env_vars`, etc.) to organized nested structure
+  - Enhanced `massgen/filesystem_manager/_docker_manager.py` and `_filesystem_manager.py` with new configuration parsing
+
+- **Docker Package Management**: New nested configuration structure for dependency installation
+  - New `command_line_docker_packages` structure with `auto_install_deps`, `auto_install_on_clone`, and `preinstall` settings
+  - Support for pre-installing Python, npm, and system packages before agent execution
+  - Improved dependency detection and installation workflow
+
+- **Framework Interoperability Streaming**: Real-time intermediate step streaming for external framework agents
+  - **LangGraph Streaming**: Updated `massgen/tool/_extraframework_agents/langgraph_lesson_planner_tool.py` (78 lines changed)
+    - Now yields intermediate updates from each workflow node (standards, lesson_plan, reviewed_plan)
+    - Distinguishes between logs (`is_log=True`) and final output using result type
+    - Enables real-time progress tracking during LangGraph workflow execution
+  - **SmoLAgent Streaming**: Updated `massgen/tool/_extraframework_agents/smolagent_lesson_planner_tool.py` (60 lines changed)
+    - Streams ActionStep and PlanningStep outputs as logs during agent execution
+    - FinalAnswerStep yielded as final output
+    - Set verbosity_level=0 to prevent duplicate console output
+  - Both frameworks now provide visibility into multi-step reasoning processes
+
+- **Parallel Execution Safety**: Extended automatic workspace isolation to all execution modes
+  - Parallel execution safety now works in both `--automation` and normal modes (previously automation-only)
+  - Automatic Docker container naming with unique instance ID suffixes (e.g., `massgen-agent_a-a1b2c3d4`)
+  - Enhanced `massgen/filesystem_manager/_filesystem_manager.py` with instance ID generation for all modes
+
+### Fixed
+- **Session Management**: Resolved CLI session handling issues
+  - Fixed session restoration edge cases in `massgen/cli.py`
+  - Improved error handling for session state loading
+
+### Documentations, Configurations and Resources
+
+- **MassGen Contributor Handbook**: Comprehensive contributor guide addressing issue #387
+  - New handbook website at https://massgen.github.io/Handbook/
+  - Eight major sections: Case Studies, Issues, Development, Documentation, Release, Announcements, Marketing, and Resources
+  - Workflow diagrams illustrating contribution pipeline from research to release
+  - Seven contribution tracks with assigned track owners
+  - Communication channels and meeting schedules (daily sync 5:30pm PST, research 6:00pm PST)
+  - Getting started guide for new contributors
+
+- **Docker Configuration Examples**: Three new YAML configurations for advanced Docker workflows
+  - `massgen/configs/tools/code-execution/docker_custom_image.yaml`: Using custom Docker images
+  - `massgen/configs/tools/code-execution/docker_full_dev_setup.yaml`: Complete development environment setup
+  - `massgen/configs/tools/code-execution/docker_github_readonly.yaml`: Read-only GitHub access configuration
+
+- **Automation Documentation**: Enhanced parallel execution section
+  - Updated `docs/source/user_guide/automation.rst` clarifying automatic isolation works in all modes
+  - Added Docker container isolation examples with unique container naming
+  - Clarified that `--automation` flag is for output control, not parallel safety
+
+- **Code Execution Design Documentation**: Updated Docker configuration architecture
+  - Enhanced `docs/dev_notes/CODE_EXECUTION_DESIGN.md` (90 lines revised)
+  - New credential and package management configuration examples
+  - Architecture diagrams for nested configuration structures
+
+- **Computer Use Tools Documentation**: Clarified Docker usage requirements
+  - Updated `massgen/tool/_computer_use/README.md` and `QUICKSTART.md`
+  - Specified Docker requirements for Claude computer use
+  - Added troubleshooting guide for computer use setup
+
+### Technical Details
+- **Major Focus**: Docker configuration improvements with nested structures for credentials and packages, framework interoperability streaming enhancements, parallel execution safety across all modes, contributor handbook
+- **Contributors**: @ncrispino @Eric-Shang @franklinnwren and the MassGen team
+
+## [0.1.9] - 2025-11-07
+
+### Added
+- **Session Management System**: Comprehensive session state tracking and restoration for multi-turn conversations
+  - New `massgen/session/` module with session state and registry management (530 lines total)
+  - **SessionState** dataclass for complete session state including conversation history, workspace paths, and turn metadata (`_state.py`, 219 lines)
+  - **SessionRegistry** for listing, managing, and restoring previous sessions (`_registry.py`, 311 lines)
+  - **restore_session()** function for seamless session continuation across CLI invocations
+  - Session metadata tracking including winning agents history and orchestrator turn data
+  - Automatic session storage with unique identifiers and timestamps
+  - Test suite in `test_session_registry.py` (201 lines)
+
+- **Computer Use Tools**: Browser and desktop automation capabilities for multi-agent workflows
+  - **General Computer Use Tool**: OpenAI computer-use-preview integration for automated browser/computer control (`massgen/tool/_computer_use/computer_use_tool.py`, 741 lines)
+    - Support for browser environment (Playwright) and Docker container execution
+    - Action execution: click, type, scroll, navigate, screenshot analysis
+    - Configurable max iterations and safety controls
+  - **Claude Computer Use Tool**: Anthropic Claude Computer Use API integration (`massgen/tool/_claude_computer_use/claude_computer_use_tool.py`, 473 lines)
+    - Native Claude Computer Use beta API support
+    - Browser and desktop control with safety confirmations
+    - Async execution with Playwright integration
+  - **Gemini Computer Use Tool**: Google Gemini-based computer control (`massgen/tool/_gemini_computer_use/gemini_computer_use_tool.py`, 503 lines)
+    - Gemini model integration for computer use workflows
+    - Screenshot analysis and action generation
+  - **Browser Automation Tool**: Lightweight browser automation for specific tasks (`massgen/tool/_browser_automation/browser_automation_tool.py`, 176 lines)
+    - Focused browser automation without full computer use overhead
+  - Comprehensive test suite in `test_computer_use.py` (629 lines)
+
+- **OpenAI Operator API Handler**: Support for OpenAI's computer-use-preview model
+  - New `massgen/api_params_handler/_openai_operator_api_params_handler.py` (72 lines)
+  - Specialized parameter handling for computer use actions
+  - Integration with computer use tool execution flow
+
+### Changed
+- **Config Builder Enhancement**: Intelligent model matching and discovery
+  - **Fuzzy Model Name Matching**: New `massgen/utils/model_matcher.py` (214 lines) allowing approximate model name input
+  - **Model Catalog System**: New `massgen/utils/model_catalog.py` (218 lines) with curated lists of common models across providers
+  - Enhanced `massgen/config_builder.py` with automatic model search and suggestions
+  - Support for partial model names with intelligent completion (e.g., "sonnet" → "claude-sonnet-4-5-20250929")
+  - Contribution from acrobat3 (K. from JP)
+
+- **Backend Capabilities Enhancement**: Expanded provider support with six new backend registrations
+  - Added **Cerebras AI** backend capabilities (llama models with WSE hardware acceleration)
+  - Added **Together AI** backend capabilities (Meta-Llama, Mixtral models)
+  - Added **Fireworks AI** backend capabilities (Llama, Qwen models with fast inference)
+  - Added **Groq** backend capabilities (Llama, Mixtral with LPU hardware)
+  - Added **OpenRouter** backend capabilities (unified access to 200+ models with audio/video support)
+  - Added **Moonshot (Kimi)** backend capabilities (Chinese-optimized models with long context)
+  - Updated `massgen/backend/capabilities.py` with comprehensive backend specifications
+
+- **Memory System Improvement**: Enhanced memory update logic for multi-agent coordination
+  - New `massgen/memory/_update_prompts.py` (276 lines) with specialized update prompts for mem0
+  - **MASSGEN_UNIVERSAL_UPDATE_MEMORY_PROMPT**: Philosophy for accumulating qualitative patterns vs statistics
+  - Improved fact merging logic focusing on actionable tool usage patterns and technical insights
+
+- **Chat Agent Enhancement**: Session restoration and improved orchestrator restart handling
+  - Session state restoration in `massgen/chat_agent.py`
+  - Enhanced turn tracking and workspace persistence
+  - Improved logging and coordination with orchestrator restarts
+
+- **CLI Enhancement**: Extended command-line interface for session management
+  - Session listing and restoration commands in `massgen/cli.py`
+  - Enhanced display selection and output formatting
+  - Support for continuing previous sessions with automatic state restoration
+
+### Documentations, Configurations and Resources
+
+- **Diversity System Documentation**: Comprehensive guide for increasing agent diversity
+  - New `docs/source/user_guide/diversity.rst` (388 lines)
+  - Covers answer novelty requirements (lenient/balanced/strict)
+  - Documents DSPy question paraphrasing integration (from v0.1.8)
+  - Best practices for multi-agent diversity strategies
+  - Configuration examples and recommendations
+
+- **Memory System Documentation**: Updated memory user guide
+  - Updated `docs/source/user_guide/memory.rst` with enhanced memory update logic and configuration
+
+- **Computer Use Configuration Examples**: Five YAML configurations demonstrating computer use capabilities
+  - `massgen/configs/tools/custom_tools/claude_computer_use_example.yaml`: Claude-specific computer use
+  - `massgen/configs/tools/custom_tools/gemini_computer_use_example.yaml`: Gemini-specific computer use
+  - `massgen/configs/tools/custom_tools/computer_use_example.yaml`: General computer use with OpenAI
+  - `massgen/configs/tools/custom_tools/computer_use_docker_example.yaml`: Docker-based computer use
+  - `massgen/configs/tools/custom_tools/computer_use_browser_example.yaml`: Browser automation focus
+
+- **Session Management Configuration**: Example demonstrating session continuation
+  - `massgen/configs/memory/grok4_gpt5_gemini_mcp_filesystem_test_with_claude_code.yaml`: Multi-turn session with MCP filesystem
+
+- **Computer Use Documentation**:
+  - New `massgen/backend/docs/COMPUTER_USE_TOOLS_GUIDE.md`: Comprehensive guide for computer use tools (494 lines)
+  - New `scripts/computer_use_setup.md`: Setup instructions for computer use tools
+  - New `scripts/setup_docker_cua.sh`: Automated Docker setup script for computer use
+
+### Technical Details
+- **Major Focus**: Session management with conversation restoration, computer use automation tools, intelligent config builder with fuzzy matching, expanded backend support, memory system enhancements
+- **Contributors**: @franklinnwren @ncrispino @Henry-811 and the MassGen team
 
 ## [0.1.8] - 2025-11-05
 
@@ -971,7 +1437,7 @@ External agent framework integration as tools (AG2, LangGraph, AgentScope, OpenA
 
 ### Added
 - **Multi-Turn Filesystem Support**: Complete implementation for persistent filesystem context across conversation turns
-  - Automatic session management when `session_storage` is configured (no flag needed)
+  - Automatic session management (no flag needed)
   - Persistent workspace management across conversation turns with `.massgen` directory
   - Workspace snapshot preservation and restoration between turns
   - Support for maintaining file context and modifications throughout multi-turn sessions

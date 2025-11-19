@@ -111,17 +111,17 @@ Key Features
 Recent Releases
 ---------------
 
-**v0.1.8 (November 5, 2025)** - Automation Mode & DSPy Integration
+**v0.1.13 (November 17, 2025)** - Code-Based Tools, MCP Registry & Skills Installation
 
-Automation Mode for LLM agents with silent execution and status monitoring, DSPy question paraphrasing integration with semantic validation, and comprehensive case study documentation.
+Code-based tools system implementing CodeAct paradigm with significant token usage reduction through importable Python code instead of schema-based tools. MCP server registry with auto-discovery and intelligent tool routing. Comprehensive skills installation system with cross-platform automated installer for openskills CLI, Anthropic skills, and Crawl4AI. NLIP (Natural Language Interface Protocol) integration for advanced tool routing across all backends. TOOL.md documentation standard with YAML frontmatter for all custom tools.
 
-**v0.1.7 (November 3, 2025)** - Agent Task Planning & Background Execution
+**v0.1.12 (November 14, 2025)** - System Prompt Refactoring, Semantic Search & Multi-Agent Computer Use
 
-Agent task planning system with dependency tracking, background shell execution for long-running commands, and preemption-based coordination for improved multi-agent workflows.
+Complete system prompt refactoring with hierarchical structure and XML-based formatting for improved LLM attention management. New Semtools skill for semantic search via embedding-based similarity and Serena skill for symbol-level code understanding via LSP integration. Enhanced multi-agent computer use with Docker integration for Linux desktop automation, VNC visualization, and coordinated Claude (Docker/Linux) + Gemini (Browser) workflows.
 
-**v0.1.6 (October 31, 2025)** - Framework Interoperability & Backend Refactoring
+**v0.1.11 (November 12, 2025)** - Skills System, Memory MCP & Rate Limiting
 
-External agent framework integration as tools (AG2, LangGraph, AgentScope, OpenAI Assistants, SmoLAgent), unified tool execution architecture, Gemini backend simplification, and comprehensive configuration validation.
+Modular skills framework with automatic discovery and file search capabilities, MCP-based memory management with persistent markdown storage and cross-agent sharing, multi-dimensional rate limiting (RPM, TPM, RPD) with model-specific thresholds, and memory-filesystem integration for advanced workflows.
 
 Quick Start
 -----------
@@ -250,7 +250,9 @@ Documentation Sections
 
       * :doc:`user_guide/concepts`
       * :doc:`user_guide/backends`
+      * :doc:`user_guide/diversity`
       * :doc:`user_guide/tools`
+      * :doc:`user_guide/code_based_tools`
       * :doc:`user_guide/file_operations`
       * :doc:`user_guide/multi_turn_mode`
       * :doc:`user_guide/general_interoperability`
@@ -262,6 +264,7 @@ Documentation Sections
       * :doc:`reference/python_api`
       * :doc:`reference/cli`
       * :doc:`reference/yaml_schema`
+      * :doc:`reference/mcp_server_registry`
       * :doc:`reference/configuration_examples`
       * :doc:`reference/supported_models`
       * :doc:`reference/timeouts`
@@ -298,11 +301,15 @@ Documentation Sections
 
    user_guide/concepts
    user_guide/backends
+   user_guide/diversity
    user_guide/validating_configs
    user_guide/tools
+   user_guide/code_based_tools
+   user_guide/skills
    user_guide/file_operations
    user_guide/multi_turn_mode
    user_guide/memory
+   user_guide/memory_filesystem_mode
    user_guide/orchestration_restart
    user_guide/agent_task_planning
    user_guide/multimodal
@@ -318,6 +325,7 @@ Documentation Sections
    reference/python_api
    reference/cli
    reference/yaml_schema
+   reference/mcp_server_registry
    reference/configuration_examples
    reference/timeouts
    reference/supported_models

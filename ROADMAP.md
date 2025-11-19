@@ -1,10 +1,10 @@
 # MassGen Roadmap
 
-**Current Version:** v0.1.7
+**Current Version:** v0.1.13
 
 **Release Schedule:** Mondays, Wednesdays, Fridays @ 9am PT
 
-**Last Updated:** November 3, 2025
+**Last Updated:** November 17, 2025
 
 This roadmap outlines MassGen's development priorities for upcoming releases. Each release focuses on specific capabilities with real-world use cases.
 
@@ -20,14 +20,17 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 | Multimodal Support | [@qidanrui](https://github.com/qidanrui) | danrui2020 |
 | General Interoperability | [@qidanrui](https://github.com/qidanrui) | danrui2020 |
 | Agent Adapter System | [@Eric-Shang](https://github.com/Eric-Shang) | ericshang. |
+| Framework Streaming | [@Eric-Shang](https://github.com/Eric-Shang) | ericshang. |
 | Irreversible Actions Safety | [@franklinnwren](https://github.com/franklinnwren) | zhichengren |
 | Computer Use | [@franklinnwren](https://github.com/franklinnwren) | zhichengren |
 | Memory Module | [@qidanrui](https://github.com/qidanrui) [@ncrispino](https://github.com/ncrispino) | danrui2020, nickcrispino |
 | Rate Limiting System | [@AbhimanyuAryan](https://github.com/AbhimanyuAryan) | abhimanyuaryan |
 | DSPy Integration | [@praneeth999](https://github.com/praneeth999) | ram2561 |
 | MassGen Handbook | [@a5507203](https://github.com/a5507203) [@Henry-811](https://github.com/Henry-811) | crinvo, henry_weiqi |
-| Session Restart | [@ncrispino](https://github.com/ncrispino) | nickcrispino |
+| Session Management | [@ncrispino](https://github.com/ncrispino) | nickcrispino |
+| Automatic MCP Tool Selection | [@ncrispino](https://github.com/ncrispino) | nickcrispino |
 | Parallel File Operations | [@ncrispino](https://github.com/ncrispino) | nickcrispino |
+| MassGen Terminal Evaluation | [@ncrispino](https://github.com/ncrispino) | nickcrispino |
 | Web UI | [@voidcenter](https://github.com/voidcenter) | justin_zhang |
 
 *For general questions, join the #massgen channel on [Discord](https://discord.gg/VVrT2rQaz5)*
@@ -37,81 +40,54 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 | Release | Target | Feature | Owner | Use Case |
 |---------|--------|---------|-------|----------|
-| **v0.1.9** | 11/07/25 | Gemini Rate Limiting System | @AbhimanyuAryan | Prevent API spam and manage costs within rate limits |
-| | | MassGen Handbook | @a5507203 | Centralized policies and resources for development and research teams |
-| **v0.1.10** | 11/10/25 | Add computer use | @franklinnwren | Visual perception and automated computer interaction |
-| | | Session Restart | @ncrispino | Resume previous conversations from log files |
-| **v0.1.11** | 11/12/25 | Parallel File Operations & Performance | @ncrispino | Increase parallelism and efficiency with standard evaluation metrics |
+| **v0.1.14** | 11/19/25 | MassGen Terminal Evaluation | @ncrispino | Self-evaluation and improvement of frontend/UI |
+| | | Git Worktrees for Multi-Agent | @ncrispino | Use Git worktrees for different agents to enable parallel development workflows |
+| **v0.1.15** | 11/21/25 | Parallel File Operations | @ncrispino | Increase parallelism and standard efficiency evaluation |
+| | | Launch Custom Tools in Docker | @ncrispino | Enable custom tools to run in isolated Docker containers for security and portability |
+| **v0.1.16** | 11/24/25 | Smithery MCP Tools Support | @ncrispino | Expand MCP tools access through Smithery integration |
 
 *All releases ship on MWF @ 9am PT when ready*
 
 ---
 
-## 📋 v0.1.9 - Rate Limiting & Documentation
+## 📋 v0.1.14 - Terminal Evaluation & Multi-Agent Git Workflows
 
 ### Features
 
-**1. Gemini Rate Limiting System** (@AbhimanyuAryan)
-- PR: [#383](https://github.com/Leezekun/MassGen/pull/383) (Draft)
-- Multi-dimensional rate limiting for Gemini models (RPM, TPM, RPD)
-- Model-specific limits: Flash (9 RPM), Pro (2 RPM)
-- Sliding window tracking for precise rate management
-- External YAML configuration for centralized limit control
-- Optional `--rate-limit` CLI flag to enable/disable
-- Mandatory cooldown after agent startup to prevent API bursts
-- **Use Case**: Prevent API spam and manage costs while ensuring smooth operation within Gemini's rate limits
+**1. MassGen Terminal Evaluation** (@ncrispino)
+- Issue: [#476](https://github.com/massgen/MassGen/issues/476)
+- Enable MassGen to evaluate and improve its own frontend/UI
+- Terminal session recording using asciinema for visual analysis
+- Automatic caption generation for recorded sessions
+- Video editing integration for demonstration materials
+- Comprehensive case study generation from terminal recordings
+- Self-improvement capabilities extended to frontend (currently backend-only via automation mode)
+- **Use Case**: Enable MassGen to analyze its own terminal interface, creating demonstration videos and documentation automatically, showcasing new features through automated workflows
 
-**2. MassGen Handbook** (@a5507203)
-- Issue: [#387](https://github.com/massgen/MassGen/issues/387)
-- Centralized policies and resources for development and research teams
-- Comprehensive user documentation and handbook for MassGen
-- Detailed guides covering installation, configuration, and usage patterns
-- Best practices and troubleshooting documentation
-- Integration examples and case studies
-- **Use Case**: Provide centralized policies and resources for development and research teams
+**2. Git Worktrees for Different Agents** (@ncrispino)
+- Issue: [#514](https://github.com/massgen/MassGen/issues/514)
+- Enable multiple agents to work on different Git worktrees simultaneously
+- Isolated working directories for parallel agent development
+- Automatic worktree creation and management
+- Branch synchronization across agent worktrees
+- Conflict resolution support for multi-agent workflows
+- Improved parallelism for multi-agent code development tasks
+- **Use Case**: Allow multiple agents to work on different features or branches simultaneously without conflicts, enabling true parallel development workflows
 
 ### Success Criteria
-- ✅ Rate limiting prevents API quota violations and manages costs
-- ✅ MassGen Handbook provides comprehensive user documentation
-- ✅ Features are configurable and well-documented
+- ✅ Terminal recording and playback system works reliably
+- ✅ Video understanding capabilities accurately analyze terminal sessions
+- ✅ Automated case study generation produces high-quality documentation
+- ✅ MassGen successfully self-improves based on terminal analysis
+- ✅ Agents successfully create and manage separate Git worktrees
+- ✅ Multiple agents can work on different branches simultaneously
+- ✅ Worktree cleanup and management works reliably
+- ✅ Branch synchronization maintains code integrity
+- ✅ Performance improvements in multi-agent development scenarios
 
 ---
 
-## 📋 v0.1.10 - Computer Use & Session Management
-
-### Features
-
-**1. Add computer use** (@franklinnwren)
-- PR: [#402](https://github.com/massgen/MassGen/pull/402) (Draft)
-- Custom computer use agent tool with Gemini API integration
-- Visual perception capabilities through screenshot processing
-- Dedicated tool module: `massgen/tool/_computer_using/computer_using_tool.py`
-- Configuration support for multiple model types
-- Integration with image understanding tools for screen content interpretation
-- **Use Case**: Visual perception and automated computer interaction, enabling agents to interpret screen content and execute automated tasks
-
-**2. Session Restart** (@ncrispino)
-- Issue: [#412](https://github.com/massgen/MassGen/issues/412) (Open)
-- Resume previous MassGen conversations by loading existing log files
-- New CLI parameter: `massgen --continue [LOG_DIR]` to initiate fresh conversation with prior dialogue history
-- System treats resumed session as "Nth turn in a multi-turn conversation" based on log history
-- Default to using same configuration as original session
-- Support for specifying different configuration if needed
-- Optional: Continue most recent conversation without specifying log directory
-- **Use Case**: Resume previous development sessions after closing, mirroring user experience with other LLM tools
-
-### Success Criteria
-- ✅ Computer use agent successfully integrated with Gemini API
-- ✅ Screenshot processing and visual perception working
-- ✅ Configuration examples provided for multiple models
-- ✅ Session restart allows seamless continuation of previous conversations
-- ✅ Log directory structure supports session continuation
-- ✅ Configuration persistence works correctly
-- ✅ Features are well-documented with examples
-
----
-
-## 📋 v0.1.11 - Parallel File Operations & Performance
+## 📋 v0.1.15 - Performance Optimization & Docker Tools
 
 ### Features
 
@@ -124,12 +100,47 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 - Comprehensive efficiency evaluation with standard metrics
 - **Use Case**: Increase parallelism and efficiency with standard evaluation metrics, reducing file operation latency in multi-agent workflows
 
+**2. Launch Custom Tools in Docker** (@ncrispino)
+- Issue: [#510](https://github.com/massgen/MassGen/issues/510)
+- Enable custom tools to run in isolated Docker containers
+- Automatic containerization of custom tool execution
+- Security isolation for untrusted or experimental tools
+- Improved portability across different environments
+- Resource management and cleanup for tool containers
+- Integration with existing Docker infrastructure
+- **Use Case**: Run custom tools in isolated Docker containers for enhanced security, enabling safe execution of untrusted code and ensuring consistent tool behavior across environments
+
 ### Success Criteria
 - ✅ Parallel file reads demonstrate measurable performance improvement
 - ✅ Efficiency evaluation framework established with clear metrics
 - ✅ Standard evaluation methodology implemented and documented
 - ✅ Benchmarking shows improvements in real-world scenarios
 - ✅ Feature maintains data consistency and safety
+- ✅ Custom tools successfully launch in Docker containers
+- ✅ Security isolation prevents tools from affecting host system
+- ✅ Automatic cleanup of Docker resources after tool execution
+- ✅ Tool execution performance comparable to native execution
+
+---
+
+## 📋 v0.1.16 - MCP Ecosystem Expansion
+
+### Features
+
+**1. Smithery MCP Tools Support** (@ncrispino)
+- Issue: [#521](https://github.com/massgen/MassGen/issues/521)
+- Integration with Smithery to expand available MCP tools
+- Automatic discovery and installation of Smithery MCP servers
+- Curated registry of high-quality MCP tools from Smithery ecosystem
+- Simplified tool onboarding for users
+- Enhanced tool discovery and recommendation system
+- **Use Case**: Expand MassGen's tool ecosystem by integrating with Smithery, giving users access to a wider range of curated MCP tools without manual configuration
+
+### Success Criteria
+- ✅ Smithery integration discovers and installs MCP tools automatically
+- ✅ Tool registry includes curated Smithery tools with proper metadata
+- ✅ Tool recommendation system suggests relevant Smithery tools
+- ✅ Users can easily browse and install Smithery tools
 
 ---
 
@@ -138,7 +149,7 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 These features are being actively developed on **separate parallel tracks** and will ship incrementally on the MWF release schedule:
 
 ### Track: Agent Adapter System (@Eric-Shang, ericshang.)
-- PR: [#283](https://github.com/Leezekun/MassGen/pull/283)
+- PR: [#283](https://github.com/massgen/MassGen/pull/283)
 - Unified agent interface for easier backend integration
 - **Shipping:** Continuous improvements
 
@@ -148,12 +159,12 @@ These features are being actively developed on **separate parallel tracks** and 
 - **Target:** v0.1.3 and beyond
 
 ### Track: Multimodal Support (@qidanrui, danrui2020)
-- PR: [#252](https://github.com/Leezekun/MassGen/pull/252)
+- PR: [#252](https://github.com/massgen/MassGen/pull/252)
 - Image, audio, video processing across backends
 - **Shipping:** Incremental improvements each release
 
 ### Track: Memory Module (@qidanrui, @ncrispino, danrui2020, nickcrispino)
-- Issues: [#347](https://github.com/Leezekun/MassGen/issues/347), [#348](https://github.com/Leezekun/MassGen/issues/348)
+- Issues: [#347](https://github.com/massgen/MassGen/issues/347), [#348](https://github.com/massgen/MassGen/issues/348)
 - Short and long-term memory implementation with persistence
 - **Status:** ✅ Completed in v0.1.5
 
@@ -172,45 +183,110 @@ These features are being actively developed on **separate parallel tracks** and 
 - Semantic validation and caching system
 - **Status:** ✅ Completed in v0.1.8
 
+### Track: Framework Streaming (@Eric-Shang, ericshang.)
+- PR: [#462](https://github.com/massgen/MassGen/pull/462)
+- Real-time streaming for LangGraph and SmoLAgent intermediate steps
+- Enhanced debugging and monitoring for external framework tools
+- **Status:** ✅ Completed in v0.1.10
+
 ### Track: Rate Limiting System (@AbhimanyuAryan, abhimanyuaryan)
-- PR: [#383](https://github.com/Leezekun/MassGen/pull/383)
+- PR: [#383](https://github.com/massgen/MassGen/pull/383)
 - Multi-dimensional rate limiting for Gemini models
 - Model-specific limits with sliding window tracking
-- **Target:** v0.1.9
+- **Status:** ✅ Completed in v0.1.11
 
 ### Track: MassGen Handbook (@a5507203, @Henry-811, crinvo, henry_weiqi)
 - Issue: [#387](https://github.com/massgen/MassGen/issues/387)
-- Comprehensive user documentation and handbook
+- Comprehensive user documentation and handbook at https://massgen.github.io/Handbook/
 - Centralized policies and resources for development and research teams
-- **Target:** v0.1.9
+- **Status:** ✅ Completed in v0.1.10
 
 ### Track: Computer Use (@franklinnwren, zhichengren)
 - PR: [#402](https://github.com/massgen/MassGen/pull/402)
-- Custom computer use agent tool with Gemini API integration
-- Visual perception through screenshot processing
-- **Target:** v0.1.10
+- Browser and desktop automation with OpenAI, Claude, and Gemini integration
+- Visual perception through screenshot processing and action execution
+- **Status:** ✅ Completed in v0.1.9
 
-### Track: Session Restart (@ncrispino, nickcrispino)
-- Issue: [#412](https://github.com/massgen/MassGen/issues/412)
-- Resume previous MassGen conversations from log files
-- Multi-turn conversation continuation
-- **Target:** v0.1.10
+### Track: Session Management (@ncrispino, nickcrispino)
+- PR: [#466](https://github.com/massgen/MassGen/pull/466)
+- Complete session state tracking and restoration
+- Resume previous MassGen conversations with full context
+- **Status:** ✅ Completed in v0.1.9
+
+### Track: Semtools & Serena Skills (@ncrispino, nickcrispino)
+- PR: [#515](https://github.com/massgen/MassGen/pull/515)
+- Semantic search capabilities via semtools (embedding-based similarity)
+- Symbol-level code understanding via serena (LSP integration)
+- Package as reusable skills within MassGen framework
+- **Status:** ✅ Completed in v0.1.12
+
+### Track: System Prompt Architecture (@ncrispino, nickcrispino)
+- PR: [#515](https://github.com/massgen/MassGen/pull/515)
+- Complete refactoring of system prompt assembly
+- Hierarchical structure with improved LLM attention management
+- Skills system local execution support
+- **Status:** ✅ Completed in v0.1.12
+
+### Track: Multi-Agent Computer Use (@franklinnwren, zhichengren)
+- PR: [#513](https://github.com/massgen/MassGen/pull/513)
+- Enhanced Gemini computer use with Docker integration
+- Multi-agent coordination for computer automation
+- VNC visualization and debugging support
+- **Status:** ✅ Completed in v0.1.12
+
+### Track: Code-Based Tools System / Automatic MCP Tool Selection (@ncrispino, nickcrispino)
+- Issue: [#414](https://github.com/massgen/MassGen/issues/414)
+- Tool integration via importable Python code instead of schema-based tools
+- MCP server registry with auto-discovery
+- Reduces token usage through on-demand tool loading
+- **Status:** ✅ Completed in v0.1.13
 
 ### Track: Parallel File Operations (@ncrispino, nickcrispino)
 - Issue: [#441](https://github.com/massgen/MassGen/issues/441)
-- Increase parallelism of file operations
-- Standard efficiency evaluation metrics
-- **Target:** v0.1.11
+- Increase parallelism of file read operations
+- Standard efficiency evaluation and benchmarking methodology
+- **Target:** v0.1.15
+
+### Track: Launch Custom Tools in Docker (@ncrispino, nickcrispino)
+- Issue: [#510](https://github.com/massgen/MassGen/issues/510)
+- Enable custom tools to run in isolated Docker containers
+- Security isolation and portability for custom tool execution
+- **Target:** v0.1.15
+
+### Track: Git Worktrees for Multi-Agent (@ncrispino, nickcrispino)
+- Issue: [#514](https://github.com/massgen/MassGen/issues/514)
+- Enable multiple agents to work on different Git worktrees simultaneously
+- Isolated working directories for parallel agent development
+- **Target:** v0.1.14
+
+### Track: MassGen Terminal Evaluation (@ncrispino, nickcrispino)
+- Issue: [#476](https://github.com/massgen/MassGen/issues/476)
+- Self-evaluation and improvement of frontend/UI through terminal recording
+- Automated video generation and case study creation
+- **Target:** v0.1.14
+
+### Track: Smithery MCP Tools Support (@ncrispino, nickcrispino)
+- Issue: [#521](https://github.com/massgen/MassGen/issues/521)
+- Integration with Smithery to expand available MCP tools
+- Automatic discovery and installation of Smithery MCP servers
+- **Target:** v0.1.16
+
+### Track: NLIP Integration (@praneeth999, @qidanrui, ram2561, danrui2020)
+- PR: [#475](https://github.com/massgen/MassGen/pull/475)
+- Natural Language Integration Platform for advanced tool routing
+- Multi-backend support across Claude, Gemini, and OpenAI
+- Per-agent and orchestrator-level configuration
+- **Status:** ✅ Completed in v0.1.13
 
 ### Track: Coding Agent Enhancements (@ncrispino, nickcrispino)
-- PR: [#251](https://github.com/Leezekun/MassGen/pull/251)
+- PR: [#251](https://github.com/massgen/MassGen/pull/251)
 - Enhanced file operations and workspace management
 - **Shipping:** Continuous improvement
 
 ### Track: Web UI (@voidcenter, justin_zhang)
-- PR: [#257](https://github.com/Leezekun/MassGen/pull/257)
+- PR: [#257](https://github.com/massgen/MassGen/pull/257)
 - Visual multi-agent coordination interface
-- **Target:** ~v0.1.10
+- **Target:** TBD
 
 ---
 
@@ -247,9 +323,9 @@ These features are being actively developed on **separate parallel tracks** and 
 ## 🔗 GitHub Integration
 
 Track development progress:
-- [Active Issues](https://github.com/Leezekun/MassGen/issues)
-- [Pull Requests](https://github.com/Leezekun/MassGen/pulls)
-- [Project Boards](https://github.com/Leezekun/MassGen/projects) (TODO)
+- [Active Issues](https://github.com/massgen/MassGen/issues)
+- [Pull Requests](https://github.com/massgen/MassGen/pulls)
+- [Project Boards](https://github.com/massgen/MassGen/projects) (TODO)
 
 ---
 
@@ -282,5 +358,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, code standards, te
 
 *This roadmap is community-driven. Releases ship on **Mondays, Wednesdays, Fridays @ 9am PT**. Timelines may shift based on priorities and feedback. Open an issue to suggest changes!*
 
-**Last Updated:** November 3, 2025
+**Last Updated:** November 17, 2025
 **Maintained By:** MassGen Team

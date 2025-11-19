@@ -646,6 +646,48 @@ Example 5: Crawl4AI Web Scraping Tools
 
 If the Docker container isn't running, agents receive a helpful error message with setup instructions.
 
+Example 6: Computer Use Tools
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**New in v0.1.8**: MassGen provides browser and desktop automation tools for AI agents.
+
+MassGen offers three computer use tools optimized for different providers:
+
+* ``gemini_computer_use`` - Google Gemini Computer Use (autonomous browser/desktop control)
+* ``claude_computer_use`` - Anthropic Claude Computer Use (thorough automation with enhanced actions)
+* ``browser_automation`` - Simple browser automation (works with ANY model: gpt-4.1, gpt-4o, etc.)
+
+**Quick Example:**
+
+.. code-block:: bash
+
+   # Simple browser automation (any model)
+   massgen \
+     --config massgen/configs/tools/custom_tools/simple_browser_automation_example.yaml \
+     "Go to Wikipedia and search for Jimmy Carter"
+
+   # Gemini Computer Use
+   massgen \
+     --config massgen/configs/tools/custom_tools/gemini_computer_use_example.yaml \
+     "Go to cnn.com and get the top headline"
+
+   # Claude Computer Use
+   massgen \
+     --config massgen/configs/tools/custom_tools/claude_computer_use_docker_example.yaml \
+     "Navigate to Wikipedia and search for Artificial Intelligence"
+
+.. seealso::
+
+   For complete documentation on computer use tools including:
+
+   * Detailed tool comparisons and performance benchmarks
+   * Configuration examples for browser and Docker environments
+   * Visualization and monitoring with VNC/non-headless mode
+   * Multi-agent computer use coordination
+   * Troubleshooting and best practices
+
+   See :doc:`computer_use` - Complete Computer Use Tools guide
+
 Available Example Configs
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -672,7 +714,11 @@ The ``massgen/configs/tools/custom_tools/`` directory contains examples for all 
 
 * ``crawl4ai_example.yaml`` - Docker-based web scraping with multiple output formats
 
-Each basic example demonstrates the same ``two_num_tool`` adapted for different backends.
+**Computer Use Tools:**
+
+* ``gemini_computer_use_example.yaml`` - Google Gemini computer use automation
+* ``claude_computer_use_docker_example.yaml`` - Anthropic Claude computer use automation
+* ``simple_browser_automation_example.yaml`` - Simple browser automation for any model
 
 Backend Support
 ---------------
