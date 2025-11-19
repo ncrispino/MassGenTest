@@ -2769,27 +2769,8 @@ Your answer:"""
             )
             logger.info(f"[Orchestrator] Structured system message built for {agent_id} (length: {len(system_message)} chars)")
 
-            # Add broadcast communication guidance if enabled
-            if (
-                self.config
-                and hasattr(self.config, "coordination_config")
-                and self.config.coordination_config
-                and self.config.coordination_config.broadcast
-                and self.config.coordination_config.broadcast is not False
-            ):
-                # Use blocking mode for both agents and human (priority system prevents deadlocks)
-                broadcast_mode = self.config.coordination_config.broadcast
-                wait_by_default = True
-                broadcast_sensitivity = getattr(self.config.coordination_config, "broadcast_sensitivity", "medium")
-
-                broadcast_guidance = self.message_templates.get_broadcast_guidance(
-                    broadcast_mode=broadcast_mode,
-                    wait_by_default=wait_by_default,
-                    response_mode=self.config.coordination_config.broadcast_response_mode,
-                    sensitivity=broadcast_sensitivity,
-                )
-                system_message = f"{system_message}{broadcast_guidance}"
-                logger.info(f"📢 [{agent_id}] Added broadcast communication guidance to system message")
+            # Note: Broadcast communication section is now integrated in SystemMessageBuilder
+            # as BroadcastCommunicationSection when broadcast is enabled in coordination config
 
             # Build conversation with context support (for user message and conversation history)
             # We pass the NEW system_message so it gets tracked in context JSONs

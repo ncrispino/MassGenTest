@@ -137,6 +137,8 @@ orchestrator:
   snapshot_storage: "snapshots"
   agent_temporary_workspace: "temp_workspaces"
   coordination:
+    broadcast: "agents"
+
     # Enable skills system
     use_skills: true
 

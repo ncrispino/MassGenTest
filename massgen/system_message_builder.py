@@ -79,6 +79,7 @@ class SystemMessageBuilder:
         """
         from massgen.system_prompt_sections import (
             AgentIdentitySection,
+            BroadcastCommunicationSection,
             CoreBehaviorsSection,
             EvaluationSection,
             MemorySection,
@@ -206,6 +207,21 @@ class SystemMessageBuilder:
                 and agent.backend.filesystem_manager.cwd
             )
             builder.add_section(TaskPlanningSection(filesystem_mode=filesystem_mode))
+
+        # PRIORITY 10 (MEDIUM): Broadcast Communication (conditional)
+        if hasattr(self.config, "coordination_config") and hasattr(self.config.coordination_config, "broadcast"):
+            broadcast_mode = self.config.coordination_config.broadcast
+            if broadcast_mode and broadcast_mode is not False:
+                builder.add_section(
+                    BroadcastCommunicationSection(
+                        broadcast_mode=broadcast_mode,
+                        wait_by_default=getattr(self.config.coordination_config, "broadcast_wait_by_default", True),
+                        response_mode=getattr(self.config.coordination_config, "broadcast_response_mode", "inline"),
+                        sensitivity=getattr(self.config.coordination_config, "broadcast_sensitivity", "medium"),
+                    ),
+                )
+                sensitivity = getattr(self.config.coordination_config, "broadcast_sensitivity", "medium")
+                logger.info(f"[SystemMessageBuilder] Added broadcast section (mode: {broadcast_mode}, sensitivity: {sensitivity})")
 
         # PRIORITY 10 (MEDIUM): Planning Mode (conditional)
         if planning_mode_enabled and self.config and hasattr(self.config, "coordination_config") and self.config.coordination_config and self.config.coordination_config.planning_mode_instruction:

@@ -838,7 +838,12 @@ class ClaudeCodeBackend(LLMBackend):
 
         # Add workflow tools information if present
         if tools:
-            workflow_tools = [t for t in tools if t.get("function", {}).get("name") in ["new_answer", "vote", "submit", "restart_orchestration"]]
+            workflow_tools = [
+                t
+                for t in tools
+                if t.get("function", {}).get("name")
+                in ["new_answer", "vote", "submit", "restart_orchestration", "ask_others", "respond_to_broadcast", "check_broadcast_status", "get_broadcast_responses"]
+            ]
             if workflow_tools:
                 system_parts.append("\n--- Coordination Actions ---")
                 for tool in workflow_tools:

@@ -1344,6 +1344,176 @@ class PlanningModeSection(SystemPromptSection):
         return self.planning_mode_instruction
 
 
+class BroadcastCommunicationSection(SystemPromptSection):
+    """
+    Agent-to-agent communication capabilities via broadcast tools.
+
+    Provides instructions for using ask_others() tool for collaborative
+    problem-solving between agents, with configurable sensitivity levels.
+
+    This section appears at MEDIUM priority (same as TaskPlanningSection)
+    to provide coordination guidance after critical context but before
+    auxiliary best practices.
+
+    Args:
+        broadcast_mode: Communication mode - "agents" (agent-to-agent only)
+                       or "human" (agents can ask agents + human)
+        wait_by_default: Whether ask_others() blocks by default (True)
+                        or returns immediately for polling (False)
+        response_mode: How agents respond to broadcasts:
+                      - "inline": Inject question into current conversation
+                      - "background": Separate LLM call with context snapshot
+        sensitivity: How frequently to use ask_others():
+                    - "low": Only for critical decisions/when blocked
+                    - "medium": For significant decisions and design choices (default)
+                    - "high": Frequently - whenever considering options
+
+    Example:
+        >>> section = BroadcastCommunicationSection(
+        ...     broadcast_mode="agents",
+        ...     wait_by_default=True,
+        ...     response_mode="inline",
+        ...     sensitivity="medium"
+        ... )
+        >>> print(section.render())
+    """
+
+    def __init__(
+        self,
+        broadcast_mode: str,
+        wait_by_default: bool = True,
+        response_mode: str = "inline",
+        sensitivity: str = "medium",
+    ):
+        super().__init__(
+            title="Broadcast Communication",
+            priority=Priority.MEDIUM,  # Same as TaskPlanningSection
+            xml_tag="broadcast_communication",
+        )
+        self.broadcast_mode = broadcast_mode
+        self.wait_by_default = wait_by_default
+        self.response_mode = response_mode
+        self.sensitivity = sensitivity
+
+    def build_content(self) -> str:
+        """Build broadcast communication instructions."""
+        lines = [
+            "## Agent Communication",
+            "",
+            "You have access to the `ask_others()` tool for collaborative problem-solving.",
+            "",
+            "**IMPORTANT: Call ask_others() when you need input, coordination, or collaboration from other agents",
+        ]
+
+        if self.broadcast_mode == "human":
+            lines[-1] += " and the human user"
+        lines[-1] += ". Use it strategically to work effectively as a team.**"
+
+        lines.append("")
+
+        # Add sensitivity-specific guidance
+        if self.sensitivity == "high":
+            lines.append("**Collaboration frequency: HIGH - Use ask_others() frequently whenever you're considering options, proposing approaches, or could benefit from input.**")
+        elif self.sensitivity == "low":
+            lines.append("**Collaboration frequency: LOW - Use ask_others() only when blocked or for critical architectural decisions.**")
+        else:  # medium
+            lines.append("**Collaboration frequency: MEDIUM - Use ask_others() for significant decisions, design choices, or when confirmation would be valuable.**")
+
+        lines.extend(
+            [
+                "",
+                "**When to use ask_others():**",
+                '- **When the user explicitly asks you to**: If the prompt says "ask_others for..." then CALL THE TOOL',
+                '- **Before making a key decision**: "Which framework should we use: Next.js or React?"',
+                '- **When you need clarification**: "What\'s our approach for authentication?"',
+                "- **After providing an answer**: Ask others for feedback on your approach",
+                "- **When reviewing existing answers**: Ask questions about others' implementations",
+                '- **When stuck on something specific**: "How should I handle [specific issue]?"',
+                "",
+                "**When NOT to use ask_others():**",
+                "- **For rhetorical questions**: Don't ask if you don't need actual responses",
+                "- **When the answer is obvious**: Use your judgment on what needs coordination",
+                "- **Repeatedly on the same topic**: One broadcast per decision is usually enough",
+                "",
+                "**Best practices for timing:**",
+                '- **User says "ask_others"**: Call the tool immediately as requested',
+                "- **Need input before deciding**: Ask first, then provide your answer based on responses",
+                "- **Want feedback on your work**: Provide answer first, then ask for feedback",
+                "- **Use your judgment**: You can ask at any point when collaboration would help",
+                "",
+                "**IMPORTANT: Include broadcast responses in your answer:**",
+                "When you receive responses from ask_others(), INCLUDE THEM in your new_answer() text file:",
+                '- Example: "I asked others about the framework choice. The response was: Vue. Based on this input, I will..."',
+                "- This ensures the information persists if your execution is restarted",
+                "- Check your answer file before calling ask_others() again - if you already documented the response, use it instead of asking again",
+                "",
+                "**How it works:**",
+            ],
+        )
+
+        if self.wait_by_default:
+            lines.extend(
+                [
+                    "- Call `ask_others(question)` with your question",
+                    "- The tool blocks and waits for responses from other agents",
+                ],
+            )
+            if self.broadcast_mode == "human":
+                lines[-1] += " and the human user"
+            lines.extend(
+                [
+                    "- Returns all responses immediately when ready",
+                    "- You can then continue with your task",
+                ],
+            )
+        else:
+            lines.extend(
+                [
+                    "- Call `ask_others(question, wait=False)` to send question without waiting",
+                    "- Continue working on other tasks",
+                    "- Later, check status with `check_broadcast_status(request_id)`",
+                    "- Get responses with `get_broadcast_responses(request_id)` when ready",
+                ],
+            )
+
+        lines.extend(
+            [
+                "",
+                "**Best practices:**",
+                "- Be specific and actionable in your questions",
+                "- Use when you genuinely need coordination or input",
+                "- Actually CALL THE TOOL (don't just mention it in your answer text)",
+                "- Respond helpfully when others ask you questions",
+                "",
+                "**Examples of good questions:**",
+                '- "Which framework should we use for this project: Next.js, Nuxt, or SvelteKit?"',
+                '- "I\'m about to refactor the User model. Any concerns or suggestions?"',
+                '- "Does anyone know which OAuth library we\'re using?"',
+                '- "I\'m stuck on this authentication bug. Ideas?"',
+                '- "Should I implement approach A (faster) or approach B (more maintainable)?"',
+            ],
+        )
+
+        if self.broadcast_mode == "human":
+            lines.extend(
+                [
+                    "",
+                    "**Note:** The human user may also respond to your questions alongside other agents.",
+                ],
+            )
+
+        if self.response_mode == "background":
+            lines.extend(
+                [
+                    "",
+                    "**Technical note:** When you receive broadcast questions, you'll respond based on a snapshot",
+                    "of your current context without interrupting your main task flow.",
+                ],
+            )
+
+        return "\n".join(lines)
+
+
 class SystemPromptBuilder:
     """
     Builder for assembling system prompts from sections.

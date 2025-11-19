@@ -95,6 +95,39 @@ class CoordinationConfig:
     massgen_skills: List[str] = field(default_factory=list)
     skills_directory: str = ".agent/skills"
 
+    def __post_init__(self):
+        """Validate configuration after initialization."""
+        self._validate_broadcast_config()
+
+    def _validate_broadcast_config(self):
+        """Validate broadcast configuration settings."""
+        import logging
+
+        logger = logging.getLogger(__name__)
+
+        if self.broadcast:
+            # Validate broadcast mode
+            if self.broadcast not in [False, "agents", "human"]:
+                raise ValueError(f"Invalid broadcast mode: {self.broadcast}. Must be False, 'agents', or 'human'")
+
+            # Validate sensitivity
+            if self.broadcast_sensitivity not in ["low", "medium", "high"]:
+                raise ValueError(f"Invalid broadcast_sensitivity: {self.broadcast_sensitivity}. Must be 'low', 'medium', or 'high'")
+
+            # Validate response mode
+            if self.broadcast_response_mode not in ["inline", "background"]:
+                raise ValueError(f"Invalid broadcast_response_mode: {self.broadcast_response_mode}. Must be 'inline' or 'background'")
+
+            # Warn if both task planning and high-sensitivity broadcasts enabled
+            if self.enable_agent_task_planning and self.broadcast_sensitivity == "high":
+                logger.warning(
+                    "Both task planning and high-sensitivity broadcasts are enabled. " "This may create extensive coordination overhead. " "Consider using 'medium' or 'low' broadcast sensitivity.",
+                )
+
+            # Warn if timeout is very low
+            if self.broadcast_timeout < 30:
+                logger.warning(f"Broadcast timeout is very low ({self.broadcast_timeout}s). Agents may not have enough time to respond.")
+
 
 @dataclass
 class AgentConfig:
