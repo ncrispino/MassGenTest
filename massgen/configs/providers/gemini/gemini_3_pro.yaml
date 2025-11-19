@@ -5,7 +5,7 @@ agents:
   - id: "agent_a"
     backend:
       type: "gemini"
-      model: "gpt-3-pro-preview"
+      model: "gemini-3-pro-preview"
       cwd: "workspace1"  # Required for filesystem mode
       enable_mcp_command_line: true
       command_line_execution_mode: "docker"
@@ -26,5 +26,3 @@ orchestrator:
     # Enable task planning
     enable_agent_task_planning: true
     task_planning_filesystem_mode: true
-    # Enable memory filesystem mode
-    enable_memory_filesystem_mode: true
