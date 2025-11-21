@@ -41,40 +41,43 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 | Release | Target | Feature | Owner | Use Case |
 |---------|--------|---------|-------|----------|
-| **v0.1.16** | 11/24/25 | Intuitive Quickstart & PyPI Tools/Skills | @ncrispino | Make quickstart more intuitive and ensure tools/skills work through PyPI |
-| | | Grok 4.1 Fast Support | @praneeth999 | Add support for xAI Grok 4.1 Fast model |
+| **v0.1.16** | 11/24/25 | Make Quickstart More Intuitive | @ncrispino | Ensure tools/skills work through PyPI for better onboarding experience |
+| | | Integrate LiteLLM Registry | @ncrispino | More accurate token and price counting across providers |
 | **v0.1.17** | 11/26/25 | Improve Consistency of Memory & Tool Reminders | @ncrispino | Enhance memory and tool reminder consistency across agents |
 | | | MassGen Terminal Evaluation | @ncrispino | Self-evaluation and improvement of frontend/UI |
-| **v0.1.18** | 11/28/25 | Smithery MCP Tools Support | @ncrispino | Expand MCP tools access through Smithery integration |
-| | | Integrate RL into MassGen | @qidanrui @praneeth999 | Reinforcement learning integration for agent optimization and adaptive behavior |
+| **v0.1.18** | 11/28/25 | Integrate RL into MassGen | @qidanrui @praneeth999 | Reinforcement learning integration for agent optimization and adaptive behavior |
+| | | Smithery MCP Tools Support | @ncrispino | Expand MCP tools access through Smithery integration |
 
 *All releases ship on MWF @ 9am PT when ready*
 
 ---
 
-## 📋 v0.1.16 - Quickstart Improvements & Grok 4.1 Fast
+## 📋 v0.1.16 - Quickstart Improvements & Token Counting
 
 ### Features
 
-**1. Intuitive Quickstart & PyPI Tools/Skills** (@ncrispino)
-- Issue: [#544](https://github.com/massgen/MassGen/issues/544)
-- Make quickstart workflow more intuitive for new users
-- Ensure tools and skills work correctly when installed via PyPI
-- Improved first-run experience and onboarding
-- **Use Case**: Enable users installing MassGen via pip to have a seamless experience with all tools and skills working out of the box
+**1. Make Quickstart More Intuitive** (@ncrispino)
+- Issue: [#543](https://github.com/massgen/MassGen/issues/544)
+- Ensure tools and skills work properly through PyPI installation
+- Improved onboarding experience for new users
+- Better documentation and guidance during initial setup
+- Streamlined configuration process
+- **Use Case**: Enable users to get started with MassGen quickly and easily, with tools and skills working out of the box via PyPI
 
-**2. Grok 4.1 Fast Support** (@praneeth999)
-- Issue: [#540](https://github.com/massgen/MassGen/issues/540)
-- Add support for xAI Grok 4.1 Fast model
-- Backend integration with Grok API
-- Function calling and tool support for Grok 4.1 Fast
-- **Use Case**: Enable users to leverage xAI's Grok 4.1 Fast model for faster inference in multi-agent workflows
+**2. Integrate LiteLLM Registry** (@ncrispino)
+- Issue: [#543](https://github.com/massgen/MassGen/issues/543)
+- More accurate token counting across all providers
+- Precise price calculation for different models
+- Integration with LiteLLM's model registry for up-to-date pricing
+- Better cost tracking and estimation for multi-agent workflows
+- **Use Case**: Provide accurate token usage and cost information across all supported model providers
 
 ### Success Criteria
-- ✅ PyPI installation includes all necessary tools and skills
-- ✅ Quickstart guides users through setup intuitively
-- ✅ Grok 4.1 Fast model works with MassGen backend
-- ✅ Function calling operates correctly with Grok 4.1 Fast
+- ✅ Tools and skills work correctly when installed via PyPI
+- ✅ Quickstart process is streamlined and intuitive
+- ✅ Token counting is accurate across all supported providers
+- ✅ Price calculations match actual provider pricing
+- ✅ Cost tracking works for multi-agent workflows
 
 ---
 
@@ -99,6 +102,29 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 - Comprehensive case study generation from terminal recordings
 - Self-improvement capabilities extended to frontend (currently backend-only via automation mode)
 - **Use Case**: Enable MassGen to analyze its own terminal interface, creating demonstration videos and documentation automatically, showcasing new features through automated workflows
+
+### Success Criteria
+- ✅ Memory retrieval is consistent across all agents
+- ✅ Tool reminders appear at appropriate times with relevant suggestions
+- ✅ Memory access patterns are standardized and documented
+- ✅ Terminal recording and playback system works reliably
+- ✅ Video understanding capabilities accurately analyze terminal sessions
+- ✅ Automated case study generation produces high-quality documentation
+
+---
+
+## 📋 v0.1.18 - RL Integration & MCP Ecosystem Expansion
+
+### Features
+
+**1. Integrate RL into MassGen** (@qidanrui, @praneeth999)
+- Issue: [#527](https://github.com/massgen/MassGen/issues/527)
+- Reinforcement learning integration for agent optimization
+- Adaptive agent behavior based on feedback and outcomes
+- Reward modeling for multi-agent coordination
+- Policy optimization for task execution strategies
+- Learning from past interactions to improve future performance
+- **Use Case**: Enable agents to learn and improve their performance over time through reinforcement learning
 
 ### Success Criteria
 - ✅ Memory retrieval is consistent across all agents
@@ -133,9 +159,11 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 - **Use Case**: Enable agents to learn and improve their performance over time through reinforcement learning, optimizing coordination strategies and task execution based on past successes and failures
 
 ### Success Criteria
+- ✅ RL framework successfully integrates with MassGen architecture
+- ✅ Agents demonstrate learning and improvement over repeated tasks
+- ✅ Reward modeling accurately reflects task success metrics
 - ✅ Smithery integration discovers and installs MCP tools automatically
 - ✅ Tool registry includes curated Smithery tools with proper metadata
-- ✅ Tool recommendation system suggests relevant Smithery tools
 - ✅ Users can easily browse and install Smithery tools
 - ✅ RL framework successfully integrates with MassGen architecture
 - ✅ Agents demonstrate learning and improvement over repeated tasks
@@ -265,16 +293,22 @@ These features are being actively developed on **separate parallel tracks** and 
 - Standard efficiency evaluation and benchmarking methodology
 - **Status:** ✅ Completed in v0.1.14
 
+### Track: Persona Generation System (@ncrispino, nickcrispino)
+- PR: [#547](https://github.com/massgen/MassGen/pull/547)
+- Automatic generation of diverse system messages for multi-agent configurations
+- Multiple generation strategies: complementary, diverse, specialized, adversarial
+- **Status:** ✅ Completed in v0.1.15
+
+### Track: Docker Distribution Enhancement (@ncrispino, nickcrispino)
+- PR: [#545](https://github.com/massgen/MassGen/pull/545), [#538](https://github.com/massgen/MassGen/pull/538)
+- GitHub Container Registry integration with ARM support
+- MassGen pre-installed in Docker images for immediate use
+- **Status:** ✅ Completed in v0.1.15
+
 ### Track: Launch Custom Tools in Docker (@ncrispino, nickcrispino)
 - Issue: [#510](https://github.com/massgen/MassGen/issues/510)
 - Enable custom tools to run in isolated Docker containers
 - Security isolation and portability for custom tool execution
-- **Status:** ✅ Completed in v0.1.15
-
-### Track: Textual Terminal Display (@praneeth999, ram2561)
-- Rich terminal UI framework using Textual library
-- Dark and light theme support with customizable styling
-- Enhanced coordination display with interactive components
 - **Status:** ✅ Completed in v0.1.15
 
 ### Track: Improve Consistency of Memory & Tool Reminders (@ncrispino, nickcrispino)
@@ -284,6 +318,23 @@ These features are being actively developed on **separate parallel tracks** and 
 - Standardize memory access patterns
 - **Target:** v0.1.17
 
+### Track: MassGen Terminal Evaluation (@ncrispino, nickcrispino)
+- Issue: [#476](https://github.com/massgen/MassGen/issues/476)
+- Self-evaluation and improvement of frontend/UI through terminal recording
+- Automated video generation and case study creation
+- **Target:** v0.1.17
+
+### Track: Make Quickstart More Intuitive (@ncrispino, nickcrispino)
+- Ensure tools and skills work properly through PyPI installation
+- Improved onboarding experience for new users
+- **Target:** v0.1.16
+
+### Track: LiteLLM Registry Integration (@ncrispino, nickcrispino)
+- Issue: [#543](https://github.com/massgen/MassGen/issues/543)
+- More accurate token counting across all providers
+- Precise price calculation for different models
+- **Target:** v0.1.16
+
 ### Track: RL Integration (@qidanrui, @praneeth999, danrui2020, ram2561)
 - Issue: [#527](https://github.com/massgen/MassGen/issues/527)
 - Reinforcement learning integration for agent optimization
@@ -291,29 +342,11 @@ These features are being actively developed on **separate parallel tracks** and 
 - Reward modeling for multi-agent coordination
 - **Target:** v0.1.18
 
-### Track: Grok 4.1 Fast Support (@praneeth999, ram2561)
-- Issue: [#540](https://github.com/massgen/MassGen/issues/540)
-- Add support for xAI Grok 4.1 Fast model
-- Backend integration with function calling support
-- **Target:** v0.1.16
-
-### Track: MassGen Terminal Evaluation (@ncrispino, nickcrispino)
-- Issue: [#476](https://github.com/massgen/MassGen/issues/476)
-- Self-evaluation and improvement of frontend/UI through terminal recording
-- Automated video generation and case study creation
-- **Target:** v0.1.17
-
 ### Track: Smithery MCP Tools Support (@ncrispino, nickcrispino)
 - Issue: [#521](https://github.com/massgen/MassGen/issues/521)
 - Integration with Smithery to expand available MCP tools
 - Automatic discovery and installation of Smithery MCP servers
 - **Target:** v0.1.18
-
-### Track: Intuitive Quickstart & PyPI Tools/Skills (@ncrispino, nickcrispino)
-- Issue: [#544](https://github.com/massgen/MassGen/issues/544)
-- Make quickstart workflow more intuitive for new users
-- Ensure tools and skills work correctly when installed via PyPI
-- **Target:** v0.1.16
 
 ### Track: Coding Agent Enhancements (@ncrispino, nickcrispino)
 - PR: [#251](https://github.com/massgen/MassGen/pull/251)

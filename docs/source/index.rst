@@ -111,9 +111,9 @@ Key Features
 Recent Releases
 ---------------
 
-**v0.1.15 (November 21, 2025)** - Textual Terminal Display & Docker Enhancements
+**v0.1.15 (November 21, 2025)** - Persona Generation System & Docker Distribution
 
-Rich terminal UI framework using the Textual library for enhanced coordination visualization with interactive components. Dark and light theme support via TCSS stylesheets for better readability in different environments. Docker workflow improvements with MassGen installed inside containers for seamless custom tool execution. Multi-platform Docker builds with ARM architecture support for Apple Silicon and ARM servers.
+Automatic persona generation for multi-agent configurations with multiple strategies (complementary, diverse, specialized, adversarial) to increase response diversity. Enhanced Docker distribution via GitHub Container Registry with ARM architecture support. Custom tools now run in isolated Docker containers for security and portability (Issue #510). MassGen pre-installed in Docker images for immediate use. Improved config builder with better model selection and defaults.
 
 **v0.1.14 (November 19, 2025)** - Parallel Tool Execution, Interactive Quickstart & Gemini 3 Pro
 

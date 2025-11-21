@@ -160,17 +160,16 @@ This project started with the "threads of thought" and "iterative refinement" id
 **🎉 Released: November 21, 2025**
 
 **What's New in v0.1.15:**
-- **🖥️ Textual Terminal Display** - Rich terminal UI with interactive components and better visualization
-- **🎨 Dark & Light Theme Support** - Customizable themes for Textual display
-- **🐳 Docker Custom Tools** - MassGen installed inside Docker for seamless custom tool execution
-- **💪 ARM Platform Support** - Cross-platform compatibility for Apple Silicon and ARM servers
+- **🎭 Persona Generation System** - Automatic diverse system messages for multi-agent configurations
+- **🐳 Docker Distribution & Custom Tools** - GitHub Container Registry with ARM support and isolated tool execution
+- **⚙️ Config Builder Enhancement** - Improved interactive configuration with better model selection
 
 **Key Improvements:**
-- New Textual-based terminal display with rich UI components for enhanced coordination visualization
-- Dark and light theme stylesheets for better readability in different environments
-- Docker workflow improvements with MassGen installed inside containers for custom tools
-- ARM architecture support for broader deployment options
-- Enhanced Docker CI/CD workflow with multi-platform builds
+- Automatic persona generation with multiple strategies (complementary, diverse, specialized, adversarial)
+- Custom tools now run in isolated Docker containers for security and portability (Issue #510)
+- GitHub Container Registry integration with ARM architecture support
+- MassGen pre-installed in Docker images for immediate use
+- Enhanced config builder with better model selection and defaults
 
 **Try v0.1.15 Features:**
 ```bash
@@ -180,17 +179,13 @@ pip install --upgrade massgen
 # Or with uv (faster)
 uv pip install massgen
 
-# Textual Terminal Display - rich UI with dark/light themes
-uv run massgen --config massgen/configs/basic/single_agent_textual.yaml \
-  "What is the transformers in deep learning?"
+# Persona Generation - automatic diverse system messages for agents
+# Prerequisites: OPENAI_API_KEY in .env, Docker running for code execution
+uv run massgen --config massgen/configs/basic/multi/persona_diversity_example.yaml \
+  "Create a website about Bob Dylan"
 
-# Docker with custom tools - MassGen installed inside Docker
-# Prerequisites:
-#   1. Docker installed and running
-#   2. Build Docker image: bash massgen/docker/build.sh (or ./massgen/docker/build.sh)
-#   3. OPENAI_API_KEY in .env
-uv run massgen --config massgen/configs/tools/code-execution/docker_simple.yaml \
-  "Write a factorial function and test it"
+# Enhanced Config Builder - improved model selection
+uv run massgen --init  # Interactive wizard with better defaults
 ```
 
 → [See full release history and examples](massgen/configs/README.md#release-history--examples)
@@ -1095,18 +1090,23 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 **🎉 Released: November 21, 2025**
 
-#### Textual Terminal Display & Docker Enhancements
-- **Textual Terminal Display**: Rich terminal UI framework using the Textual library for enhanced coordination visualization with interactive components
-- **Theme Support**: Dark and light themes via TCSS stylesheets for better readability in different environments
-- **Docker Custom Tools Installation**: MassGen installed inside Docker containers enabling custom Python tools to run with MassGen context
-- **Docker CI/CD Enhancements**: Multi-platform builds with ARM architecture support for Apple Silicon and ARM servers
-- **Configuration Example**: `massgen/configs/basic/single_agent_textual.yaml`
+#### Persona Generation System
+- **Automatic Persona Generation**: LLM-powered generation of diverse system messages for multi-agent configurations (`massgen/persona_generator.py`)
+- **Multiple Strategies**: Complementary, diverse, specialized, and adversarial generation approaches
+- **Orchestrator Integration**: Seamless integration with persona generation orchestration (`massgen/orchestrator.py`)
+- **CLI Integration**: Persona generation via config file with orchestrator integration (`massgen/cli.py`)
+- **Configuration Example**: `massgen/configs/basic/multi/persona_diversity_example.yaml`
+
+#### Docker Distribution & Custom Tools Enhancement
+- **GitHub Container Registry**: Docker images published to ghcr.io/massgen with ARM support
+- **Custom Tools in Docker**: Isolated Docker containers for security and portability (Issue #510)
+- **MassGen Pre-installed**: Docker images include MassGen for immediate use with custom tools
+- **CI/CD Pipeline**: Automated Docker build and publish workflow (`.github/workflows/docker-publish.yml`)
+- **Config Builder Enhancement**: Improved interactive configuration with better model selection (`massgen/config_builder.py`)
 
 ### Previous Achievements (v0.0.3 - v0.1.14)
 
-✅ **Parallel Tool Execution & Gemini 3 Pro (v0.1.14)**: Configurable concurrent tool execution across all backends with asyncio-based scheduling, Gemini 3 Pro model with function calling, interactive quickstart workflow, MCP registry client for server metadata
-
-✅ **Interactive Quickstart & NLIP Routing (v0.1.14)**: Enhanced config builder with guided configuration creation, improved skill and tool search in planning mode, unified execution flow across backends
+✅ **Parallel Tool Execution & Gemini 3 Pro (v0.1.14)**: Configurable concurrent tool execution across all backends with asyncio-based scheduling, Gemini 3 Pro integration with function calling, interactive quickstart workflow, MCP registry client for server metadata
 
 ✅ **Code-Based Tools & MCP Registry (v0.1.13)**: CodeAct paradigm implementation with tool integration via importable Python code reducing token usage by 98%, MCP server registry with auto-discovery and on-demand loading, TOOL.md documentation standard
 
@@ -1278,15 +1278,15 @@ We welcome community contributions to achieve these goals.
 
 ### v0.1.16 Roadmap
 
-Version 0.1.16 focuses on quickstart improvements and Grok 4.1 Fast model support:
+Version 0.1.16 focuses on quickstart improvements and accurate token/price counting:
 
 #### Planned Features
-- **Intuitive Quickstart & PyPI Tools/Skills**: Make quickstart more intuitive and ensure tools/skills work correctly when installed via PyPI
-- **Grok 4.1 Fast Support**: Add support for xAI Grok 4.1 Fast model with function calling capabilities
+- **Make Quickstart More Intuitive**: Ensure tools and skills work properly through PyPI installation for better onboarding experience
+- **Integrate LiteLLM Registry**: More accurate token counting and price calculation across all providers
 
 Key technical approach:
-- **Quickstart Improvements**: PyPI package improvements, simplified setup workflow, better error messages, improved first-run experience
-- **Grok 4.1 Fast**: Backend integration with xAI API, function calling support, configuration examples
+- **Quickstart Improvements**: PyPI installation fixes, streamlined onboarding, better documentation and error messages
+- **LiteLLM Integration**: Provider-specific token counting, up-to-date pricing information, cost tracking for multi-agent workflows
 
 **Target Release**: November 24, 2025 (Monday @ 9am PT)
 

@@ -228,33 +228,31 @@ Most configurations use environment variables for API keys:so
 ## Release History & Examples
 
 ### v0.1.15 - Latest
-**New Features:** Textual Terminal Display, Dark/Light Themes & Docker Enhancements
+**New Features:** Persona Generation System, Docker Distribution & Custom Tools Enhancement
 
 **Configuration Files:**
-- `basic/single_agent_textual.yaml` - Textual terminal display with theme support
+- `basic/multi/persona_diversity_example.yaml` - Persona generation with strategy and backend configuration
+- `.github/workflows/docker-publish.yml` - Enhanced CI/CD pipeline for GitHub Container Registry
 
 **Key Features:**
-- **Textual Terminal Display**: Rich terminal UI framework using Textual library for enhanced coordination visualization
-- **Dark & Light Themes**: Customizable theme stylesheets for better readability in different environments
-- **Docker Custom Tools Installation**: MassGen installed inside Docker for seamless custom tool execution
-- **ARM Platform Support**: Multi-platform builds supporting Apple Silicon and ARM servers
+- **Persona Generation System**: Automatic generation of diverse system messages for multi-agent configurations with multiple strategies (complementary, diverse, specialized, adversarial)
+- **Docker Distribution Enhancement**: GitHub Container Registry integration with ARM architecture support
+- **Custom Tools in Docker**: Isolated Docker containers for security and portability (Issue #510)
+- **MassGen Pre-installed**: Docker images include MassGen for immediate use with custom tools
+- **Config Builder Enhancement**: Improved interactive configuration with better model selection and defaults
 
 **Try It:**
 ```bash
 # Install or upgrade
 pip install --upgrade massgen
 
-# Textual Terminal Display - rich UI with dark/light themes
-uv run massgen --config massgen/configs/basic/single_agent_textual.yaml \
-  "What is the transformers in deep learning?"
+# Persona Generation - automatic diverse system messages for agents
+# Prerequisites: OPENAI_API_KEY in .env, Docker running for code execution
+uv run massgen --config massgen/configs/basic/multi/persona_diversity_example.yaml \
+  "Create a website about Bob Dylan"
 
-# Docker with custom tools - MassGen installed inside Docker
-# Prerequisites:
-#   1. Docker installed and running
-#   2. Build Docker image: bash massgen/docker/build.sh (or ./massgen/docker/build.sh)
-#   3. OPENAI_API_KEY in .env
-uv run massgen --config massgen/configs/tools/code-execution/docker_simple.yaml \
-  "Write a factorial function and test it"
+# Enhanced Config Builder - improved model selection
+uv run massgen --init  # Interactive wizard with better defaults
 ```
 
 ### v0.1.14
@@ -267,7 +265,7 @@ uv run massgen --config massgen/configs/tools/code-execution/docker_simple.yaml 
 **Key Features:**
 - **Parallel Tool Execution System**: Configurable concurrent tool execution across all backends with asyncio-based scheduling
 - **Gemini 3 Pro Support**: Full integration for Google's Gemini 3 Pro model with native function calling
-- **Interactive Quickstart Workflow**: Streamlined onboarding with guided configuration creation
+- **Interactive Quickstart Workflow**: Streamlined onboarding experience with guided configuration creation
 - **MCP Registry Client**: Enhanced server metadata fetching from official MCP registry
 
 **Try It:**
@@ -276,12 +274,10 @@ uv run massgen --config massgen/configs/tools/code-execution/docker_simple.yaml 
 uv run massgen --quickstart
 
 # Parallel Tool Execution - concurrent tool execution
-# Prerequisites: .env with OPENAI_API_KEY, npx available for MCP weather server
 uv run massgen --config massgen/configs/tools/custom_tools/gpt5_nano_custom_tool_with_mcp_parallel.yaml \
   "whats the sum of 123 and 456? and whats the weather of Tokyo and london?"
 
 # Gemini 3 Pro - Google's latest model with function calling
-# Prerequisites: Docker running, GOOGLE_API_KEY in .env
 uv run massgen --config massgen/configs/providers/gemini/gemini_3_pro.yaml \
   "Create a website about Bob Dylan"
 ```
