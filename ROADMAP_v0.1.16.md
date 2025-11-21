@@ -1,112 +1,102 @@
-# MassGen v0.1.15 Roadmap
+# MassGen v0.1.16 Roadmap
 
 ## Overview
 
-Version 0.1.15 focuses on reinforcement learning integration and multi-agent Git workflows, bringing key enhancements to agent optimization and parallel development capabilities.
+Version 0.1.16 focuses on quickstart improvements and accurate token/price counting, enhancing the onboarding experience and cost tracking capabilities.
 
-- **Integrate RL into MassGen** (Required): 🧠 Reinforcement learning integration for agent optimization and adaptive behavior
-- **Git Worktrees for Multi-Agent** (Required): 🌳 Enable parallel agent development with isolated Git worktrees
+- **Make Quickstart More Intuitive** (Required): 🚀 Ensure tools and skills work through PyPI for better onboarding
+- **Integrate LiteLLM Registry** (Required): 💰 More accurate token and price counting across providers
 
 ## Key Technical Priorities
 
-1. **Integrate RL into MassGen**: Reinforcement learning integration for agent optimization
-   **Use Case**: Enable agents to learn and improve their performance over time through reinforcement learning, optimizing coordination strategies and task execution based on past successes and failures
+1. **Make Quickstart More Intuitive**: Ensure tools and skills work properly through PyPI installation
+   **Use Case**: Enable users to get started with MassGen quickly and easily, with tools and skills working out of the box via PyPI
 
-2. **Git Worktrees for Multi-Agent**: Enable multiple agents to work on different Git worktrees simultaneously
-   **Use Case**: Allow multiple agents to work on different features or branches simultaneously without conflicts, enabling true parallel development workflows
+2. **Integrate LiteLLM Registry**: More accurate token counting across all providers
+   **Use Case**: Provide accurate token usage and cost information across all supported model providers
 
 ## Key Milestones
 
-### 🎯 Milestone 1: Integrate RL into MassGen (REQUIRED)
+### 🎯 Milestone 1: Make Quickstart More Intuitive (REQUIRED)
 
-**Goal**: Integrate reinforcement learning into MassGen for agent optimization and adaptive behavior
-
-**Owner**: @qidanrui @praneeth999 (danrui2020, ram2561 on Discord)
-
-**Issue**: [#527](https://github.com/massgen/MassGen/issues/527)
-
-#### 1.1 RL Framework Integration
-- [ ] Design RL architecture compatible with MassGen's multi-agent system
-- [ ] Implement reward modeling for agent coordination
-- [ ] Integrate RL framework with existing agent infrastructure
-- [ ] State representation for agent observations
-- [ ] Action space definition for agent behaviors
-
-#### 1.2 Policy Optimization
-- [ ] Policy network design for task execution strategies
-- [ ] Training loop integration with MassGen workflows
-- [ ] Policy optimization algorithms (PPO, A3C, etc.)
-- [ ] Experience replay and memory management
-- [ ] Hyperparameter tuning and optimization
-
-#### 1.3 Reward Modeling
-- [ ] Define reward signals for successful task completion
-- [ ] Multi-agent coordination reward functions
-- [ ] Reward shaping for intermediate progress
-- [ ] Evaluation metrics for learning progress
-- [ ] Feedback integration from task outcomes
-
-#### 1.4 Adaptive Agent Behavior
-- [ ] Learning from past interactions
-- [ ] Performance improvement over repeated tasks
-- [ ] Adaptive coordination strategies
-- [ ] Model checkpointing and persistence
-- [ ] Testing and validation of learned behaviors
-- [ ] Documentation and usage examples
-
-**Success Criteria**:
-- ✅ RL framework successfully integrates with MassGen architecture
-- ✅ Agents demonstrate learning and improvement over repeated tasks
-- ✅ Reward modeling accurately reflects task success metrics
-- ✅ Policy optimization improves coordination strategies
-- ✅ RL integration maintains system stability and performance
-- ✅ Learned behaviors can be saved and loaded
-
----
-
-### 🎯 Milestone 2: Git Worktrees for Multi-Agent (REQUIRED)
-
-**Goal**: Enable multiple agents to work on different Git worktrees simultaneously for parallel development
+**Goal**: Ensure tools and skills work properly through PyPI installation for better onboarding
 
 **Owner**: @ncrispino (nickcrispino on Discord)
 
-**Issue**: [#514](https://github.com/massgen/MassGen/issues/514)
+**Issue**: [#544](https://github.com/massgen/MassGen/issues/544)
 
-#### 2.1 Worktree Management
-- [ ] Automatic worktree creation and management
-- [ ] Isolated working directories for parallel agent development
-- [ ] Worktree cleanup and resource management
-- [ ] Support for multiple concurrent worktrees
-- [ ] Worktree status tracking and monitoring
+#### 1.1 PyPI Installation Improvements
+- [ ] Ensure all tools work correctly when installed via PyPI
+- [ ] Ensure all skills work correctly when installed via PyPI
+- [ ] Verify dependencies are properly bundled
+- [ ] Test installation on clean environments
+- [ ] Cross-platform installation testing (Windows, macOS, Linux)
 
-#### 2.2 Branch Synchronization
-- [ ] Branch synchronization across agent worktrees
-- [ ] Automatic branch creation for agent tasks
-- [ ] Branch tracking and relationship management
-- [ ] Merge strategy coordination
-- [ ] Branch cleanup after task completion
+#### 1.2 Onboarding Experience
+- [ ] Improved first-run experience
+- [ ] Better documentation and guidance during initial setup
+- [ ] Streamlined configuration process
+- [ ] Clear error messages for common setup issues
+- [ ] Interactive setup wizard improvements
 
-#### 2.3 Conflict Resolution
-- [ ] Conflict detection across agent worktrees
-- [ ] Conflict resolution support for multi-agent workflows
-- [ ] Automatic merge conflict handling where possible
-- [ ] Manual resolution workflow integration
-- [ ] Conflict prevention strategies
+#### 1.3 Documentation Updates
+- [ ] Updated quickstart guide
+- [ ] Installation troubleshooting guide
+- [ ] Common issues and solutions
+- [ ] Video tutorials (optional)
+- [ ] Example configurations for new users
 
-#### 2.4 Performance Optimization
-- [ ] Improved parallelism for multi-agent code development
-- [ ] Efficient worktree operations
-- [ ] Resource usage optimization
-- [ ] Performance benchmarking
+**Success Criteria**:
+- ✅ Tools and skills work correctly when installed via PyPI
+- ✅ Quickstart process is streamlined and intuitive
+- ✅ New users can get started within 5 minutes
+- ✅ Clear error messages guide users through setup issues
+- ✅ Documentation covers all common scenarios
+
+---
+
+### 🎯 Milestone 2: Integrate LiteLLM Registry (REQUIRED)
+
+**Goal**: Integrate LiteLLM registry for more accurate token and price counting across all providers
+
+**Owner**: @ncrispino (nickcrispino on Discord)
+
+**Issue**: [#543](https://github.com/massgen/MassGen/issues/543)
+
+#### 2.1 LiteLLM Integration
+- [ ] Integrate LiteLLM's model registry
+- [ ] Fetch up-to-date pricing information
+- [ ] Support for all major providers (OpenAI, Anthropic, Google, etc.)
+- [ ] Automatic registry updates
+- [ ] Fallback mechanisms for offline usage
+
+#### 2.2 Token Counting
+- [ ] Accurate token counting across all supported providers
+- [ ] Provider-specific tokenizer integration
+- [ ] Real-time token usage tracking
+- [ ] Token usage reporting and analytics
+- [ ] Token estimation before API calls
+
+#### 2.3 Price Calculation
+- [ ] Precise price calculation for different models
+- [ ] Support for input/output token pricing differences
+- [ ] Currency conversion support (optional)
+- [ ] Cost tracking for multi-agent workflows
+- [ ] Cost estimation and budgeting features
+
+#### 2.4 Integration & Testing
+- [ ] Integration with existing cost tracking system
+- [ ] Unit tests for token counting accuracy
+- [ ] Integration tests with various providers
+- [ ] Performance testing for overhead impact
 - [ ] Documentation and usage examples
 
 **Success Criteria**:
-- ✅ Agents successfully create and manage separate Git worktrees
-- ✅ Multiple agents can work on different branches simultaneously
-- ✅ Worktree cleanup and management works reliably
-- ✅ Branch synchronization maintains code integrity
-- ✅ Performance improvements in multi-agent development scenarios
-- ✅ Conflict resolution workflow is efficient and reliable
+- ✅ Token counting is accurate across all supported providers
+- ✅ Price calculations match actual provider pricing
+- ✅ Cost tracking works for multi-agent workflows
+- ✅ Registry updates automatically with new model pricing
+- ✅ Minimal performance overhead from integration
 
 ---
 
@@ -114,26 +104,26 @@ Version 0.1.15 focuses on reinforcement learning integration and multi-agent Git
 
 ### Functional Requirements
 
-**Integrate RL into MassGen:**
-- [ ] RL framework integrated with MassGen architecture
-- [ ] Reward modeling functional
-- [ ] Policy optimization working
-- [ ] Adaptive agent behavior demonstrated
-- [ ] Learning persistence implemented
+**Make Quickstart More Intuitive:**
+- [ ] All tools work via PyPI installation
+- [ ] All skills work via PyPI installation
+- [ ] Quickstart documentation is clear and complete
+- [ ] Error messages are helpful and actionable
+- [ ] Setup process is streamlined
 
-**Git Worktrees for Multi-Agent:**
-- [ ] Worktree management automated
-- [ ] Branch synchronization working
-- [ ] Conflict resolution support implemented
-- [ ] Multiple agents can work in parallel
-- [ ] Performance improvements demonstrated
+**Integrate LiteLLM Registry:**
+- [ ] LiteLLM registry integrated
+- [ ] Token counting is accurate
+- [ ] Price calculations are correct
+- [ ] Cost tracking functional
+- [ ] Registry updates automatically
 
 ### Performance Requirements
-- [ ] RL training has minimal overhead on task execution
-- [ ] Worktree operations are fast and efficient
-- [ ] Overall system remains responsive
-- [ ] Multi-agent parallelism improves development speed
-- [ ] Learning convergence is efficient
+- [ ] PyPI installation is fast
+- [ ] Token counting has minimal overhead
+- [ ] Price lookups are cached efficiently
+- [ ] Startup time is not significantly impacted
+- [ ] Memory usage is reasonable
 
 ### Quality Requirements
 - [ ] All tests passing
@@ -141,41 +131,39 @@ Version 0.1.15 focuses on reinforcement learning integration and multi-agent Git
 - [ ] Configuration examples provided
 - [ ] Error handling is robust
 - [ ] User-facing messages are clear
-- [ ] RL integration is stable and reliable
 
 ---
 
 ## Dependencies & Risks
 
 ### Dependencies
-- **Integrate RL into MassGen**: RL framework (PyTorch/TensorFlow), reward modeling infrastructure, agent coordination system, experience replay storage, policy network architecture
-- **Git Worktrees for Multi-Agent**: Git worktree functionality, branch management system, agent coordination infrastructure, conflict resolution mechanisms
+- **Make Quickstart More Intuitive**: PyPI packaging, dependency management, cross-platform testing, documentation system
+- **Integrate LiteLLM Registry**: LiteLLM library, provider APIs, caching system, cost tracking infrastructure
 
 ### Risks & Mitigations
-1. **Learning Instability**: *Mitigation*: Careful hyperparameter tuning, reward shaping, stable training algorithms, checkpointing
-2. **Training Overhead**: *Mitigation*: Efficient experience sampling, asynchronous training, resource management
-3. **Reward Design Complexity**: *Mitigation*: Iterative reward function refinement, evaluation metrics, human feedback integration
-4. **Worktree Conflicts**: *Mitigation*: Comprehensive conflict detection, automatic resolution where possible, clear manual resolution workflows
-5. **Branch Synchronization**: *Mitigation*: Robust merge strategies, testing with various git workflows, rollback capabilities
-6. **Performance Overhead**: *Mitigation*: Performance profiling, optimization passes, lazy worktree creation, efficient cleanup
+1. **PyPI Packaging Issues**: *Mitigation*: Comprehensive testing on clean environments, CI/CD for package validation
+2. **Dependency Conflicts**: *Mitigation*: Careful dependency pinning, virtual environment testing
+3. **LiteLLM API Changes**: *Mitigation*: Version pinning, fallback mechanisms, monitoring for updates
+4. **Pricing Accuracy**: *Mitigation*: Regular validation against provider pricing pages, user feedback integration
+5. **Performance Overhead**: *Mitigation*: Caching, lazy loading, performance profiling
 
 ---
 
-## Future Enhancements (Post-v0.1.15)
-
-### v0.1.16 Plans
-- **Parallel File Operations** (@ncrispino): Increase parallelism of file read operations with standard efficiency evaluation
-- **Launch Custom Tools in Docker** (@ncrispino): Enable custom tools to run in isolated Docker containers for security and portability
+## Future Enhancements (Post-v0.1.16)
 
 ### v0.1.17 Plans
-- **MassGen Terminal Evaluation** (@ncrispino): Enable MassGen to evaluate and improve its own frontend/UI through terminal recording
+- **Improve Consistency of Memory & Tool Reminders** (@ncrispino): Enhance consistency of memory retrieval across agents
+- **MassGen Terminal Evaluation** (@ncrispino): Enable MassGen to evaluate and improve its own frontend/UI
+
+### v0.1.18 Plans
+- **Integrate RL into MassGen** (@qidanrui @praneeth999): Reinforcement learning integration for agent optimization
 - **Smithery MCP Tools Support** (@ncrispino): Integration with Smithery to expand available MCP tools
 
 ### Long-term Vision
-- **Universal Rate Limiting**: Rate limiting for all backends (OpenAI, Claude, etc.)
-- **Advanced Tool Selection**: Machine learning-based tool selection with user preference learning
-- **Cost Analytics**: Detailed cost tracking and budget management across all APIs
-- **Tool Performance Metrics**: Analytics on tool usage patterns and effectiveness
+- **Universal Rate Limiting**: Rate limiting for all backends
+- **Advanced Tool Selection**: Machine learning-based tool selection
+- **Cost Analytics**: Detailed cost tracking and budget management
+- **Tool Performance Metrics**: Analytics on tool usage patterns
 
 ---
 
@@ -183,10 +171,10 @@ Version 0.1.15 focuses on reinforcement learning integration and multi-agent Git
 
 | Phase | Focus | Key Deliverables | Owner | Priority |
 |-------|-------|------------------|-------|----------|
-| Phase 1 | RL Integration | RL framework integration, reward modeling, policy optimization, adaptive agent behavior | @qidanrui @praneeth999 | **REQUIRED** |
-| Phase 2 | Git Worktrees | Worktree management, branch synchronization, conflict resolution, parallel development | @ncrispino | **REQUIRED** |
+| Phase 1 | Quickstart | PyPI installation, onboarding improvements, documentation | @ncrispino | **REQUIRED** |
+| Phase 2 | Token Counting | LiteLLM integration, accurate pricing, cost tracking | @ncrispino | **REQUIRED** |
 
-**Target Release**: November 21, 2025 (Friday @ 9am PT)
+**Target Release**: November 24, 2025 (Monday @ 9am PT)
 
 ---
 
@@ -194,41 +182,39 @@ Version 0.1.15 focuses on reinforcement learning integration and multi-agent Git
 
 ### For Contributors
 
-**Phase 1 - Integrate RL into MassGen:**
-1. Design and implement RL framework integration (Issue #527)
-2. Create reward modeling system
-3. Implement policy optimization algorithms
-4. Enable adaptive agent behavior
-5. Add comprehensive testing and benchmarks
-6. Document RL integration and usage
+**Phase 1 - Make Quickstart More Intuitive:**
+1. Review current PyPI installation process (Issue #544)
+2. Identify tools/skills that don't work via PyPI
+3. Fix packaging and dependency issues
+4. Update documentation
+5. Test on clean environments
+6. Create troubleshooting guide
 
-**Phase 2 - Git Worktrees for Multi-Agent:**
-1. Implement worktree management system (Issue #514)
-2. Add branch synchronization capabilities
-3. Create conflict resolution support
-4. Enable parallel agent development
-5. Add comprehensive testing and benchmarks
-6. Document worktree usage and configuration
+**Phase 2 - Integrate LiteLLM Registry:**
+1. Integrate LiteLLM library (Issue #543)
+2. Implement token counting for all providers
+3. Add price calculation logic
+4. Integrate with cost tracking system
+5. Add comprehensive tests
+6. Document usage and configuration
 
 ### For Users
 
-- v0.1.15 brings reinforcement learning integration and multi-agent Git workflows:
+- v0.1.16 brings quickstart improvements and accurate cost tracking:
 
-  **Integrate RL into MassGen:**
-  - Agent learning and optimization over time
-  - Adaptive agent behavior based on feedback
-  - Improved coordination strategies
-  - Performance improvement on repeated tasks
-  - Persistent learning across sessions
-  - Enhanced multi-agent collaboration
+  **Make Quickstart More Intuitive:**
+  - Tools and skills work out of the box via PyPI
+  - Improved onboarding experience
+  - Better documentation and guidance
+  - Streamlined configuration process
+  - Clear error messages for common issues
 
-  **Git Worktrees for Multi-Agent:**
-  - Multiple agents working in parallel on different branches
-  - Isolated working directories prevent conflicts
-  - Automatic worktree creation and management
-  - Efficient branch synchronization
-  - Conflict resolution support for multi-agent workflows
-  - Improved development speed through parallelism
+  **Integrate LiteLLM Registry:**
+  - Accurate token counting across all providers
+  - Precise cost calculations
+  - Up-to-date pricing information
+  - Better cost tracking for multi-agent workflows
+  - Cost estimation before running tasks
 
 ---
 
@@ -241,12 +227,11 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for:
 - Documentation guidelines
 
 **Contact Track Owners:**
-- RL Integration: @qidanrui @praneeth999 on Discord (danrui2020, ram2561)
-- Git Worktrees for Multi-Agent: @ncrispino on Discord (nickcrispino)
+- Quickstart & LiteLLM: @ncrispino on Discord (nickcrispino)
 
 ---
 
-*This roadmap reflects v0.1.15 priorities focusing on reinforcement learning integration and multi-agent Git workflows.*
+*This roadmap reflects v0.1.16 priorities focusing on quickstart improvements and accurate token/price counting.*
 
-**Last Updated:** November 19, 2025
+**Last Updated:** November 21, 2025
 **Maintained By:** MassGen Team
