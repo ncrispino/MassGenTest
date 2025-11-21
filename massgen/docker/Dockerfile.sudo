@@ -116,16 +116,16 @@ RUN python -m playwright install
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/home/massgen/.local/bin:${PATH}"
 
-# Install MassGen package
+# Install MassGen package from source
 # This provides MCP server modules and fastmcp CLI needed for agent operation
-# Version can be controlled via build arg (e.g., --build-arg MASSGEN_VERSION=0.1.14)
+# Installs from the git repository being built (not PyPI) to ensure version sync
 USER root
-ARG MASSGEN_VERSION=latest
-RUN if [ "$MASSGEN_VERSION" = "latest" ]; then \
-        pip install --no-cache-dir massgen; \
-    else \
-        pip install --no-cache-dir massgen==${MASSGEN_VERSION}; \
-    fi
+COPY --chown=massgen:massgen . /tmp/massgen-build
+WORKDIR /tmp/massgen-build
+RUN pip install --no-cache-dir . && \
+    cd /workspace && \
+    rm -rf /tmp/massgen-build
+WORKDIR /workspace
 USER massgen
 
 # Default command: Keep container running (overridden at runtime)

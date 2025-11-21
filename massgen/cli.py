@@ -2613,29 +2613,54 @@ def setup_docker() -> None:
         ("ghcr.io/massgen/mcp-runtime-sudo:latest", "Sudo image (for package installation)"),
     ]
 
-    print(f"\n{BRIGHT_CYAN}Pulling Docker images...{RESET}\n")
+    print(f"\n{BRIGHT_CYAN}Pulling Docker images in parallel...{RESET}\n")
 
+    # Pull images in parallel using threading
+    import concurrent.futures
+    import threading
+
+    # Thread-safe counter and lock for output
     success_count = 0
-    for image, description in images:
-        print(f"  {BRIGHT_CYAN}Pulling {image}{RESET}")
-        print(f"  {BRIGHT_YELLOW}({description}){RESET}")
+    lock = threading.Lock()
+
+    def pull_image(image: str, description: str) -> bool:
+        """Pull a Docker image and return success status."""
+        nonlocal success_count
+
+        with lock:
+            print(f"  {BRIGHT_CYAN}Pulling {image}{RESET}")
+            print(f"  {BRIGHT_YELLOW}({description}){RESET}")
 
         try:
             result = subprocess.run(
                 ["docker", "pull", image],
-                capture_output=False,  # Show progress
+                capture_output=True,  # Capture to avoid interleaved output
+                text=True,
                 timeout=600,  # 10 minutes max
             )
 
-            if result.returncode == 0:
-                print(f"  {BRIGHT_GREEN}✓ Pulled successfully{RESET}\n")
-                success_count += 1
-            else:
-                print(f"  {BRIGHT_RED}✗ Failed to pull{RESET}\n")
+            with lock:
+                if result.returncode == 0:
+                    print(f"  {BRIGHT_GREEN}✓ {image} pulled successfully{RESET}\n")
+                    success_count += 1
+                    return True
+                else:
+                    print(f"  {BRIGHT_RED}✗ Failed to pull{RESET}\n")
+                    return False
         except subprocess.TimeoutExpired:
-            print(f"  {BRIGHT_RED}✗ Timed out{RESET}\n")
+            with lock:
+                print(f"  {BRIGHT_RED}✗ Timed out{RESET}\n")
+            return False
         except Exception as e:
-            print(f"  {BRIGHT_RED}✗ Error: {e}{RESET}\n")
+            with lock:
+                print(f"  {BRIGHT_RED}✗ Error: {e}{RESET}\n")
+            return False
+
+    # Execute pulls in parallel
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(pull_image, image, desc) for image, desc in images]
+        # Wait for all to complete
+        concurrent.futures.wait(futures)
 
     # Summary
     if success_count == len(images):

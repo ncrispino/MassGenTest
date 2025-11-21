@@ -79,8 +79,6 @@ jobs:
           platforms: ${{ matrix.platform }}
           cache-from: type=gha,scope=${{ matrix.variant }}-${{ matrix.platform }}
           cache-to: type=gha,mode=max,scope=${{ matrix.variant }}-${{ matrix.platform }}
-          build-args: |
-            MASSGEN_VERSION=${{ steps.version.outputs.tag }}
           tags: |
             ${{ steps.image-config.outputs.image_name }}:latest-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
             ${{ steps.image-config.outputs.image_name }}:${{ steps.version.outputs.tag }}-${{ matrix.platform == 'linux/amd64' && 'amd64' || 'arm64' }}
