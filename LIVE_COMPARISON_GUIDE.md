@@ -64,7 +64,7 @@ The live comparison system provides a real-time web interface showing all 5 agen
 Open **Terminal 1** and run:
 
 ```bash
-cd /home/zren/new_massgen/MassGen
+cd ${YOUR-DIR}/new_massgen/MassGen
 
 # Kill any existing server on port 5000
 lsof -ti:5000 | xargs kill -9 2>/dev/null
@@ -88,7 +88,7 @@ Designer 5: designer_5_workspace_1103dc89
 🌐 Open your browser to: http://localhost:5000
 
 💡 The page will auto-refresh every 5 seconds
-📁 Watching workspaces: /home/zren/new_massgen/MassGen/.massgen/workspaces
+📁 Watching workspaces: ${YOUR-DIR}/new_massgen/MassGen/.massgen/workspaces
 
 ✨ Agents will update their designs in real-time!
 
@@ -131,19 +131,17 @@ Open **Terminal 2** and choose your configuration:
 
 **Option A: All Gemini Agents (Recommended for Testing)**
 ```bash
-cd /home/zren/new_massgen/MassGen
+cd ${YOUR-DIR}/new_massgen/MassGen
 
-uv run python3 -m massgen.cli \
-  --config massgen/configs/skills/gemini_frontend_design_collaboration_skills.yaml \
+massgen --config @skills/gemini_frontend_design_collaboration_skills.yaml \
   "Design a modern landing page for a sustainable energy startup"
 ```
 
 **Option B: Multi-Model (GPT, Gemini, Claude, Grok)**
 ```bash
-cd /home/zren/new_massgen/MassGen
+cd ${YOUR-DIR}/new_massgen/MassGen
 
-uv run python3 -m massgen.cli \
-  --config massgen/configs/skills/multi_model_frontend_design_collaboration_skills.yaml \
+massgen --config @skills/multi_model_frontend_design_collaboration_skills.yaml \
   "Design a modern landing page for a sustainable energy startup"
 ```
 
@@ -239,7 +237,7 @@ As MassGen runs, **watch both terminals and your browser**:
 
 **Check the Winning Design:**
 ```bash
-cd /home/zren/new_massgen/MassGen
+cd ${YOUR-DIR}/new_massgen/MassGen
 cat .massgen/massgen_logs/log_*/turn_1/massgen.log | grep -A5 "FINAL DECISION"
 ```
 
@@ -274,8 +272,7 @@ curl http://localhost:5000/api/status | python3 -m json.tool
 1. **Keep server running** (Terminal 1) - it will auto-discover new workspaces
 2. **Run MassGen again** (Terminal 2) with a new prompt:
    ```bash
-   uv run python3 -m massgen.cli \
-     --config massgen/configs/skills/gemini_frontend_design_collaboration_skills.yaml \
+    massgen --config @skills/gemini_frontend_design_collaboration_skills.yaml \
      "Design a landing page for an AI-powered fitness app"
    ```
 3. **Hard refresh browser** (Ctrl+Shift+R) or **restart server** to see new designs:
@@ -545,49 +542,6 @@ done
 **Solution:** Wait for MassGen to continue, or check logs for errors:
 ```bash
 tail -f .massgen/massgen_logs/log_*/turn_1/massgen.log
-```
-
-### Issue 7: MassGen Rate Limiting
-
-**Error in MassGen logs:**
-```
-429 Resource has been exhausted (e.g. check quota)
-```
-
-**Cause:** Gemini API free tier limit (50 requests/minute)
-
-**Solutions:**
-```bash
-# Option 1: Use multi-model config (spreads load across APIs)
-# Uses: GPT-4o-mini, Claude Sonnet 4, Grok-3-mini, Gemini (x2)
-
-# Option 2: Reduce max_new_answers_per_agent in YAML
-# From: max_new_answers_per_agent: 5
-# To:   max_new_answers_per_agent: 3
-
-# Option 3: Add delays between rounds (advanced)
-# Edit orchestrator settings to add coordination delays
-```
-
-### Issue 8: Anti-Self-Voting Not Working
-
-**Symptom:** Agent logs show they voted for themselves
-
-**Check:** Look for patterns like:
-```
-agent2: VOTE: agent2.3  # WRONG - voting for self
-```
-
-**Root Cause:** Agent misunderstood identity or instructions
-
-**Solution:** Check system_message in YAML has:
-```yaml
-**CRITICAL VOTING RULE - YOU ARE DESIGNER #2, YOU CANNOT VOTE FOR agent2.X**
-```
-
-**Verify:** Check coordination logs:
-```bash
-grep -A2 "VOTE:" .massgen/massgen_logs/log_*/turn_1/coordination.json
 ```
 
 ## Advanced Configuration
