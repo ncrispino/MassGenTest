@@ -68,7 +68,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🆕 Latest Features</h3></summary>
 
-- [v0.1.14 Features](#-latest-features-v0114)
+- [v0.1.15 Features](#-latest-features-v0115)
 </details>
 
 <details open>
@@ -122,15 +122,15 @@ This project started with the "threads of thought" and "iterative refinement" id
 <summary><h3>🗺️ Roadmap</h3></summary>
 
 - Recent Achievements
-  - [v0.1.14](#recent-achievements-v0114)
-  - [v0.0.3 - v0.1.13](#previous-achievements-v003---v0113)
+  - [v0.1.15](#recent-achievements-v0115)
+  - [v0.0.3 - v0.1.14](#previous-achievements-v003---v0114)
 - [Key Future Enhancements](#key-future-enhancements)
   - Bug Fixes & Backend Improvements
   - Advanced Agent Collaboration
   - Expanded Model, Tool & Agent Integrations
   - Improved Performance & Scalability
   - Enhanced Developer Experience
-- [v0.1.15 Roadmap](#v0115-roadmap)
+- [v0.1.16 Roadmap](#v0116-roadmap)
 </details>
 
 <details open>
@@ -155,25 +155,24 @@ This project started with the "threads of thought" and "iterative refinement" id
 
 ---
 
-## 🆕 Latest Features (v0.1.14)
+## 🆕 Latest Features (v0.1.15)
 
-**🎉 Released: November 19, 2025**
+**🎉 Released: November 21, 2025**
 
-**What's New in v0.1.14:**
-- **⚡ Parallel Tool Execution System** - Configurable concurrent tool execution across all backends
-- **🤖 Gemini 3 Pro Model Support** - Full integration for Google's latest Gemini 3 Pro
-- **🚀 Interactive Quickstart Workflow** - Streamlined onboarding from setup to first run
-- **🔍 MCP Registry Client** - Enhanced server metadata fetching from official MCP registry
+**What's New in v0.1.15:**
+- **🖥️ Textual Terminal Display** - Rich terminal UI with interactive components and better visualization
+- **🎨 Dark & Light Theme Support** - Customizable themes for Textual display
+- **🐳 Docker Custom Tools** - MassGen installed inside Docker for seamless custom tool execution
+- **💪 ARM Platform Support** - Cross-platform compatibility for Apple Silicon and ARM servers
 
 **Key Improvements:**
-- Parallel tool execution with asyncio-based scheduling and configurable concurrency controls
-- Gemini 3 Pro native support for Google's latest model with parallel function calling
-- Interactive config builder with improved UX for provider selection and validation
-- MCP registry client fetches server descriptions from official registry for better agent understanding
-- Planning system enhancements with improved skill and tool search capabilities
-- NLIP routing streamlining with unified execution flow across backends
+- New Textual-based terminal display with rich UI components for enhanced coordination visualization
+- Dark and light theme stylesheets for better readability in different environments
+- Docker workflow improvements with MassGen installed inside containers for custom tools
+- ARM architecture support for broader deployment options
+- Enhanced Docker CI/CD workflow with multi-platform builds
 
-**Try v0.1.14 Features:**
+**Try v0.1.15 Features:**
 ```bash
 # Install or upgrade from PyPI
 pip install --upgrade massgen
@@ -181,23 +180,17 @@ pip install --upgrade massgen
 # Or with uv (faster)
 uv pip install massgen
 
-# Interactive Quickstart - guided configuration creation
-uv run massgen --quickstart  # Walk through agent setup and start interactive mode
+# Textual Terminal Display - rich UI with dark/light themes
+uv run massgen --config massgen/configs/basic/single_agent_textual.yaml \
+  "What is the transformers in deep learning?"
 
-# Parallel Tool Execution - concurrent tool execution with configurable limits
-uv run massgen --config massgen/configs/tools/custom_tools/gpt5_nano_custom_tool_with_mcp_parallel.yaml \
-  "whats the sum of 123 and 456? and whats the weather of Tokyo and london?"
-
-# Gemini 3 Pro - Google's latest model with function calling
-uv run massgen --config massgen/configs/providers/gemini/gemini_3_pro.yaml \
-  "Create a website about Bob Dylan"
-
-# Enhanced Config Builder - interactive configuration wizard
-uv run massgen --init  # Full configuration wizard with use case selection
-
-# MCP Registry Client - automatic server description integration
-uv run massgen --config @examples/tools/mcp/gpt5_nano_mcp_example \
-  "whats the weather of Tokyo"
+# Docker with custom tools - MassGen installed inside Docker
+# Prerequisites:
+#   1. Docker installed and running
+#   2. Build Docker image: bash massgen/docker/build.sh (or ./massgen/docker/build.sh)
+#   3. OPENAI_API_KEY in .env
+uv run massgen --config massgen/configs/tools/code-execution/docker_simple.yaml \
+  "Write a factorial function and test it"
 ```
 
 → [See full release history and examples](massgen/configs/README.md#release-history--examples)
@@ -1098,24 +1091,22 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 ⚠️ **Early Stage Notice:** As MassGen is in active development, please expect upcoming breaking architecture changes as we continue to refine and improve the system.
 
-### Recent Achievements (v0.1.14)
+### Recent Achievements (v0.1.15)
 
-**🎉 Released: November 19, 2025**
+**🎉 Released: November 21, 2025**
 
-#### Parallel Tool Execution & Gemini 3 Pro
-- **Parallel Tool Execution System**: Configurable concurrent tool execution across all backends with asyncio-based scheduling (`massgen/backend/response.py`, `massgen/backend/base_with_custom_tool_and_mcp.py`)
-- **Configuration Controls**: `concurrent_tool_execution` for local parallel execution, `parallel_tool_calls` for OpenAI Response API, `disable_parallel_tool_use` for Claude backend, `max_concurrent_tools` semaphore limit
-- **Gemini 3 Pro Support**: Full integration for Google's Gemini 3 Pro model with function calling capabilities (`massgen/backend/gemini.py`)
-- **Configuration Example**: `massgen/configs/tools/custom_tools/gpt5_nano_custom_tool_with_mcp_parallel.yaml`, `massgen/configs/providers/gemini/gemini_3_pro.yaml`
+#### Textual Terminal Display & Docker Enhancements
+- **Textual Terminal Display**: Rich terminal UI framework using the Textual library for enhanced coordination visualization with interactive components
+- **Theme Support**: Dark and light themes via TCSS stylesheets for better readability in different environments
+- **Docker Custom Tools Installation**: MassGen installed inside Docker containers enabling custom Python tools to run with MassGen context
+- **Docker CI/CD Enhancements**: Multi-platform builds with ARM architecture support for Apple Silicon and ARM servers
+- **Configuration Example**: `massgen/configs/basic/single_agent_textual.yaml`
 
-#### Interactive Quickstart & MCP Registry Client
-- **Interactive Config Builder**: Enhanced quickstart workflow with guided configuration creation and improved UX (`massgen/config_builder.py`, `massgen/cli.py`)
-- **MCP Registry Client**: Enhanced server metadata fetching from official MCP registry with automatic description integration (`massgen/mcp_tools/registry_client.py`)
-- **Planning System Enhancements**: Improved skill and tool search in planning mode for better agent decision-making (`massgen/mcp_tools/planning/_planning_mcp_server.py`)
-- **NLIP Routing Streamlining**: Unified execution flow across backends with simplified routing implementation (`massgen/backend/response.py`, `claude.py`, `gemini.py`)
-- **Documentation**: `docs/parallel-tool-execution.md`, `.github/workflows/docker-publish.yml`
+### Previous Achievements (v0.0.3 - v0.1.14)
 
-### Previous Achievements (v0.0.3 - v0.1.13)
+✅ **Parallel Tool Execution & Gemini 3 Pro (v0.1.14)**: Configurable concurrent tool execution across all backends with asyncio-based scheduling, Gemini 3 Pro model with function calling, interactive quickstart workflow, MCP registry client for server metadata
+
+✅ **Interactive Quickstart & NLIP Routing (v0.1.14)**: Enhanced config builder with guided configuration creation, improved skill and tool search in planning mode, unified execution flow across backends
 
 ✅ **Code-Based Tools & MCP Registry (v0.1.13)**: CodeAct paradigm implementation with tool integration via importable Python code reducing token usage by 98%, MCP server registry with auto-discovery and on-demand loading, TOOL.md documentation standard
 
@@ -1285,21 +1276,21 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 We welcome community contributions to achieve these goals.
 
-### v0.1.15 Roadmap
+### v0.1.16 Roadmap
 
-Version 0.1.15 focuses on reinforcement learning integration and multi-agent Git workflows:
+Version 0.1.16 focuses on quickstart improvements and Grok 4.1 Fast model support:
 
 #### Planned Features
-- **Integrate RL into MassGen**: Reinforcement learning integration for agent optimization and adaptive behavior through reward modeling, policy optimization, and learning from past interactions
-- **Git Worktrees for Multi-Agent**: Enable multiple agents to work on different Git worktrees simultaneously for parallel development workflows
+- **Intuitive Quickstart & PyPI Tools/Skills**: Make quickstart more intuitive and ensure tools/skills work correctly when installed via PyPI
+- **Grok 4.1 Fast Support**: Add support for xAI Grok 4.1 Fast model with function calling capabilities
 
 Key technical approach:
-- **RL Integration**: RL framework integration, reward modeling for agent coordination, policy optimization algorithms (PPO, A3C), adaptive agent behavior with learning persistence
-- **Git Worktrees**: Worktree management, branch synchronization, conflict resolution support, improved parallelism for multi-agent development
+- **Quickstart Improvements**: PyPI package improvements, simplified setup workflow, better error messages, improved first-run experience
+- **Grok 4.1 Fast**: Backend integration with xAI API, function calling support, configuration examples
 
-**Target Release**: November 21, 2025 (Friday @ 9am PT)
+**Target Release**: November 24, 2025 (Monday @ 9am PT)
 
-For detailed milestones and technical specifications, see the [full v0.1.15 roadmap](ROADMAP_v0.1.15.md).
+For detailed milestones and technical specifications, see the [full v0.1.16 roadmap](ROADMAP_v0.1.16.md).
 
 ---
 

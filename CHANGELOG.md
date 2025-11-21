@@ -7,16 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Recent Releases
 
+**v0.1.15 (November 21, 2025)** - Textual Terminal Display & Docker Enhancements
+New Textual-based terminal display with rich UI components, dark/light theme support, enhanced Docker workflow with custom tools installation, and ARM platform support.
+
 **v0.1.14 (November 19, 2025)** - Parallel Tool Execution, Interactive Quickstart & Gemini 3 Pro
 Parallel tool execution with configurable concurrency controls across all backends, interactive config builder with guided quickstart workflow, MCP registry client enhancements, and Gemini 3 Pro model support.
 
 **v0.1.13 (November 17, 2025)** - Code-Based Tools, MCP Registry & Skills Installation
 Code-based tools system implementing CodeAct paradigm, MCP server registry with auto-discovery, comprehensive skills installation system, and TOOL.md documentation standard.
 
-**v0.1.12 (November 14, 2025)** - System Prompt Refactoring, Semantic Search & Multi-Agent Computer Use
-Major system prompt architecture redesign with new semantic search skills (semtools/serena), local skill execution support, and enhanced multi-agent computer use capabilities with Docker integration and visualization.
-
 ---
+
+## [0.1.15] - 2025-11-21
+
+### Added
+- **Textual Terminal Display**: Rich terminal UI framework using Textual library for enhanced coordination display
+  - New `massgen/frontend/displays/textual_terminal_display.py` with comprehensive UI components (2472 lines)
+  - Enhanced `massgen/frontend/coordination_ui.py` with Textual terminal support (+327 lines)
+  - New `massgen/frontend/displays/textual_themes/dark.tcss` and `light.tcss` theme stylesheets (~600 lines total)
+  - New `display_type: textual` configuration option with dark/light theme support
+  - Built on Python Textual library for cross-platform rich terminal applications
+
+### Changed
+- **Docker Custom Tools Installation**: MassGen now installed within Docker for custom tool execution
+  - Enhanced `massgen/cli.py` with Docker-aware custom tools setup (+49 lines)
+  - Updated `massgen/docker/Dockerfile` with MassGen installation (+16 lines modified)
+  - Updated `massgen/docker/Dockerfile.sudo` with matching changes (+16 lines modified)
+  - Enables custom Python tools to run inside Docker containers with MassGen context
+  - Better isolation for code execution workflows
+
+- **Docker CI/CD Workflow Enhancements**: Improved container build and publishing with ARM support
+  - Enhanced `.github/workflows/docker-publish.yml` with multi-platform support (+88 lines)
+  - Added ARM architecture compatibility (Apple Silicon, ARM servers)
+  - Enhanced `pyproject.toml` with ARM platform specifications (+6 lines)
+
+### Documentations, Configurations and Resources
+
+- **Textual Display Configuration**: New example configuration for Textual terminal display
+  - New `massgen/configs/basic/single_agent_textual.yaml` example configuration (16 lines)
+  - Demonstrates `display_type: textual` setup with theme options
+
+- **Installation Documentation Updates**: Enhanced quickstart and installation guides
+  - Updated `docs/source/quickstart/installation.rst` with Docker improvements (+89 lines)
+  - Updated `docs/source/index.rst` with feature highlights (+36 lines)
+
+
+### Technical Details
+- **Major Focus**: Textual-based rich terminal UI with theming, Docker workflow improvements with ARM support
+- **Contributors**: @praneeth999 @ncrispino and the MassGen team
 
 ## [0.1.14] - 2025-11-19
 

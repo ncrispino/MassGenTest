@@ -1,10 +1,10 @@
 # MassGen Roadmap
 
-**Current Version:** v0.1.14
+**Current Version:** v0.1.15
 
 **Release Schedule:** Mondays, Wednesdays, Fridays @ 9am PT
 
-**Last Updated:** November 19, 2025
+**Last Updated:** November 21, 2025
 
 This roadmap outlines MassGen's development priorities for upcoming releases. Each release focuses on specific capabilities with real-world use cases.
 
@@ -41,70 +41,48 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 | Release | Target | Feature | Owner | Use Case |
 |---------|--------|---------|-------|----------|
-| **v0.1.15** | 11/21/25 | Integrate RL into MassGen | @qidanrui @praneeth999 | Reinforcement learning integration for agent optimization and adaptive behavior |
-| | | Git Worktrees for Multi-Agent | @ncrispino | Use Git worktrees for different agents to enable parallel development workflows |
-| **v0.1.16** | 11/24/25 | Launch Custom Tools in Docker | @ncrispino | Enable custom tools to run in isolated Docker containers for security and portability |
-| | | Improve Consistency of Memory & Tool Reminders | @ncrispino | Enhance memory and tool reminder consistency across agents |
-| **v0.1.17** | 11/26/25 | MassGen Terminal Evaluation | @ncrispino | Self-evaluation and improvement of frontend/UI |
-| | | Smithery MCP Tools Support | @ncrispino | Expand MCP tools access through Smithery integration |
+| **v0.1.16** | 11/24/25 | Intuitive Quickstart & PyPI Tools/Skills | @ncrispino | Make quickstart more intuitive and ensure tools/skills work through PyPI |
+| | | Grok 4.1 Fast Support | @praneeth999 | Add support for xAI Grok 4.1 Fast model |
+| **v0.1.17** | 11/26/25 | Improve Consistency of Memory & Tool Reminders | @ncrispino | Enhance memory and tool reminder consistency across agents |
+| | | MassGen Terminal Evaluation | @ncrispino | Self-evaluation and improvement of frontend/UI |
+| **v0.1.18** | 11/28/25 | Smithery MCP Tools Support | @ncrispino | Expand MCP tools access through Smithery integration |
+| | | Integrate RL into MassGen | @qidanrui @praneeth999 | Reinforcement learning integration for agent optimization and adaptive behavior |
 
 *All releases ship on MWF @ 9am PT when ready*
 
 ---
 
-## 📋 v0.1.15 - RL Integration & Multi-Agent Git Workflows
+## 📋 v0.1.16 - Quickstart Improvements & Grok 4.1 Fast
 
 ### Features
 
-**1. Integrate RL into MassGen** (@qidanrui, @praneeth999)
-- Issue: [#527](https://github.com/massgen/MassGen/issues/527)
-- Reinforcement learning integration for agent optimization
-- Adaptive agent behavior based on feedback and outcomes
-- Reward modeling for multi-agent coordination
-- Policy optimization for task execution strategies
-- Learning from past interactions to improve future performance
-- Integration with existing agent coordination infrastructure
-- **Use Case**: Enable agents to learn and improve their performance over time through reinforcement learning, optimizing coordination strategies and task execution based on past successes and failures
+**1. Intuitive Quickstart & PyPI Tools/Skills** (@ncrispino)
+- Issue: [#544](https://github.com/massgen/MassGen/issues/544)
+- Make quickstart workflow more intuitive for new users
+- Ensure tools and skills work correctly when installed via PyPI
+- Improved first-run experience and onboarding
+- **Use Case**: Enable users installing MassGen via pip to have a seamless experience with all tools and skills working out of the box
 
-**2. Git Worktrees for Different Agents** (@ncrispino)
-- Issue: [#514](https://github.com/massgen/MassGen/issues/514)
-- Enable multiple agents to work on different Git worktrees simultaneously
-- Isolated working directories for parallel agent development
-- Automatic worktree creation and management
-- Branch synchronization across agent worktrees
-- Conflict resolution support for multi-agent workflows
-- Improved parallelism for multi-agent code development tasks
-- **Use Case**: Allow multiple agents to work on different features or branches simultaneously without conflicts, enabling true parallel development workflows
+**2. Grok 4.1 Fast Support** (@praneeth999)
+- Issue: [#540](https://github.com/massgen/MassGen/issues/540)
+- Add support for xAI Grok 4.1 Fast model
+- Backend integration with Grok API
+- Function calling and tool support for Grok 4.1 Fast
+- **Use Case**: Enable users to leverage xAI's Grok 4.1 Fast model for faster inference in multi-agent workflows
 
 ### Success Criteria
-- ✅ RL framework successfully integrates with MassGen architecture
-- ✅ Agents demonstrate learning and improvement over repeated tasks
-- ✅ Reward modeling accurately reflects task success metrics
-- ✅ Policy optimization improves coordination strategies
-- ✅ RL integration maintains system stability and performance
-- ✅ Agents successfully create and manage separate Git worktrees
-- ✅ Multiple agents can work on different branches simultaneously
-- ✅ Worktree cleanup and management works reliably
-- ✅ Branch synchronization maintains code integrity
-- ✅ Performance improvements in multi-agent development scenarios
+- ✅ PyPI installation includes all necessary tools and skills
+- ✅ Quickstart guides users through setup intuitively
+- ✅ Grok 4.1 Fast model works with MassGen backend
+- ✅ Function calling operates correctly with Grok 4.1 Fast
 
 ---
 
-## 📋 v0.1.16 - Docker Tools & Expanded Integrations
+## 📋 v0.1.17 - Memory Consistency & Frontend Evaluation
 
 ### Features
 
-**1. Launch Custom Tools in Docker** (@ncrispino)
-- Issue: [#510](https://github.com/massgen/MassGen/issues/510)
-- Enable custom tools to run in isolated Docker containers
-- Automatic containerization of custom tool execution
-- Security isolation for untrusted or experimental tools
-- Improved portability across different environments
-- Resource management and cleanup for tool containers
-- Integration with existing Docker infrastructure
-- **Use Case**: Run custom tools in isolated Docker containers for enhanced security, enabling safe execution of untrusted code and ensuring consistent tool behavior across environments
-
-**2. Improve Consistency of Memory & Tool Reminders** (@ncrispino)
+**1. Improve Consistency of Memory & Tool Reminders** (@ncrispino)
 - Issue: [#537](https://github.com/massgen/MassGen/issues/537)
 - Enhance consistency of memory retrieval across agents
 - Improve tool reminder system for better agent awareness
@@ -112,22 +90,7 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 - Optimize tool suggestion timing and relevance
 - **Use Case**: Ensure agents have consistent access to shared memory and receive relevant tool reminders at appropriate times, improving coordination and task execution quality
 
-### Success Criteria
-- ✅ Custom tools successfully launch in Docker containers
-- ✅ Security isolation prevents tools from affecting host system
-- ✅ Automatic cleanup of Docker resources after tool execution
-- ✅ Tool execution performance comparable to native execution
-- ✅ Memory retrieval is consistent across all agents
-- ✅ Tool reminders appear at appropriate times with relevant suggestions
-- ✅ Memory access patterns are standardized and documented
-
----
-
-## 📋 v0.1.17 - Frontend Evaluation & MCP Ecosystem Expansion
-
-### Features
-
-**1. MassGen Terminal Evaluation** (@ncrispino)
+**2. MassGen Terminal Evaluation** (@ncrispino)
 - Issue: [#476](https://github.com/massgen/MassGen/issues/476)
 - Enable MassGen to evaluate and improve its own frontend/UI
 - Terminal session recording using asciinema for visual analysis
@@ -137,7 +100,22 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 - Self-improvement capabilities extended to frontend (currently backend-only via automation mode)
 - **Use Case**: Enable MassGen to analyze its own terminal interface, creating demonstration videos and documentation automatically, showcasing new features through automated workflows
 
-**2. Smithery MCP Tools Support** (@ncrispino)
+### Success Criteria
+- ✅ Memory retrieval is consistent across all agents
+- ✅ Tool reminders appear at appropriate times with relevant suggestions
+- ✅ Memory access patterns are standardized and documented
+- ✅ Terminal recording and playback system works reliably
+- ✅ Video understanding capabilities accurately analyze terminal sessions
+- ✅ Automated case study generation produces high-quality documentation
+- ✅ MassGen successfully self-improves based on terminal analysis
+
+---
+
+## 📋 v0.1.18 - MCP Ecosystem & RL Integration
+
+### Features
+
+**1. Smithery MCP Tools Support** (@ncrispino)
 - Issue: [#521](https://github.com/massgen/MassGen/issues/521)
 - Integration with Smithery to expand available MCP tools
 - Automatic discovery and installation of Smithery MCP servers
@@ -146,15 +124,21 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 - Enhanced tool discovery and recommendation system
 - **Use Case**: Expand MassGen's tool ecosystem by integrating with Smithery, giving users access to a wider range of curated MCP tools without manual configuration
 
+**2. Integrate RL into MassGen** (@qidanrui, @praneeth999)
+- Issue: [#527](https://github.com/massgen/MassGen/issues/527)
+- Reinforcement learning integration for agent optimization
+- Adaptive agent behavior based on feedback and outcomes
+- Reward modeling for multi-agent coordination
+- Policy optimization for task execution strategies
+- **Use Case**: Enable agents to learn and improve their performance over time through reinforcement learning, optimizing coordination strategies and task execution based on past successes and failures
+
 ### Success Criteria
-- ✅ Terminal recording and playback system works reliably
-- ✅ Video understanding capabilities accurately analyze terminal sessions
-- ✅ Automated case study generation produces high-quality documentation
-- ✅ MassGen successfully self-improves based on terminal analysis
 - ✅ Smithery integration discovers and installs MCP tools automatically
 - ✅ Tool registry includes curated Smithery tools with proper metadata
 - ✅ Tool recommendation system suggests relevant Smithery tools
 - ✅ Users can easily browse and install Smithery tools
+- ✅ RL framework successfully integrates with MassGen architecture
+- ✅ Agents demonstrate learning and improvement over repeated tasks
 
 ---
 
@@ -285,27 +269,33 @@ These features are being actively developed on **separate parallel tracks** and 
 - Issue: [#510](https://github.com/massgen/MassGen/issues/510)
 - Enable custom tools to run in isolated Docker containers
 - Security isolation and portability for custom tool execution
-- **Target:** v0.1.16
+- **Status:** ✅ Completed in v0.1.15
+
+### Track: Textual Terminal Display (@praneeth999, ram2561)
+- Rich terminal UI framework using Textual library
+- Dark and light theme support with customizable styling
+- Enhanced coordination display with interactive components
+- **Status:** ✅ Completed in v0.1.15
 
 ### Track: Improve Consistency of Memory & Tool Reminders (@ncrispino, nickcrispino)
 - Issue: [#537](https://github.com/massgen/MassGen/issues/537)
 - Enhance consistency of memory retrieval across agents
 - Improve tool reminder system for better agent awareness
 - Standardize memory access patterns
-- **Target:** v0.1.16
+- **Target:** v0.1.17
 
 ### Track: RL Integration (@qidanrui, @praneeth999, danrui2020, ram2561)
 - Issue: [#527](https://github.com/massgen/MassGen/issues/527)
 - Reinforcement learning integration for agent optimization
 - Adaptive agent behavior based on feedback and outcomes
 - Reward modeling for multi-agent coordination
-- **Target:** v0.1.15
+- **Target:** v0.1.18
 
-### Track: Git Worktrees for Multi-Agent (@ncrispino, nickcrispino)
-- Issue: [#514](https://github.com/massgen/MassGen/issues/514)
-- Enable multiple agents to work on different Git worktrees simultaneously
-- Isolated working directories for parallel agent development
-- **Target:** v0.1.15
+### Track: Grok 4.1 Fast Support (@praneeth999, ram2561)
+- Issue: [#540](https://github.com/massgen/MassGen/issues/540)
+- Add support for xAI Grok 4.1 Fast model
+- Backend integration with function calling support
+- **Target:** v0.1.16
 
 ### Track: MassGen Terminal Evaluation (@ncrispino, nickcrispino)
 - Issue: [#476](https://github.com/massgen/MassGen/issues/476)
@@ -317,7 +307,13 @@ These features are being actively developed on **separate parallel tracks** and 
 - Issue: [#521](https://github.com/massgen/MassGen/issues/521)
 - Integration with Smithery to expand available MCP tools
 - Automatic discovery and installation of Smithery MCP servers
-- **Target:** v0.1.17
+- **Target:** v0.1.18
+
+### Track: Intuitive Quickstart & PyPI Tools/Skills (@ncrispino, nickcrispino)
+- Issue: [#544](https://github.com/massgen/MassGen/issues/544)
+- Make quickstart workflow more intuitive for new users
+- Ensure tools and skills work correctly when installed via PyPI
+- **Target:** v0.1.16
 
 ### Track: Coding Agent Enhancements (@ncrispino, nickcrispino)
 - PR: [#251](https://github.com/massgen/MassGen/pull/251)
@@ -399,5 +395,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, code standards, te
 
 *This roadmap is community-driven. Releases ship on **Mondays, Wednesdays, Fridays @ 9am PT**. Timelines may shift based on priorities and feedback. Open an issue to suggest changes!*
 
-**Last Updated:** November 19, 2025
+**Last Updated:** November 21, 2025
 **Maintained By:** MassGen Team
