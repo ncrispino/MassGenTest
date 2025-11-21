@@ -15,11 +15,6 @@ agents:
       type: "openai"
       model: "gpt-5-codex"
       cwd: "workspace1"
-      text:
-        verbosity: "medium"
-      reasoning:
-        effort: "medium"
-        summary: "auto"
 
       # Enable code-based tools (CodeAct paradigm)
       enable_code_based_tools: true
@@ -38,11 +33,6 @@ agents:
       type: "claude_code"
       model: "claude-sonnet-4-5-20250929"
       cwd: "workspace2"
-      text:
-        verbosity: "medium"
-      reasoning:
-        effort: "medium"
-        summary: "auto"
 
       # Enable code-based tools (CodeAct paradigm)
       enable_code_based_tools: true
