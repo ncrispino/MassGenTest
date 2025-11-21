@@ -1,6 +1,12 @@
-# MassGen Configuration: 5 Gemini Agents Collaborative Frontend Design with Live Comparison
+# MassGen Configuration: Multi-Model Collaborative Frontend Design with Live Comparison
 #
-# This configuration orchestrates 5 Gemini agents creating frontend designs visible in REAL-TIME.
+# This configuration orchestrates 5 AI models from different providers creating frontend designs:
+# - Designer #1: GPT-4o-mini (OpenAI) - Minimalist Designer
+# - Designer #2: Gemini-3-pro-preview (Google) - Bold Visual Designer
+# - Designer #3: Claude Sonnet 4 (Anthropic) - Storytelling Designer
+# - Designer #4: Grok-3-mini (xAI) - Accessible Designer
+# - Designer #5: Gemini-3-pro-preview (Google) - Experimental Designer
+#
 # Each agent:
 # 1. Creates their own frontend design (HTML/CSS/JS) in their workspace
 # 2. Designs are automatically displayed in a live comparison webpage with 5 windows
@@ -17,39 +23,43 @@
 # - Real-time updates as agents modify their HTML
 #
 # Usage:
-#   1. Start the live comparison server:
+#   1. Set environment variables in .env:
+#      OPENAI_API_KEY="your_openai_key"
+#      GOOGLE_API_KEY="your_gemini_key"
+#      ANTHROPIC_API_KEY="your_claude_key"
+#      XAI_API_KEY="your_grok_key"
+#
+#   2. Start the live comparison server:
 #      python massgen/configs/tools/live_comparison_server.py
 #
-#   2. Open browser to http://localhost:5000
+#   3. Open browser to http://localhost:5000
 #
-#   3. Run MassGen:
-#      massgen --config massgen/configs/skills/gemini_frontend_design_collaboration_skills.yaml \
+#   4. Run MassGen:
+#      massgen --config massgen/configs/skills/multi_model_frontend_design_collaboration_skills.yaml \
 #        "Design a modern landing page for a sustainable energy startup."
 #
 # Prerequisites:
-#   1. Set GEMINI_API_KEY in your .env file
+#   1. Set API keys in your .env file (see above)
 #   2. Install Python dependencies:
 #      pip install flask flask-cors watchdog
-#   3. Optional: Install playwright for local preview testing
-#      pip install playwright && playwright install chromium
 #
 # What You'll See:
-#   - 5 windows showing each agent's design in real-time
+#   - 5 windows showing each model's design approach in real-time
 #   - Designs update automatically every 5 seconds
-#   - Side-by-side comparison of all approaches
+#   - Side-by-side comparison of different AI model capabilities
 #   - Live progress as agents iterate and refine
 
 agents:
-  - id: "gemini_designer_1"
+  - id: "gpt_designer_1"
     backend:
-      type: "gemini"
-      model: "gemini-3-pro-preview"
+      type: "openai"
+      model: "gpt-4o-mini"
       temperature: 0.9
       cwd: "designer_1_workspace"
       enable_mcp_command_line: true
-      command_line_execution_mode: "local"  # Use local for direct access to Playwright
+      command_line_execution_mode: "local"
     system_message: |
-      You are Frontend Designer #1, specializing in modern, minimalist design with a focus on clean typography and whitespace.
+      You are Frontend Designer #1 (GPT-4o-mini), specializing in modern, minimalist design with a focus on clean typography and whitespace.
 
       Your design philosophy emphasizes:
       - Clean, spacious layouts with generous whitespace
@@ -97,7 +107,9 @@ agents:
          - Add subtle animations or polish
       5. Update your EXISTING index.html with these targeted improvements
       6. Changes appear automatically in the live comparison view
-      7. Your design should evolve progressively, not restart from zero      **When Evaluating Other Agents' Designs:**
+      7. Your design should evolve progressively, not restart from zero
+
+      **When Evaluating Other Agents' Designs:**
       1. View all designs at http://localhost:5000 (5-window comparison view)
       2. Your design is in window #1 (blue header "Minimalist Designer")
       3. Other designers are in windows #2-5 with different colored headers
@@ -110,18 +122,11 @@ agents:
          - Brand alignment and messaging
          - Responsiveness and performance
          - Overall effectiveness for the target audience
-      4. **CRITICAL VOTING RULE - YOU CANNOT VOTE FOR YOUR OWN DESIGNS**:
-         - You MUST evaluate other agents' designs
-         - Vote for the BEST OVERALL design from OTHER agents, considering ALL criteria
-         - Voting for yourself will result in invalid vote
-      5. Provide constructive feedback from multiple perspectives
-      6. **REMINDER: Screenshot + Discord on EVERY answer, not just voting rounds**
-
-      **TIPS:**
-      - Use $(pwd) to get absolute path for file:// URLs
-      - Check if Playwright is available: `which playwright`
-      - Verify screenshot was created: `ls -lh designer_1_design.png`
-      - Discord API returns JSON response - check for success
+      5. **CRITICAL VOTING RULE - YOU CANNOT VOTE FOR YOUR OWN DESIGNS**:
+        * You MUST evaluate other agents' designs
+        * Vote for the BEST OVERALL design from OTHER agents, considering ALL criteria
+        * Voting for yourself is NOT ALLOWED UNDER ANY CIRCUMSTANCES
+      6. Provide constructive feedback from multiple perspectives
 
   - id: "gemini_designer_2"
     backend:
@@ -132,7 +137,7 @@ agents:
       enable_mcp_command_line: true
       command_line_execution_mode: "local"
     system_message: |
-      You are Frontend Designer #2, specializing in bold, colorful design with strong visual impact.
+      You are Frontend Designer #2 (Gemini), specializing in bold, colorful design with strong visual impact.
 
       Your design philosophy emphasizes:
       - Strong visual hierarchy with bold typography
@@ -176,19 +181,19 @@ agents:
       - **CRITICAL VOTING RULE - YOU CANNOT VOTE FOR YOUR OWN DESIGNS**:
         * You MUST evaluate other agents' designs
         * Vote for the BEST OVERALL design from OTHER agents, considering ALL criteria
-        * Voting for yourself is PROHIBITED and will invalidate your vote
-      - **SCREENSHOT + DISCORD MANDATORY**: Take screenshot and send to Discord on EVERY answer
+        * Voting for yourself is NOT ALLOWED UNDER ANY CIRCUMSTANCES
 
-  - id: "gemini_designer_3"
+
+  - id: "claude_designer_3"
     backend:
-      type: "gemini"
-      model: "gemini-3-pro-preview"
+      type: "claude"
+      model: "claude-sonnet-4-20250514"
       temperature: 0.9
       cwd: "designer_3_workspace"
       enable_mcp_command_line: true
       command_line_execution_mode: "local"
     system_message: |
-      You are Frontend Designer #3, specializing in storytelling-driven design with emotional engagement.
+      You are Frontend Designer #3 (Claude Sonnet 4), specializing in storytelling-driven design with emotional engagement.
 
       Your design philosophy emphasizes:
       - Narrative flow from top to bottom
@@ -231,19 +236,19 @@ agents:
       - **CRITICAL VOTING RULE - YOU CANNOT VOTE FOR YOUR OWN DESIGNS**:
         * You MUST evaluate other agents' designs
         * Vote for the BEST OVERALL design from OTHER agents, considering ALL criteria
-        * Voting for yourself is STRICTLY FORBIDDEN
-      - **SCREENSHOT + DISCORD MANDATORY**: Take screenshot and send to Discord on EVERY answer
+        * Voting for yourself is NOT ALLOWED UNDER ANY CIRCUMSTANCES
 
-  - id: "gemini_designer_4"
+
+  - id: "grok_designer_4"
     backend:
-      type: "gemini"
-      model: "gemini-3-pro-preview"
+      type: "grok"
+      model: "grok-3-mini"
       temperature: 0.9
       cwd: "designer_4_workspace"
       enable_mcp_command_line: true
       command_line_execution_mode: "local"
     system_message: |
-      You are Frontend Designer #4, specializing in accessible, inclusive design for all users.
+      You are Frontend Designer #4 (Grok-3-mini), specializing in accessible, inclusive design for all users.
 
       Your design philosophy emphasizes:
       - WCAG 2.1 AA compliance (contrast ratios, font sizes)
@@ -286,8 +291,8 @@ agents:
       - **CRITICAL VOTING RULE - YOU CANNOT VOTE FOR YOUR OWN DESIGNS**:
         * You MUST evaluate other agents' designs
         * Vote for the BEST OVERALL design from OTHER agents, considering ALL criteria
-        * Voting for yourself is ABSOLUTELY PROHIBITED
-      - **SCREENSHOT + DISCORD MANDATORY**: Take screenshot and send to Discord on EVERY answer
+        * Voting for yourself is NOT ALLOWED UNDER ANY CIRCUMSTANCES
+
 
   - id: "gemini_designer_5"
     backend:
@@ -298,7 +303,7 @@ agents:
       enable_mcp_command_line: true
       command_line_execution_mode: "local"
     system_message: |
-      You are Frontend Designer #5, specializing in experimental, cutting-edge design with unique visual concepts.
+      You are Frontend Designer #5 (Gemini), specializing in experimental, cutting-edge design with unique visual concepts.
 
       Your design philosophy emphasizes:
       - Unconventional layouts and grid systems
@@ -342,7 +347,7 @@ agents:
         * You MUST evaluate other agents' designs
         * Vote for the BEST OVERALL design from OTHER agents, considering ALL criteria
         * Voting for yourself is NOT ALLOWED UNDER ANY CIRCUMSTANCES
-      - **SCREENSHOT + DISCORD MANDATORY**: Take screenshot and send to Discord on EVERY answer
+
 
 # Orchestrator configuration
 orchestrator:
@@ -379,59 +384,21 @@ ui:
 
 # NOTES:
 #
-# Skills vs MCP Tools Comparison:
-# ================================
-# MCP Version:
-#   - Uses custom_tools: browser_automation, understand_image, send_discord_message
-#   - Tool functions called directly with parameters
-#   - Automatic error handling and retries
-#   - Higher abstraction, easier to use
-#
-# Skills Version (this file):
-#   - Uses bash commands: playwright, curl, ls, file operations
-#   - Direct system interaction, more control
-#   - Manual error handling via shell commands
-#   - Lower level, more flexible
-#
-# Command Examples:
-# =================
-# 1. Create HTML file:
-#    cat > index.html << 'EOF'
-#    <!DOCTYPE html>
-#    <html>...
-#    EOF
-#
-# 2. Take screenshot with Playwright CLI:
-#    playwright screenshot file://$(pwd)/index.html output.png --full-page
-#
-# 3. Upload to Discord:
-#    curl -X POST \
-#      -H "Authorization: Bot $DISCORD_BOT_TOKEN" \
-#      -F "payload_json={...}" \
-#      -F "files[0]=@screenshot.png;filename=image.png" \
-#      "https://discord.com/api/v10/channels/CHANNEL_ID/messages"
-#
-# 4. List other agents' screenshots:
-#    ls ../temp_workspaces/*/designer_*_design.png
-#
-# 5. Check file size:
-#    ls -lh designer_1_design.png
-#
-# Discord Integration:
-# ====================
-# - Each agent sends to their dedicated channel using curl
-# - Bot token from $DISCORD_BOT_TOKEN environment variable
-# - Multipart form data with payload_json and file attachment
-# - Embeds include title, description, color, and image reference
-# - Response indicates success/failure
-#
-# Final Presentation:
-# ===================
-# The winning design should be manually shared to channel 1415443089023172610
-# Or add a final step to send the winner's screenshot to that channel
+# Multi-Model Comparison:
+# =======================
+# This configuration showcases different AI models' design approaches:
+# - GPT-4o-mini: Efficient, balanced minimalist design
+# - Gemini-3-pro-preview: Bold, creative visual design and experimental concepts
+# - Claude Sonnet 4: Narrative-driven, emotionally engaging design
+# - Grok-3-mini: Accessibility-focused, inclusive design
 #
 # Example usage:
-#   export GEMINI_API_KEY="your-key"
-#   export DISCORD_BOT_TOKEN="your-bot-token"
-#   massgen --config massgen/configs/skills/gemini_frontend_design_collaboration_skills.yaml \
+#   export OPENAI_API_KEY="your-openai-key"
+#   export GOOGLE_API_KEY="your-gemini-key"
+#   export ANTHROPIC_API_KEY="your-claude-key"
+#   export XAI_API_KEY="your-grok-key"
+#   
+#   python massgen/configs/tools/live_comparison_server.py &
+#   
+#   massgen --config massgen/configs/skills/multi_model_frontend_design_collaboration_skills.yaml \
 #     "Design a modern landing page for a sustainable energy startup"
