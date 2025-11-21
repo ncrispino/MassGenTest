@@ -16,6 +16,7 @@ from massgen.logger_config import get_log_session_dir, logger
 from .terminal_display import TerminalDisplay
 
 try:
+    from rich.text import Text
     from textual import events
     from textual.app import App, ComposeResult
     from textual.containers import Container, ScrollableContainer, Vertical
@@ -44,6 +45,15 @@ EMOJI_FALLBACKS = {
     "📋": "[□]",  # Summary
     "🧠": "[B]",  # Brain/Reasoning
 }
+
+CRITICAL_PATTERNS = {
+    "vote": "✅ Vote recorded",
+    "status": ["📊 Status changed", "Status: "],
+    "tool": "🔧",
+    "presentation": "🎤 Final Presentation",
+}
+
+CRITICAL_CONTENT_TYPES = {"status", "presentation", "tool", "vote", "error"}
 
 
 class TextualTerminalDisplay(TerminalDisplay):
@@ -154,6 +164,28 @@ class TextualTerminalDisplay(TerminalDisplay):
         if self.emoji_support:
             return emoji
         return EMOJI_FALLBACKS.get(emoji, emoji)
+
+    def _escape_markup(self, text: str) -> str:
+        """Escape markup-sensitive characters so agent IDs render literally (no Rich import needed)."""
+        return text.replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")
+
+    def _is_critical_content(self, content: str, content_type: str) -> bool:
+        """Identify content that should flush immediately (prefer type, keep legacy patterns)."""
+        if content_type in CRITICAL_CONTENT_TYPES:
+            return True
+
+        lowered = content.lower()
+        if "vote recorded" in lowered:
+            return True
+
+        for value in CRITICAL_PATTERNS.values():
+            if isinstance(value, list):
+                if any(pattern in content for pattern in value):
+                    return True
+            else:
+                if value in content:
+                    return True
+        return False
 
     def _detect_terminal_type(self) -> str:
         """Detect terminal type and capabilities."""
@@ -277,7 +309,9 @@ class TextualTerminalDisplay(TerminalDisplay):
         if not content:
             return
 
-        prepared = self._prepare_agent_content(agent_id, content, content_type)
+        display_type = "status" if content_type == "thinking" and self._is_critical_content(content, content_type) else content_type
+
+        prepared = self._prepare_agent_content(agent_id, content, display_type)
 
         # Store in memory for retrieval
         self.agent_outputs[agent_id].append(content)
@@ -288,17 +322,21 @@ class TextualTerminalDisplay(TerminalDisplay):
         if not prepared:
             return
 
+        is_critical = self._is_critical_content(content, display_type)
+
         with self._buffer_lock:
             self._buffers[agent_id].append(
                 {
                     "content": prepared,
-                    "type": content_type,
+                    "type": display_type,
                     "timestamp": datetime.now(),
                     "force_jump": False,
                 },
             )
-            if self._app and len(self._buffers[agent_id]) >= self.max_buffer_batch:
-                self._app.request_flush()
+            buffered_len = len(self._buffers[agent_id])
+
+        if self._app and (is_critical or buffered_len >= self.max_buffer_batch):
+            self._app.request_flush()
 
     def update_agent_status(self, agent_id: str, status: str):
         """Update status for a specific agent."""
@@ -306,8 +344,17 @@ class TextualTerminalDisplay(TerminalDisplay):
         self._reset_web_cache(agent_id, truncate_history=self.truncate_web_on_status_change)
 
         # Clear buffered noisy content and jump to latest status for this agent
+        if self._app:
+            self._app.request_flush()
         with self._buffer_lock:
-            self._buffers.get(agent_id, []).clear()
+            existing = self._buffers.get(agent_id, [])
+            preserved: List[Dict[str, Any]] = []
+            for entry in existing:
+                entry_content = entry.get("content", "")
+                entry_type = entry.get("type", "thinking")
+                if self._is_critical_content(entry_content, entry_type):
+                    preserved.append(entry)
+            self._buffers[agent_id] = preserved
             self._buffers[agent_id].append(
                 {
                     "content": f"📊 Status changed to {status}",
@@ -331,6 +378,9 @@ class TextualTerminalDisplay(TerminalDisplay):
 
         # Write to system file
         self._write_to_system_file(event)
+
+        if self._app:
+            self._app.request_flush()
 
         # Update app if running
         if self._app:
@@ -1223,19 +1273,19 @@ if TEXTUAL_AVAILABLE:
 
         def add_content(self, content: str, content_type: str):
             """Add content to agent panel."""
-            # Apply formatting based on content type
+            # Apply formatting based on content type using Text to avoid markup parsing
             if content_type == "tool":
-                self.content_log.write(f"[cyan]🔧 {content}[/cyan]")
+                self.content_log.write(Text(f"🔧 {content}", style="cyan"))
                 self._line_buffer = ""
-                self.current_line_label.update("")
+                self.current_line_label.update(Text(""))
             elif content_type == "status":
-                self.content_log.write(f"[yellow]📊 {content}[/yellow]")
+                self.content_log.write(Text(f"📊 {content}", style="yellow"))
                 self._line_buffer = ""
-                self.current_line_label.update("")
+                self.current_line_label.update(Text(""))
             elif content_type == "presentation":
-                self.content_log.write(f"[magenta]🎤 {content}[/magenta]")
+                self.content_log.write(Text(f"🎤 {content}", style="magenta"))
                 self._line_buffer = ""
-                self.current_line_label.update("")
+                self.current_line_label.update(Text(""))
             else:
                 # Handle thinking content with buffering
                 self._line_buffer += content
@@ -1244,21 +1294,21 @@ if TEXTUAL_AVAILABLE:
                     # Write all complete lines
                     for line in lines[:-1]:
                         if line.strip():
-                            self.content_log.write(line)
+                            self.content_log.write(Text(line))
                     # Keep the last partial line in buffer
                     self._line_buffer = lines[-1]
 
                 # Update the streaming label with current partial line immediately
                 # This ensures streaming is visible even without newlines
-                self.current_line_label.update(self._line_buffer)
+                self.current_line_label.update(Text(self._line_buffer))
 
         def update_status(self, status: str):
             """Update agent status."""
             # Flush any remaining buffer when status changes
             if self._line_buffer.strip():
-                self.content_log.write(self._line_buffer)
+                self.content_log.write(Text(self._line_buffer))
                 self._line_buffer = ""
-                self.current_line_label.update("")
+                self.current_line_label.update(Text(""))
 
             self.status = status
             header = self.query_one(f"#header_{self.agent_id}")
@@ -1311,7 +1361,7 @@ if TEXTUAL_AVAILABLE:
         def add_event(self, event: str):
             """Add orchestrator event."""
             timestamp = datetime.now().strftime("%H:%M:%S")
-            self.events_log.write(f"[dim]{timestamp}[/dim] {event}")
+            self.events_log.write(Text(f"{timestamp} {event}", style="dim"))
 
     class AgentSelectorModal(ModalScreen):
         """Interactive agent selection menu."""
