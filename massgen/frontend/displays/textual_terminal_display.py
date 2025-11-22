@@ -265,9 +265,7 @@ class TextualTerminalDisplay(TerminalDisplay):
         self.question = question
         self.log_filename = log_filename
 
-        # Create output directory (align with RichTerminalDisplay layout)
-        if log_filename:
-            self.output_dir = Path(log_filename).parent
+        # Create output directory
         self.output_dir = Path(self.output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -285,9 +283,9 @@ class TextualTerminalDisplay(TerminalDisplay):
             f.write("=== SYSTEM STATUS LOG ===\n")
             f.write(f"Question: {question}\n\n")
 
-        # Create final presentation file
-        self.final_presentation_file = self.output_dir / "final_presentation.txt"
-        self.final_presentation_latest = self.output_dir / "final_presentation_latest.txt"
+        # Final presentation paths (agent-specific path will be set when persisting)
+        self.final_presentation_file = None
+        self.final_presentation_latest = None
 
         # Create Textual app
         if TEXTUAL_AVAILABLE:
@@ -756,10 +754,18 @@ class TextualTerminalDisplay(TerminalDisplay):
         header.append("")  # blank line
         final_text = "\n".join(header) + f"{content}\n"
 
-        targets = [self.final_presentation_file]
+        targets: List[Path] = []
         if selected_agent:
             agent_file = self.output_dir / f"final_presentation_{selected_agent}.txt"
+            self.final_presentation_file = agent_file  # Keep selector/modals pointing at the agent-scoped file
+            self.final_presentation_latest = self.output_dir / f"final_presentation_{selected_agent}_latest.txt"
             targets.append(agent_file)
+        else:
+            if self.final_presentation_file is None:
+                self.final_presentation_file = self.output_dir / "final_presentation.txt"
+            if self.final_presentation_latest is None:
+                self.final_presentation_latest = self.output_dir / "final_presentation_latest.txt"
+            targets.append(self.final_presentation_file)
 
         for path in targets:
             try:
@@ -777,12 +783,6 @@ class TextualTerminalDisplay(TerminalDisplay):
                 self.final_presentation_latest.symlink_to(targets[-1].name)
             except (OSError, NotImplementedError) as exc:
                 logger.warning(f"Failed to create final presentation symlink at {self.final_presentation_latest}: {exc}")
-
-                try:
-                    with open(self.final_presentation_latest, "w", encoding="utf-8") as f:
-                        f.write(final_text)
-                except OSError as copy_exc:
-                    logger.error(f"Failed to copy final presentation to {self.final_presentation_latest}: {copy_exc}")
 
 
 # Textual App Implementation
