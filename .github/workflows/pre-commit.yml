@@ -30,7 +30,7 @@ jobs:
       uses: actions/cache@v3
       with:
         path: ~/.cache/pre-commit
-        key: pre-commit-${{ matrix.os }}-${{ matrix.python-version }}-${{ hashFiles('.pre-commit-config.yaml') }}
+        key: pre-commit-${{ matrix.os }}-${{ matrix.python-version }}-${{ hashFiles('**/.pre-commit-config.yaml') }}
         restore-keys: |
           pre-commit-${{ matrix.os }}-${{ matrix.python-version }}-
           pre-commit-${{ matrix.os }}-
