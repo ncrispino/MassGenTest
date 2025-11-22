@@ -118,6 +118,17 @@ class TokenCostCalculator:
             "mixtral-8x7b-32768": ModelPricing(0.00024, 0.00024, 32768, 32768),
         },
         "xAI": {
+            # Grok 4.1 family (Nov 2025)
+            "grok-4-1-fast-reasoning": ModelPricing(0.0002, 0.0005, 2000000, 131072),  # 2M context, $0.20/M input (cached: $0.05/M)
+            "grok-4-1-fast-non-reasoning": ModelPricing(0.0002, 0.0005, 2000000, 131072),  # 2M context
+            # Grok 4 family (Jul-Sep 2025)
+            "grok-code-fast-1": ModelPricing(0.0002, 0.0015, 256000, 131072),  # 256K context, $0.20/M input, $1.50/M output
+            "grok-4": ModelPricing(0.003, 0.015, 131072, 131072),  # $3/M input, $15/M output
+            "grok-4-fast": ModelPricing(0.003, 0.015, 131072, 131072),
+            # Grok 3 family (Feb-May 2025)
+            "grok-3": ModelPricing(0.003, 0.015, 131072, 131072),
+            "grok-3-mini": ModelPricing(0.001, 0.003, 131072, 65536),
+            # Grok 2 family (legacy)
             "grok-2-latest": ModelPricing(0.005, 0.015, 131072, 131072),
             "grok-2": ModelPricing(0.005, 0.015, 131072, 131072),
             "grok-2-mini": ModelPricing(0.001, 0.003, 131072, 65536),
@@ -132,6 +143,8 @@ class TokenCostCalculator:
         """Initialize the calculator with optional tiktoken for accurate estimation."""
         self.tiktoken_encoder = None
         self._try_init_tiktoken()
+        self._litellm_cache = None  # Cache for LiteLLM pricing database
+        self._litellm_cache_time = None  # When cache was last refreshed
 
     def _try_init_tiktoken(self):
         """Try to initialize tiktoken encoder for more accurate token counting."""
@@ -145,6 +158,35 @@ class TokenCostCalculator:
             logger.debug("Tiktoken not available, using simple estimation")
         except Exception as e:
             logger.warning(f"Failed to initialize tiktoken: {e}")
+
+    def _fetch_litellm_pricing(self) -> Optional[Dict]:
+        """Fetch pricing database from LiteLLM (cached for 1 hour).
+
+        Returns:
+            Dictionary of model pricing data or None if fetch fails
+        """
+        import time
+
+        # Check cache (1 hour expiry)
+        if self._litellm_cache is not None and self._litellm_cache_time is not None:
+            if time.time() - self._litellm_cache_time < 3600:
+                return self._litellm_cache
+
+        try:
+            import requests
+
+            url = "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
+            response = requests.get(url, timeout=5)
+            response.raise_for_status()
+
+            self._litellm_cache = response.json()
+            self._litellm_cache_time = time.time()
+            logger.debug("Fetched LiteLLM pricing database (500+ models)")
+            return self._litellm_cache
+
+        except Exception as e:
+            logger.debug(f"Failed to fetch LiteLLM pricing database: {e}")
+            return None
 
     def estimate_tokens(self, text: Union[str, List[Dict[str, Any]]], method: str = "auto") -> int:
         """
@@ -254,6 +296,11 @@ class TokenCostCalculator:
         """
         Get pricing information for a specific model.
 
+        Tries in order:
+        1. LiteLLM pricing database (500+ models, auto-updated)
+        2. Hardcoded PROVIDER_PRICING (fallback)
+        3. Pattern matching heuristics
+
         Args:
             provider: Provider name (e.g., "OpenAI", "Anthropic")
             model: Model name or identifier
@@ -264,16 +311,40 @@ class TokenCostCalculator:
         # Normalize provider name
         provider = self._normalize_provider(provider)
 
-        # Get provider pricing data
+        # Try LiteLLM database first
+        litellm_db = self._fetch_litellm_pricing()
+        if litellm_db and model in litellm_db:
+            model_data = litellm_db[model]
+            try:
+                # Convert LiteLLM format to ModelPricing
+                # LiteLLM uses per-token, we use per-1K
+                input_per_1k = model_data.get("input_cost_per_token", 0) * 1000
+                output_per_1k = model_data.get("output_cost_per_token", 0) * 1000
+                context = model_data.get("max_input_tokens")
+                max_output = model_data.get("max_output_tokens")
+
+                logger.debug(f"Found pricing for {model} in LiteLLM database")
+                return ModelPricing(
+                    input_cost_per_1k=input_per_1k,
+                    output_cost_per_1k=output_per_1k,
+                    context_window=context,
+                    max_output_tokens=max_output,
+                )
+            except Exception as e:
+                logger.debug(f"Error parsing LiteLLM data for {model}: {e}")
+
+        # Fallback to hardcoded PROVIDER_PRICING
         provider_models = self.PROVIDER_PRICING.get(provider, {})
 
         # Try exact match first
         if model in provider_models:
+            logger.debug(f"Found pricing for {model} in hardcoded PROVIDER_PRICING")
             return provider_models[model]
 
         # Try to find by partial match
         for model_key, pricing in provider_models.items():
             if model_key.lower() in model.lower() or model.lower() in model_key.lower():
+                logger.debug(f"Found pricing for {model} via partial match: {model_key}")
                 return pricing
 
         # Try to infer from model name patterns

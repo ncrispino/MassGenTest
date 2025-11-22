@@ -3572,6 +3572,38 @@ Environment Variables:
         help="Quick setup: specify number of agents and models, get a full-featured config with code tools, Docker, skills",
     )
     parser.add_argument(
+        "--generate-config",
+        type=str,
+        metavar="PATH",
+        help="Generate config file at specified path (non-interactive, requires --config-backend and --config-model)",
+    )
+    parser.add_argument(
+        "--config-agents",
+        type=int,
+        default=2,
+        help="Number of agents for --generate-config (default: 2)",
+    )
+    parser.add_argument(
+        "--config-backend",
+        type=str,
+        help="Backend provider for --generate-config (e.g., 'openai', 'anthropic', 'gemini')",
+    )
+    parser.add_argument(
+        "--config-model",
+        type=str,
+        help="Model name for --generate-config (e.g., 'gpt-5', 'claude-sonnet-4', 'gemini-2.5-pro')",
+    )
+    parser.add_argument(
+        "--config-docker",
+        action="store_true",
+        help="Enable Docker execution mode in generated config",
+    )
+    parser.add_argument(
+        "--config-context-path",
+        type=str,
+        help="Add context path to generated config",
+    )
+    parser.add_argument(
         "--setup",
         action="store_true",
         help="Launch interactive API key setup wizard to configure credentials",
@@ -3835,6 +3867,39 @@ Environment Variables:
             # Continue to main() with the selected config
         else:
             # User cancelled selection
+            return
+
+    # Generate config programmatically if requested
+    if args.generate_config:
+        if not args.config_backend or not args.config_model:
+            print(f"{BRIGHT_RED}❌ Error: --config-backend and --config-model are required with --generate-config{RESET}")
+            print(f"{BRIGHT_CYAN}Example: massgen --generate-config ./config.yaml --config-backend gemini --config-model gemini-2.5-pro{RESET}")
+            return
+
+        try:
+            from .config_builder import ConfigBuilder
+
+            builder = ConfigBuilder()
+            success = builder.generate_config_programmatic(
+                output_path=args.generate_config,
+                num_agents=args.config_agents,
+                backend_type=args.config_backend,
+                model=args.config_model,
+                use_docker=args.config_docker,
+                context_path=args.config_context_path,
+            )
+            if success:
+                print(f"{BRIGHT_GREEN}✅ Configuration saved to: {args.generate_config}{RESET}")
+                print(f'{BRIGHT_CYAN}Run with: massgen --config {args.generate_config} "Your question"{RESET}')
+            return
+        except ValueError as e:
+            print(f"{BRIGHT_RED}❌ Error: {e}{RESET}")
+            return
+        except Exception as e:
+            print(f"{BRIGHT_RED}❌ Unexpected error: {e}{RESET}")
+            import traceback
+
+            traceback.print_exc()
             return
 
     # Launch quickstart if requested
