@@ -631,6 +631,33 @@ class MemorySection(SystemPromptSection):
             content_parts.append("")
             content_parts.append("</available_long_term_memories>")
 
+        # Show archived memories from previous answers
+        archived = self.memory_config.get("archived_memories", [])
+        if archived:
+            content_parts.append("\n### Archived Memories (Previous Answers)\n")
+            content_parts.append(
+                "These are read-only memories from all previous answers (yours and other agents'). " "Review them and copy relevant content to your current workspace if still useful.\n",
+            )
+
+            for archive in archived:
+                agent_answer_label = archive.get("label", "unknown")
+                memories = archive.get("memories", {})
+
+                content_parts.append(f"\n**{agent_answer_label}:**")
+
+                # Show short_term and long_term memories
+                has_memories = False
+                for tier in ["short_term", "long_term"]:
+                    if tier in memories and memories[tier]:
+                        has_memories = True
+                        content_parts.append(f"\n*{tier}:*")
+                        for mem_name, mem_content in memories[tier].items():
+                            content_parts.append(f"- `{mem_name}.md`")
+                            content_parts.append(f"  ```\n  {mem_content.strip()}\n  ```")
+
+                if not has_memories:
+                    content_parts.append("  *No memories*")
+
         # File operations - simple and direct
         content_parts.append(
             "\n### Saving Memories\n\n"

@@ -36,6 +36,8 @@ class SystemMessageBuilder:
         config,  # CoordinationConfig type
         message_templates,  # MessageTemplates type
         agents: Dict[str, Any],  # Dict[str, ChatAgent]
+        snapshot_storage: Optional[str] = None,
+        session_id: Optional[str] = None,
     ):
         """Initialize the system message builder.
 
@@ -43,10 +45,14 @@ class SystemMessageBuilder:
             config: Orchestrator coordination configuration
             message_templates: MessageTemplates instance
             agents: Dictionary of agents for memory scanning
+            snapshot_storage: Path to snapshot storage directory (for archived memories)
+            session_id: Session ID (for archived memories)
         """
         self.config = config
         self.message_templates = message_templates
         self.agents = agents
+        self.snapshot_storage = snapshot_storage
+        self.session_id = session_id
 
     def build_coordination_message(
         self,
@@ -131,15 +137,18 @@ class SystemMessageBuilder:
         # PRIORITY 5 (HIGH): Memory - Proactive usage
         if enable_memory:
             short_term_memories, long_term_memories = self._get_all_memories()
+            archived_memories = self._load_archived_memories()
+
             # Always add memory section to show usage instructions, even if empty
             memory_config = {
                 "short_term": {
                     "content": "\n".join([f"- {m}" for m in short_term_memories]) if short_term_memories else "",
                 },
                 "long_term": [{"id": f"mem_{i}", "summary": mem, "created_at": "N/A"} for i, mem in enumerate(long_term_memories)] if long_term_memories else [],
+                "archived_memories": archived_memories,
             }
             builder.add_section(MemorySection(memory_config))
-            logger.info(f"[SystemMessageBuilder] Added memory section ({len(short_term_memories)} short-term, {len(long_term_memories)} long-term memories)")
+            logger.info(f"[SystemMessageBuilder] Added memory section ({len(short_term_memories)} short-term, {len(long_term_memories)} long-term, {len(archived_memories)} archived)")
 
         # PRIORITY 5 (HIGH): Filesystem - Essential context
         if agent.backend.filesystem_manager:
@@ -491,6 +500,65 @@ class SystemMessageBuilder:
                         logger.warning(f"[SystemMessageBuilder] Failed to parse memory file {mem_file}: {e}")
 
         return short_term_memories, long_term_memories
+
+    def _load_archived_memories(self) -> List[Dict[str, Any]]:
+        """Load all archived memories from snapshot_storage.
+
+        Returns:
+            List of archived memory dictionaries with keys:
+            - label: Human-readable label (e.g., "Agent 1 Answer 2")
+            - memories: Dict with short_term and long_term subdicts
+                Each subdict maps memory filename to content
+        """
+        if not self.snapshot_storage or not self.session_id:
+            return []
+
+        archive_base = Path(self.snapshot_storage) / self.session_id / "archived_memories"
+        if not archive_base.exists():
+            return []
+
+        archived = []
+
+        # Scan all archived answer directories
+        for archive_dir in sorted(archive_base.iterdir()):
+            if not archive_dir.is_dir():
+                continue
+
+            # Parse agent_id and answer_num from directory name
+            # Expected format: agent_1_answer_2
+            dir_name = archive_dir.name
+            label = dir_name.replace("_", " ").title()  # "Agent 1 Answer 2"
+
+            memories = {"short_term": {}, "long_term": {}}
+
+            # Load short_term memories
+            short_term_dir = archive_dir / "short_term"
+            if short_term_dir.exists():
+                for mem_file in short_term_dir.glob("*.md"):
+                    try:
+                        memories["short_term"][mem_file.stem] = mem_file.read_text()
+                    except Exception as e:
+                        logger.warning(f"[SystemMessageBuilder] Failed to read archived memory {mem_file}: {e}")
+
+            # Load long_term memories
+            long_term_dir = archive_dir / "long_term"
+            if long_term_dir.exists():
+                for mem_file in long_term_dir.glob("*.md"):
+                    try:
+                        memories["long_term"][mem_file.stem] = mem_file.read_text()
+                    except Exception as e:
+                        logger.warning(f"[SystemMessageBuilder] Failed to read archived memory {mem_file}: {e}")
+
+            # Only add if there are actual memories
+            if memories["short_term"] or memories["long_term"]:
+                archived.append(
+                    {
+                        "label": label,
+                        "memories": memories,
+                    },
+                )
+
+        return archived
 
     @staticmethod
     def _parse_memory_file(file_path: Path) -> Optional[Dict[str, Any]]:
