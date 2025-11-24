@@ -2612,9 +2612,13 @@ def check_docker_available() -> bool:
 def setup_docker() -> None:
     """Pull MassGen Docker executor images from GitHub Container Registry.
 
-    Pulls both standard and sudo variants for isolated code execution.
+    Allows interactive selection of which images to install.
+    Sudo image is recommended and selected by default.
     """
     import subprocess
+
+    import questionary
+    from questionary import Style
 
     print(f"\n{BRIGHT_CYAN}{'=' * 60}{RESET}")
     print(f"{BRIGHT_CYAN}  🐳  MassGen Docker Setup{RESET}")
@@ -2665,74 +2669,139 @@ def setup_docker() -> None:
         print(f"\n{BRIGHT_RED}Error: Docker daemon check timed out{RESET}\n")
         return
 
-    # Images to pull
-    images = [
-        ("ghcr.io/massgen/mcp-runtime:latest", "Standard image"),
-        ("ghcr.io/massgen/mcp-runtime-sudo:latest", "Sudo image (for package installation)"),
+    # Define available images with metadata
+    # Future: Add more images here as needed
+    AVAILABLE_IMAGES = [
+        {
+            "name": "ghcr.io/massgen/mcp-runtime-sudo:latest",
+            "description": "Sudo image (recommended - allows package installation)",
+            "default": True,  # Pre-selected by default
+        },
+        {
+            "name": "ghcr.io/massgen/mcp-runtime:latest",
+            "description": "Standard image (no sudo access)",
+            "default": False,
+        },
     ]
 
-    print(f"\n{BRIGHT_CYAN}Pulling Docker images in parallel...{RESET}\n")
+    # Create questionary style matching the rest of the CLI
+    custom_style = Style(
+        [
+            ("qmark", "fg:#00CED1 bold"),
+            ("question", "fg:#00CED1 bold"),
+            ("answer", "fg:#32CD32 bold"),
+            ("pointer", "fg:#00CED1 bold"),
+            ("highlighted", "fg:#00CED1 bold"),
+            ("selected", "fg:#32CD32"),
+            ("separator", "fg:#6C6C6C"),
+            ("instruction", "fg:#A9A9A9"),
+        ],
+    )
 
-    # Pull images in parallel using threading
+    # Let user select which images to install
+    print(f"{BRIGHT_CYAN}Select Docker images to install:{RESET}")
+    print(f"{BRIGHT_YELLOW}(Use Space to select/deselect, Enter to confirm){RESET}\n")
+
+    try:
+        choices = [
+            questionary.Choice(
+                title=f"{img['description']}",
+                value=img["name"],
+                checked=img["default"],
+            )
+            for img in AVAILABLE_IMAGES
+        ]
+
+        selected_images = questionary.checkbox(
+            "",
+            choices=choices,
+            style=custom_style,
+        ).ask()
+
+        if selected_images is None:  # User cancelled (Ctrl+C)
+            print(f"\n{BRIGHT_YELLOW}Setup cancelled{RESET}\n")
+            return
+
+        if not selected_images:
+            print(f"\n{BRIGHT_YELLOW}No images selected. Skipping Docker setup.{RESET}\n")
+            return
+
+    except (KeyboardInterrupt, EOFError):
+        print(f"\n{BRIGHT_YELLOW}Setup cancelled{RESET}\n")
+        return
+
+    # Pull images in parallel with real-time progress display
+    print(f"\n{BRIGHT_CYAN}Pulling {len(selected_images)} image(s) in parallel...{RESET}\n")
+
     import concurrent.futures
     import threading
 
-    # Thread-safe counter and lock for output
+    # Thread-safe tracking of results
     success_count = 0
+    failed_images = []
     lock = threading.Lock()
 
-    def pull_image(image: str, description: str) -> bool:
-        """Pull a Docker image and return success status."""
+    def pull_image(image: str, index: int, total: int) -> tuple[bool, str]:
+        """Pull a Docker image and return (success, image_name)."""
         nonlocal success_count
 
+        # Print start message (may interleave, but that's ok)
         with lock:
-            print(f"  {BRIGHT_CYAN}Pulling {image}{RESET}")
-            print(f"  {BRIGHT_YELLOW}({description}){RESET}")
+            print(f"{BRIGHT_CYAN}[{index}/{total}] Starting: {image}{RESET}\n")
 
         try:
+            # Don't capture output so Docker's progress bars are visible
             result = subprocess.run(
                 ["docker", "pull", image],
-                capture_output=True,  # Capture to avoid interleaved output
-                text=True,
-                timeout=600,  # 10 minutes max
+                timeout=600,  # 10 minutes max per image
             )
 
             with lock:
+                print()  # Add spacing after progress bars
                 if result.returncode == 0:
-                    print(f"  {BRIGHT_GREEN}✓ {image} pulled successfully{RESET}\n")
+                    print(f"{BRIGHT_GREEN}✓ [{index}/{total}] Completed: {image}{RESET}\n")
                     success_count += 1
-                    return True
+                    return True, image
                 else:
-                    print(f"  {BRIGHT_RED}✗ Failed to pull{RESET}\n")
-                    return False
+                    print(f"{BRIGHT_RED}✗ [{index}/{total}] Failed: {image}{RESET}\n")
+                    return False, image
+
         except subprocess.TimeoutExpired:
             with lock:
-                print(f"  {BRIGHT_RED}✗ Timed out{RESET}\n")
-            return False
+                print(f"\n{BRIGHT_RED}✗ [{index}/{total}] Timed out: {image}{RESET}\n")
+            return False, image
         except Exception as e:
             with lock:
-                print(f"  {BRIGHT_RED}✗ Error: {e}{RESET}\n")
-            return False
+                print(f"\n{BRIGHT_RED}✗ [{index}/{total}] Error: {image} - {e}{RESET}\n")
+            return False, image
 
     # Execute pulls in parallel
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-        futures = [executor.submit(pull_image, image, desc) for image, desc in images]
-        # Wait for all to complete
-        concurrent.futures.wait(futures)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(selected_images)) as executor:
+        futures = {executor.submit(pull_image, img, i + 1, len(selected_images)): img for i, img in enumerate(selected_images)}
+
+        # Wait for all to complete and collect failures
+        for future in concurrent.futures.as_completed(futures):
+            success, image = future.result()
+            if not success:
+                failed_images.append(image)
 
     # Summary
-    if success_count == len(images):
-        print(f"{BRIGHT_GREEN}{'=' * 60}{RESET}")
+    print(f"{BRIGHT_CYAN}{'=' * 60}{RESET}")
+    if success_count == len(selected_images):
         print(f"{BRIGHT_GREEN}  ✅ Docker setup complete!{RESET}")
-        print(f"{BRIGHT_GREEN}{'=' * 60}{RESET}")
+        print(f"{BRIGHT_GREEN}  Successfully pulled {success_count} image(s){RESET}")
+        print(f"{BRIGHT_CYAN}{'=' * 60}{RESET}")
         print(f"\n{BRIGHT_CYAN}You can now use Docker execution mode in your configs.{RESET}")
         print(f"{BRIGHT_CYAN}Run 'massgen --quickstart' to create a config with Docker enabled.{RESET}\n")
     elif success_count > 0:
+        print(f"{BRIGHT_YELLOW}  ⚠️  Partial success: {success_count}/{len(selected_images)} images pulled{RESET}")
         print(f"{BRIGHT_YELLOW}{'=' * 60}{RESET}")
-        print(f"{BRIGHT_YELLOW}  ⚠️  Partial success: {success_count}/{len(images)} images pulled{RESET}")
-        print(f"{BRIGHT_YELLOW}{'=' * 60}{RESET}\n")
+        if failed_images:
+            print(f"\n{BRIGHT_YELLOW}Failed images:{RESET}")
+            for img in failed_images:
+                print(f"  - {img}")
+        print()
     else:
-        print(f"{BRIGHT_RED}{'=' * 60}{RESET}")
         print(f"{BRIGHT_RED}  ❌ Docker setup failed{RESET}")
         print(f"{BRIGHT_RED}{'=' * 60}{RESET}")
         print(f"\n{BRIGHT_YELLOW}The images may not be published yet.{RESET}")
@@ -3747,7 +3816,7 @@ Environment Variables:
     parser.add_argument(
         "--setup-docker",
         action="store_true",
-        help="Pull MassGen Docker executor images for isolated code execution",
+        help="Interactively select and pull MassGen Docker executor images (sudo image recommended by default)",
     )
     parser.add_argument(
         "--list-examples",
