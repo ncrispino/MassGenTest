@@ -691,16 +691,14 @@ class MemorySection(SystemPromptSection):
             if archived.get("short_term"):
                 content_parts.append("\n**Short-term (full content):**")
                 for mem_name, mem_data in archived["short_term"].items():
-                    source = mem_data.get("source", "Unknown")
                     content = mem_data.get("content", "")
-                    content_parts.append(f"\n- `{mem_name}.md` (from {source})")
+                    content_parts.append(f"\n- `{mem_name}.md`")
                     content_parts.append(f"  ```\n  {content.strip()}\n  ```")
 
             # Show long_term archived memories (name + description only)
             if archived.get("long_term"):
                 content_parts.append("\n**Long-term (summaries only):**")
                 for mem_name, mem_data in archived["long_term"].items():
-                    source = mem_data.get("source", "Unknown")
                     content = mem_data.get("content", "")
                     # Try to extract description from YAML frontmatter
                     description = "No description"
@@ -713,7 +711,7 @@ class MemorySection(SystemPromptSection):
                                     break
                         except Exception:
                             pass
-                    content_parts.append(f"- `{mem_name}.md`: {description} (from {source})")
+                    content_parts.append(f"- `{mem_name}.md`: {description}")
 
         # File operations - simple and direct
         content_parts.append(
