@@ -24,6 +24,7 @@ ENV PYTHONUNBUFFERED=1 \
 # - unzip: For extracting ast-grep binary
 # - ffmpeg: Video encoding (for VHS terminal recording)
 # - golang-go: Go runtime (for VHS installation)
+# - wget: For downloading ttyd binary
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     curl \
@@ -33,6 +34,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unzip \
     ffmpeg \
     golang-go \
+    wget \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js 20.x (LTS) for JavaScript execution
@@ -130,6 +132,27 @@ ENV PATH="/home/massgen/.local/bin:${PATH}"
 # https://github.com/charmbracelet/vhs
 RUN go install github.com/charmbracelet/vhs@latest
 ENV PATH="/home/massgen/go/bin:${PATH}"
+
+# Install ttyd for VHS SSH mode (VHS's preferred recording mode)
+# https://github.com/tsl0922/ttyd/releases/tag/1.7.7
+# ttyd is lightweight (~1.3MB) and more reliable than browser mode for VHS
+USER root
+RUN ARCH=$(uname -m) && \
+    TTYD_VERSION="1.7.7" && \
+    if [ "$ARCH" = "x86_64" ]; then \
+        TTYD_ARCH="x86_64"; \
+    elif [ "$ARCH" = "aarch64" ]; then \
+        TTYD_ARCH="aarch64"; \
+    elif [ "$ARCH" = "armv7l" ]; then \
+        TTYD_ARCH="armhf"; \
+    elif [ "$ARCH" = "i686" ]; then \
+        TTYD_ARCH="i686"; \
+    else \
+        echo "Unsupported architecture: $ARCH" && exit 1; \
+    fi && \
+    wget -q "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.${TTYD_ARCH}" -O /usr/local/bin/ttyd && \
+    chmod +x /usr/local/bin/ttyd
+USER massgen
 # Install MassGen package from source
 # This provides MCP server modules and fastmcp CLI needed for agent operation
 # Installs from the git repository being built (not PyPI) to ensure version sync
