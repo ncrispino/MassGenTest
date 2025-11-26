@@ -50,6 +50,16 @@ class BroadcastChannel:
         self.response_events: Dict[str, asyncio.Event] = {}
         self._lock = asyncio.Lock()
         self._human_input_lock = asyncio.Lock()  # Serialize human input prompts
+        self._human_ask_others_lock = asyncio.Lock()  # Serialize entire ask_others flow in human mode
+        self._human_qa_history: List[Dict[str, str]] = []  # Human Q&A pairs for this turn
+
+    def get_human_qa_history(self) -> List[Dict[str, str]]:
+        """Get all human Q&A pairs from this turn.
+
+        Returns:
+            List of dicts with 'question' and 'answer' keys
+        """
+        return self._human_qa_history.copy()
 
     async def create_broadcast(
         self,
@@ -86,10 +96,13 @@ class BroadcastChannel:
             if timeout is None:
                 timeout = self.orchestrator.config.coordination_config.broadcast_timeout
 
-            # Count expected responses (all agents except sender + human if enabled)
-            expected_count = len(self.orchestrator.agents) - 1
+            # Count expected responses based on mode
             if self.orchestrator.config.coordination_config.broadcast == "human":
-                expected_count += 1  # Human can respond
+                # Human mode: only human responds, not other agents
+                expected_count = 1
+            else:
+                # Agents mode: all agents except sender respond
+                expected_count = len(self.orchestrator.agents) - 1
 
             broadcast = BroadcastRequest(
                 id=request_id,
@@ -123,16 +136,16 @@ class BroadcastChannel:
             broadcast = self.active_broadcasts[request_id]
             broadcast.status = BroadcastStatus.COLLECTING
 
-        # Inject into all agents except sender
-        for agent_id, agent in self.orchestrator.agents.items():
-            if agent_id != broadcast.sender_agent_id:
-                await agent.inject_broadcast(broadcast)
-
-        # If human mode, prompt human (BLOCKS until human responds or timeout)
+        # Route based on broadcast mode
         if self.orchestrator.config.coordination_config.broadcast == "human":
-            # Await the human prompt to make it truly blocking
-            # This pauses all agent execution until the human responds
+            # Human mode: only prompt human, don't inject into other agents
+            # This pauses execution until the human responds
             await self._prompt_human(request_id)
+        else:
+            # Agents mode: inject into all agents except sender
+            for agent_id, agent in self.orchestrator.agents.items():
+                if agent_id != broadcast.sender_agent_id:
+                    await agent.inject_broadcast(broadcast)
 
     async def wait_for_responses(
         self,
@@ -305,6 +318,14 @@ class BroadcastChannel:
                             content=human_response,
                             is_human=True,
                         )
+                        # Store Q&A for context injection
+                        self._human_qa_history.append(
+                            {
+                                "question": broadcast.question,
+                                "answer": human_response,
+                            },
+                        )
+                        logger.info(f"📢 [Human] Stored Q&A (total: {len(self._human_qa_history)})")
                     else:
                         logger.info("📢 [Human] No response provided (skipped)")
                 except asyncio.TimeoutError:

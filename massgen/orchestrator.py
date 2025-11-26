@@ -3042,6 +3042,11 @@ Your answer:"""
 
             # Build new structured system message FIRST (before conversation building)
             logger.info(f"[Orchestrator] Building structured system message for {agent_id}")
+            # Get human Q&A history for context injection (human broadcast mode only)
+            human_qa_history = None
+            if hasattr(self, "broadcast_channel") and self.broadcast_channel:
+                human_qa_history = self.broadcast_channel.get_human_qa_history()
+
             system_message = self._get_system_message_builder().build_coordination_message(
                 agent=agent,
                 agent_id=agent_id,
@@ -3051,6 +3056,7 @@ Your answer:"""
                 enable_memory=hasattr(self.config.coordination_config, "enable_memory_filesystem_mode") and self.config.coordination_config.enable_memory_filesystem_mode,
                 enable_task_planning=self.config.coordination_config.enable_agent_task_planning,
                 previous_turns=self._previous_turns,
+                human_qa_history=human_qa_history,
             )
             logger.info(f"[Orchestrator] Structured system message built for {agent_id} (length: {len(system_message)} chars)")
 

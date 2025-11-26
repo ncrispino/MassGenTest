@@ -1584,6 +1584,7 @@ class BroadcastCommunicationSection(SystemPromptSection):
         wait_by_default: bool = True,
         response_mode: str = "inline",
         sensitivity: str = "medium",
+        human_qa_history: List[Dict[str, Any]] = None,
     ):
         super().__init__(
             title="Broadcast Communication",
@@ -1594,6 +1595,7 @@ class BroadcastCommunicationSection(SystemPromptSection):
         self.wait_by_default = wait_by_default
         self.response_mode = response_mode
         self.sensitivity = sensitivity
+        self.human_qa_history = human_qa_history or []
 
     def build_content(self) -> str:
         """Build broadcast communication instructions."""
@@ -1602,12 +1604,12 @@ class BroadcastCommunicationSection(SystemPromptSection):
             "",
             "**CRITICAL TOOL: ask_others()**",
             "",
-            "You MUST use the `ask_others()` tool to collaborate with other agents",
         ]
 
         if self.broadcast_mode == "human":
-            lines[-1] += " and the human user"
-        lines[-1] += "."
+            lines.append("You MUST use the `ask_others()` tool to ask questions to the human user.")
+        else:
+            lines.append("You MUST use the `ask_others()` tool to collaborate with other agents.")
 
         lines.append("")
 
@@ -1648,20 +1650,24 @@ class BroadcastCommunicationSection(SystemPromptSection):
         )
 
         if self.wait_by_default:
-            lines.extend(
-                [
-                    "- Call `ask_others(question)` with your question",
-                    "- The tool blocks and waits for responses from other agents",
-                ],
-            )
             if self.broadcast_mode == "human":
-                lines[-1] += " and the human user"
-            lines.extend(
-                [
-                    "- Returns all responses immediately when ready",
-                    "- You can then continue with your task",
-                ],
-            )
+                lines.extend(
+                    [
+                        "- Call `ask_others(question)` with your question",
+                        "- The tool blocks and waits for the human's response",
+                        "- Returns the human's response when ready",
+                        "- You can then continue with your task",
+                    ],
+                )
+            else:
+                lines.extend(
+                    [
+                        "- Call `ask_others(question)` with your question",
+                        "- The tool blocks and waits for responses from other agents",
+                        "- Returns all responses immediately when ready",
+                        "- You can then continue with your task",
+                    ],
+                )
         else:
             lines.extend(
                 [
@@ -1694,7 +1700,7 @@ class BroadcastCommunicationSection(SystemPromptSection):
             lines.extend(
                 [
                     "",
-                    "**Note:** The human user may also respond to your questions alongside other agents.",
+                    "**Note:** In human mode, only the human responds to your questions (other agents are not notified).",
                 ],
             )
 
@@ -1704,6 +1710,24 @@ class BroadcastCommunicationSection(SystemPromptSection):
                     "",
                     "**Technical note:** When you receive broadcast questions, you'll respond based on a snapshot",
                     "of your current context without interrupting your main task flow.",
+                ],
+            )
+
+        # Inject human Q&A history if available (human mode only)
+        if self.human_qa_history and self.broadcast_mode == "human":
+            lines.extend(
+                [
+                    "",
+                    "**Human has already answered these questions this turn:**",
+                ],
+            )
+            for i, qa in enumerate(self.human_qa_history, 1):
+                lines.append(f"- Q{i}: {qa['question']}")
+                lines.append(f"  A{i}: {qa['answer']}")
+            lines.extend(
+                [
+                    "",
+                    "Check if your question is already answered above before calling ask_others().",
                 ],
             )
 
