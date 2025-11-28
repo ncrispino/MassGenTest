@@ -60,10 +60,7 @@ There are three broadcast modes:
 Basic Usage
 -----------
 
-Blocking Mode (Default)
-~~~~~~~~~~~~~~~~~~~~~~~
-
-In blocking mode, ``ask_others()`` waits for all responses before returning:
+The ``ask_others()`` tool waits for all responses before returning:
 
 .. code-block:: python
 
@@ -83,33 +80,6 @@ In blocking mode, ``ask_others()`` waits for all responses before returning:
    for response in result["responses"]:
        print(f"{response['responder_id']}: {response['content']}")
 
-Polling Mode
-~~~~~~~~~~~~
-
-In polling mode, ``ask_others()`` returns immediately and agents check status later:
-
-.. code-block:: yaml
-
-   orchestrator:
-     coordination:
-       broadcast: "agents"
-       broadcast_wait_by_default: false
-
-.. code-block:: python
-
-   # Agent asks question without waiting
-   result = ask_others("Should I use OAuth2 or JWT?", wait=False)
-   request_id = result["request_id"]
-
-   # Continue with other work
-   # ... do other tasks ...
-
-   # Check if responses are ready
-   status = check_broadcast_status(request_id)
-   if status["status"] == "complete":
-       responses = get_broadcast_responses(request_id)
-       # Process responses
-
 Configuration Options
 ---------------------
 
@@ -125,11 +95,79 @@ All broadcast settings are in the orchestrator's coordination config:
        # Maximum time to wait for responses (seconds)
        broadcast_timeout: 300
 
-       # Default behavior: true (blocking) | false (polling)
-       broadcast_wait_by_default: true
-
        # Maximum active broadcasts per agent
        max_broadcasts_per_agent: 10
+
+       # How frequently agents use ask_others() (optional)
+       # Options: "low" | "medium" | "high"
+       broadcast_sensitivity: "medium"
+
+Complete Configuration Examples
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Agent-to-Agent Communication**
+
+.. code-block:: yaml
+
+   # massgen/configs/broadcast/test_broadcast_agents.yaml
+   agents:
+     - id: agent_a
+       backend:
+         type: openai
+         model: gpt-5
+         cwd: workspace1
+         enable_mcp_command_line: true
+         command_line_execution_mode: docker
+
+     - id: agent_b
+       backend:
+         type: gemini
+         model: gemini-3-pro-preview
+         cwd: workspace2
+         enable_mcp_command_line: true
+         command_line_execution_mode: docker
+
+   orchestrator:
+     snapshot_storage: snapshots
+     agent_temporary_workspace: temp_workspaces
+
+     coordination:
+       broadcast: "agents"  # Enable agent-to-agent communication
+       broadcast_sensitivity: "high"  # Agents use ask_others() frequently
+       broadcast_timeout: 300
+       max_broadcasts_per_agent: 10
+
+**Human-in-the-Loop Communication**
+
+.. code-block:: yaml
+
+   # massgen/configs/broadcast/test_broadcast_human.yaml
+   agents:
+     - id: agent_a
+       backend:
+         type: openai
+         model: gpt-5
+         cwd: workspace1
+         enable_mcp_command_line: true
+         command_line_execution_mode: docker
+
+     - id: agent_b
+       backend:
+         type: gemini
+         model: gemini-3-pro-preview
+         cwd: workspace2
+         enable_mcp_command_line: true
+         command_line_execution_mode: docker
+
+   orchestrator:
+     snapshot_storage: snapshots
+     agent_temporary_workspace: temp_workspaces
+
+     coordination:
+       broadcast: "human"  # Human will be prompted for responses
+       broadcast_sensitivity: "high"
+       broadcast_timeout: 60  # Shorter timeout for interactive sessions
+       max_broadcasts_per_agent: 5
 
 Human Participation
 -------------------
@@ -360,7 +398,7 @@ When an agent calls ``ask_others()`` in **agent mode** (``broadcast: "agents"``)
 3. Each agent checks queue at turn boundaries (not a hard interrupt)
 4. Agent responds, then continues with original task
 5. Responses collected asynchronously
-6. Requesting agent gets responses (immediately if blocking, via polling if not)
+6. Requesting agent receives all responses when complete
 
 This pattern ensures agents aren't abruptly interrupted mid-task.
 
@@ -420,18 +458,15 @@ This ensures:
 Broadcast Tools
 ~~~~~~~~~~~~~~~
 
-Three built-in tools are automatically available when broadcasts are enabled:
+Built-in tools automatically available when broadcasts are enabled:
 
-``ask_others(question: str, wait: Optional[bool] = None)``
-   Ask question to other agents or human. Returns responses (blocking) or request_id (polling).
+``ask_others(question: str)``
+   Ask question to other agents or human. Waits for and returns all responses.
 
-``check_broadcast_status(request_id: str)``
-   Check if broadcast is complete and how many responses collected.
+``respond_to_broadcast(answer: str)``
+   (Agent mode only) Respond to a broadcast question from another agent.
 
-``get_broadcast_responses(request_id: str)``
-   Get all responses for a broadcast request.
-
-These tools are registered as part of the workflow toolkit, not as separate MCP servers.
+These are built-in workflow tools, not MCP servers.
 
 Rate Limiting
 ~~~~~~~~~~~~~
