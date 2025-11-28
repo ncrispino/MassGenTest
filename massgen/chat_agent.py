@@ -830,6 +830,12 @@ class SingleAgent(ChatAgent):
         except (AttributeError, IndexError):
             return None
 
+    def _extract_tool_name(self, tool: dict) -> str:
+        """Extract tool name from tool definition (handles different formats)."""
+        if "function" in tool:
+            return tool["function"].get("name", "")
+        return tool.get("name", "")
+
     async def _handle_broadcast(
         self,
         broadcast_request: "BroadcastRequest",
@@ -851,14 +857,18 @@ class SingleAgent(ChatAgent):
             # Inline mode: inject into current conversation
             return await self._handle_broadcast_inline(broadcast_request)
         else:
-            # Background mode: separate context
-            return await self._handle_broadcast_background(broadcast_request)
+            # Future: could implement background mode here
+            # For now, fall back to inline mode for any non-inline mode
+            return await self._handle_broadcast_inline(broadcast_request)
 
     async def _handle_broadcast_inline(
         self,
         broadcast_request: "BroadcastRequest",
     ) -> str:
-        """Handle broadcast inline with current conversation context.
+        """Handle broadcast with a fresh, separate LLM call.
+
+        This makes a completely separate API call with ONLY the respond_to_broadcast tool,
+        avoiding any interference from MCP tools, ask_others, or conversation context.
 
         Args:
             broadcast_request: The broadcast to respond to
@@ -866,37 +876,79 @@ class SingleAgent(ChatAgent):
         Returns:
             Response content
         """
-        # Check if we're in agents broadcast mode (respond_to_broadcast tool available)
+        # Check if we're in agents broadcast mode
         has_respond_tool = hasattr(self._orchestrator, "config") and hasattr(self._orchestrator.config, "coordination_config") and self._orchestrator.config.coordination_config.broadcast == "agents"
 
-        # Create system message with broadcast
+        # Create fresh message with ONLY the broadcast question
         if has_respond_tool:
-            # Agents mode: instruct to use respond_to_broadcast tool
             instruction = (
                 "Please think about the question, then call the respond_to_broadcast tool with your answer.\n"
                 "Example: respond_to_broadcast(answer='I recommend using Hugo because it is fast and generates static sites.')"
             )
         else:
-            # Human mode or fallback: provide response inline
-            instruction = "Please provide a brief, helpful response to this question, then continue with your current task."
+            instruction = "Please provide a brief, helpful response to this question."
 
-        broadcast_message = {
-            "role": "system",
-            "content": (f"\n\n━━━ QUESTION FROM {broadcast_request.sender_agent_id.upper()} ━━━\n" f"{broadcast_request.question}\n\n" f"{instruction}\n" f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"),
-        }
+        # Fresh context - just the broadcast question, no conversation history
+        fresh_messages = [
+            {
+                "role": "user",
+                "content": (f"━━━ QUESTION FROM {broadcast_request.sender_agent_id.upper()} ━━━\n\n" f"{broadcast_request.question}\n\n" f"{instruction}"),
+            },
+        ]
 
-        # Generate response
         response_content = ""
         try:
+            # Get ONLY the respond_to_broadcast tool
+            tools = None
+            if has_respond_tool and hasattr(self.backend, "_broadcast_toolkit"):
+                all_tools = self.backend._broadcast_toolkit.get_tools(self.backend.config)
+                tools = [t for t in all_tools if self._extract_tool_name(t) == "respond_to_broadcast"]
+                logger.info(f"📢 [{self.agent_id}] Fresh broadcast call with ONLY respond_to_broadcast tool")
+
+            # Separate LLM call - fresh context, only respond tool
+            tool_calls = []
             async for chunk in self.backend.stream_with_tools(
-                messages=self.conversation_history + [broadcast_message],
-                tools=None,
+                messages=fresh_messages,  # Fresh context, no history
+                tools=tools,  # ONLY respond_to_broadcast
+                agent_id=self.agent_id,
+                session_id=self.session_id,
             ):
+                # Collect text content
                 if hasattr(chunk, "content") and chunk.content:
                     response_content += chunk.content
 
+                # Collect tool calls
+                if hasattr(chunk, "tool_calls") and chunk.tool_calls:
+                    tool_calls.extend(chunk.tool_calls)
+
+            # Execute respond_to_broadcast if called
+            if tool_calls and has_respond_tool:
+                for tool_call in tool_calls:
+                    tool_name = None
+                    tool_args = None
+
+                    # Extract tool name and arguments
+                    if isinstance(tool_call, dict):
+                        if "function" in tool_call:
+                            tool_name = tool_call["function"].get("name")
+                            tool_args = tool_call["function"].get("arguments")
+                        else:
+                            tool_name = tool_call.get("name")
+                            tool_args = tool_call.get("arguments")
+
+                    # Execute respond_to_broadcast
+                    if tool_name == "respond_to_broadcast":
+                        logger.info(f"📢 [{self.agent_id}] Executing respond_to_broadcast tool")
+
+                        if hasattr(self.backend, "_broadcast_toolkit"):
+                            result = await self.backend._broadcast_toolkit.execute_respond_to_broadcast(
+                                tool_args,
+                                self.agent_id,
+                            )
+                            logger.debug(f"📢 [{self.agent_id}] Tool result: {result}")
+
             logger.info(
-                f"📢 [{self.agent_id}] Generated inline response " f"({len(response_content)} chars)",
+                f"📢 [{self.agent_id}] Generated broadcast response ({len(response_content)} chars)",
             )
             return response_content.strip()
 

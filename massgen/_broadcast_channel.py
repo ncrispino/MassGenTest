@@ -6,6 +6,8 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Dict, List, Optional
 
+from loguru import logger
+
 from massgen.broadcast.broadcast_dataclasses import (
     BroadcastRequest,
     BroadcastResponse,
@@ -65,7 +67,6 @@ class BroadcastChannel:
         self,
         sender_agent_id: str,
         question: str,
-        response_mode: str = "inline",
         timeout: Optional[int] = None,
     ) -> str:
         """Create a new broadcast request.
@@ -73,7 +74,6 @@ class BroadcastChannel:
         Args:
             sender_agent_id: ID of the agent sending the broadcast
             question: The question to broadcast
-            response_mode: How agents should respond ("inline" or "background")
             timeout: Maximum time to wait for responses (uses config default if None)
 
         Returns:
@@ -109,7 +109,6 @@ class BroadcastChannel:
                 sender_agent_id=sender_agent_id,
                 question=question,
                 timestamp=datetime.now(),
-                response_mode=response_mode,
                 timeout=timeout,
                 expected_response_count=expected_count,
             )
@@ -286,8 +285,6 @@ class BroadcastChannel:
         Args:
             request_id: ID of the broadcast request
         """
-        from loguru import logger
-
         if request_id not in self.active_broadcasts:
             logger.warning(f"📢 [Human] Broadcast request {request_id[:8]}... not found")
             return

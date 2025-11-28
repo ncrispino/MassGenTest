@@ -3143,7 +3143,6 @@ Your answer:"""
                 broadcast_guidance = self.message_templates.get_broadcast_guidance(
                     broadcast_mode=broadcast_mode,
                     wait_by_default=wait_by_default,
-                    response_mode=self.config.coordination_config.broadcast_response_mode,
                     sensitivity=broadcast_sensitivity,
                 )
                 system_message = system_message + broadcast_guidance

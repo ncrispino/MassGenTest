@@ -5,10 +5,6 @@ MassGen supports collaborative problem-solving through agent-to-agent communicat
 and optional human participation. This enables agents to coordinate, ask for help,
 and work together more effectively during complex tasks.
 
-.. note::
-   This feature is part of the Agent Planning & Coordination system (Phase 2).
-   Requires MassGen v0.1.11 or later.
-
 Overview
 --------
 
@@ -132,44 +128,8 @@ All broadcast settings are in the orchestrator's coordination config:
        # Default behavior: true (blocking) | false (polling)
        broadcast_wait_by_default: true
 
-       # Response mode: "inline" | "background"
-       broadcast_response_mode: "inline"
-
        # Maximum active broadcasts per agent
        max_broadcasts_per_agent: 10
-
-Response Modes
---------------
-
-Inline Mode (default)
-~~~~~~~~~~~~~~~~~~~~~
-
-When agents receive broadcast questions, the question is injected into their current
-conversation context. They respond naturally as part of their ongoing work.
-
-**Pros:** Agent has full context, can reference their current work
-**Cons:** Slightly interrupts the agent's current train of thought
-
-.. code-block:: yaml
-
-   orchestrator:
-     coordination:
-       broadcast_response_mode: "inline"
-
-Background Mode
-~~~~~~~~~~~~~~~
-
-When agents receive broadcast questions, a separate LLM call is made with a snapshot
-of their recent context to generate a response.
-
-**Pros:** Main task flow is not interrupted
-**Cons:** Response based on context snapshot, not live state
-
-.. code-block:: yaml
-
-   orchestrator:
-     coordination:
-       broadcast_response_mode: "background"
 
 Human Participation
 -------------------
@@ -239,8 +199,10 @@ the existing Q&A history **without prompting the human again**:
      "human_qa_note": "The human has already answered questions this session. Review the history above..."
    }
 
-The agent receives the existing Q&A and can decide whether to use it or call
-``ask_others()`` again with a more specific question if needed.
+The agent receives the existing Q&A history to check if their question was already
+answered. If the existing Q&A answers their question, they can use it directly.
+If their question needs different information, they can call ``ask_others()`` again
+with a more specific question (which will prompt the human for new input).
 
 **How it works:**
 
@@ -256,46 +218,7 @@ The agent receives the existing Q&A and can decide whether to use it or call
 - ``ask_others()`` calls are serialized (one at a time) in human mode
 - Q&A history persists across all turns within a session
 - Agents can call ``ask_others()`` again with a different question if needed
-
-Best Practices
---------------
-
-When to Use ask_others()
-~~~~~~~~~~~~~~~~~~~~~~~~
-
-**Good use cases:**
-
-- "I'm about to refactor the User model. Any concerns or suggestions?"
-- "Does anyone know which OAuth library we decided to use?"
-- "I'm stuck on this authentication bug. Ideas?"
-- "Should I use approach A or approach B for this feature?"
-
-**Avoid overuse:**
-
-- Don't broadcast for status updates ("I'm starting work")
-- Don't broadcast for trivial questions that you can answer yourself
-- Don't broadcast too frequently (use the 10 broadcast limit wisely)
-
-Writing Good Questions
-~~~~~~~~~~~~~~~~~~~~~~
-
-Be **specific and actionable**:
-
-✅ Good: "I'm about to add a new field to the User table. Any schema concerns?"
-❌ Bad: "What do you think?"
-
-✅ Good: "Should I use Redis or Memcached for session storage? Our requirements are X, Y, Z."
-❌ Bad: "Which cache should I use?"
-
-Responding to Broadcasts
-~~~~~~~~~~~~~~~~~~~~~~~~~
-
-When you receive a broadcast question from another agent:
-
-- Provide helpful, concise responses
-- Reference your current work if relevant
-- Be collaborative and constructive
-- Then continue with your original task
+- **Note:** Q&A history reuse only applies to ``broadcast: "human"`` mode, not agent-to-agent communication
 
 Examples
 --------
@@ -332,48 +255,73 @@ Example 2: Getting Help When Stuck
    for response in result["responses"]:
        print(f"💡 Suggestion from {response['responder_id']}: {response['content']}")
 
-Example 3: Polling Mode for Long-Running Work
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Example 3: Hitting a Blocker
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 .. code-block:: python
 
-   # Agent delegates research and continues working
+   # Agent hits a blocker and needs human input
    result = ask_others(
-       "Can someone research OAuth2 provider options (Google, GitHub, Auth0)? "
-       "I need feature comparison and pricing.",
-       wait=False
+       "The Google Maps API requires authentication and I don't have credentials. "
+       "Should I use a free alternative like OpenStreetMap, or do you have API keys I should use?"
    )
-   request_id = result["request_id"]
 
-   # Continue with other work
-   # ... implement database models ...
-   # ... write tests ...
+   # Use human's guidance to proceed
+   for response in result["responses"]:
+       print(f"Guidance: {response['content']}")
 
-   # Check if research is ready
-   status = check_broadcast_status(request_id)
-   if status["status"] == "complete":
-       research = get_broadcast_responses(request_id)
-       # Use research results
+Example 4: Multiple Viable Approaches
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Example 4: Human Participation
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+.. code-block:: python
+
+   # Agent needs help choosing between approaches
+   result = ask_others(
+       "I can implement the data visualization using either Chart.js (simpler, lighter) "
+       "or D3.js (more powerful, steeper learning curve). "
+       "Which would you prefer given your needs?"
+   )
+
+   # Implement based on preference
+   for response in result["responses"]:
+       print(f"Decision: {response['content']}")
+
+Example 5: Human Participation (Design Preferences)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 With ``broadcast: "human"`` enabled:
 
 .. code-block:: python
 
-   # Agent asks for human input (only human responds, not other agents)
+   # Agent asks for human preferences on design decisions
    result = ask_others(
-       "I've identified two approaches for implementing this feature. "
-       "Approach A is faster but less flexible. Approach B is more robust "
-       "but takes longer. Which should I prioritize?"
+       "For the portfolio website, would you prefer: "
+       "(A) a single-page design with smooth scrolling, or "
+       "(B) multiple pages with navigation? "
+       "Also, should I include a contact form or just list your email?"
    )
 
    # In human mode, only the human responds
    for response in result["responses"]:
        print(f"👤 Human: {response['content']}")
 
-Example 5: Using Human Q&A History (Deferred Response)
+Example 6: Clarifying Requirements
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: python
+
+   # Agent needs clarification on vague requirements
+   result = ask_others(
+       "You mentioned 'professional styling' for the landing page. "
+       "Do you want a corporate/minimalist look, or something more colorful/creative? "
+       "Any specific colors or brand guidelines to follow?"
+   )
+
+   # Use clarified requirements
+   for response in result["responses"]:
+       print(f"Requirements: {response['content']}")
+
+Example 7: Using Human Q&A History (Deferred Response)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 When Q&A history exists, ``ask_others()`` returns immediately with status
@@ -416,6 +364,42 @@ When an agent calls ``ask_others()`` in **agent mode** (``broadcast: "agents"``)
 
 This pattern ensures agents aren't abruptly interrupted mid-task.
 
+**Important Limitation: Fresh Context for Agent Responses**
+
+When an agent receives a broadcast question from another agent, it responds using a
+**separate, fresh LLM call** with NO conversation history. This means:
+
+- The responding agent sees ONLY the broadcast question
+- It does NOT have access to its own conversation history
+- It does NOT have access to the requesting agent's context
+- Only the ``respond_to_broadcast`` tool is available (no MCP tools, no ``ask_others``)
+
+**Why this design:**
+
+- Keeps responses focused and concise
+- Prevents agents from accessing MCP tools or asking new questions during broadcast response
+- Avoids interference between the agent's main task and broadcast responses
+- Simpler implementation and debugging
+
+**Future enhancement:**
+
+A future version may add "context-aware" broadcast mode where responding agents can access
+their conversation history. For now, agents should provide self-contained questions that
+don't require the responder to know about prior context.
+
+**Example:**
+
+.. code-block:: python
+
+   # ❌ Bad - requires context
+   ask_others("What do you think about this approach?")  # What approach?
+
+   # ✅ Good - self-contained
+   ask_others(
+       "I'm considering using React with TypeScript for the frontend. "
+       "Do you see any issues with this choice?"
+   )
+
 Serialized Human Mode
 ~~~~~~~~~~~~~~~~~~~~~
 
@@ -433,19 +417,21 @@ This ensures:
 - Subsequent agents get existing Q&A without re-prompting
 - Q&A history persists across all turns in the session
 
-MCP Tools
-~~~~~~~~~
+Broadcast Tools
+~~~~~~~~~~~~~~~
 
-Three MCP tools are injected when broadcasts are enabled:
+Three built-in tools are automatically available when broadcasts are enabled:
 
 ``ask_others(question: str, wait: Optional[bool] = None)``
-   Ask question to other agents. Returns responses (blocking) or request_id (polling).
+   Ask question to other agents or human. Returns responses (blocking) or request_id (polling).
 
 ``check_broadcast_status(request_id: str)``
    Check if broadcast is complete and how many responses collected.
 
 ``get_broadcast_responses(request_id: str)``
    Get all responses for a broadcast request.
+
+These tools are registered as part of the workflow toolkit, not as separate MCP servers.
 
 Rate Limiting
 ~~~~~~~~~~~~~
