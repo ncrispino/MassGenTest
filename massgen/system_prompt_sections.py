@@ -1551,18 +1551,14 @@ class BroadcastCommunicationSection(SystemPromptSection):
     Provides instructions for using ask_others() tool for collaborative
     problem-solving between agents, with configurable sensitivity levels.
 
-    This section appears at MEDIUM priority (same as TaskPlanningSection)
-    to provide coordination guidance after critical context but before
-    auxiliary best practices.
+    This section appears at HIGH priority to provide coordination guidance
+    after critical context but before auxiliary best practices.
 
     Args:
         broadcast_mode: Communication mode - "agents" (agent-to-agent only)
                        or "human" (agents can ask agents + human)
         wait_by_default: Whether ask_others() blocks by default (True)
                         or returns immediately for polling (False)
-        response_mode: How agents respond to broadcasts:
-                      - "inline": Inject question into current conversation
-                      - "background": Separate LLM call with context snapshot
         sensitivity: How frequently to use ask_others():
                     - "low": Only for critical decisions/when blocked
                     - "medium": For significant decisions and design choices (default)
@@ -1572,7 +1568,6 @@ class BroadcastCommunicationSection(SystemPromptSection):
         >>> section = BroadcastCommunicationSection(
         ...     broadcast_mode="agents",
         ...     wait_by_default=True,
-        ...     response_mode="inline",
         ...     sensitivity="medium"
         ... )
         >>> print(section.render())
@@ -1582,7 +1577,6 @@ class BroadcastCommunicationSection(SystemPromptSection):
         self,
         broadcast_mode: str,
         wait_by_default: bool = True,
-        response_mode: str = "inline",
         sensitivity: str = "medium",
         human_qa_history: List[Dict[str, Any]] = None,
     ):
@@ -1593,7 +1587,6 @@ class BroadcastCommunicationSection(SystemPromptSection):
         )
         self.broadcast_mode = broadcast_mode
         self.wait_by_default = wait_by_default
-        self.response_mode = response_mode
         self.sensitivity = sensitivity
         self.human_qa_history = human_qa_history or []
 
@@ -1701,15 +1694,6 @@ class BroadcastCommunicationSection(SystemPromptSection):
                 [
                     "",
                     "**Note:** In human mode, only the human responds to your questions (other agents are not notified).",
-                ],
-            )
-
-        if self.response_mode == "background":
-            lines.extend(
-                [
-                    "",
-                    "**Technical note:** When you receive broadcast questions, you'll respond based on a snapshot",
-                    "of your current context without interrupting your main task flow.",
                 ],
             )
 

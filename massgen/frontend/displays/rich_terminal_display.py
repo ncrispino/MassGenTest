@@ -7,6 +7,7 @@ Enhanced terminal interface using Rich library with live updates,
 beautiful formatting, code highlighting, and responsive layout.
 """
 
+import asyncio
 import os
 import re
 import signal
@@ -3768,7 +3769,6 @@ class RichTerminalDisplay(TerminalDisplay):
 
             # Get the final presentation from the orchestrator
             if hasattr(self.orchestrator, "get_final_presentation"):
-                import asyncio
 
                 async def _get_and_display_presentation() -> None:
                     """Helper to get and display presentation asynchronously."""
@@ -4286,7 +4286,6 @@ class RichTerminalDisplay(TerminalDisplay):
         Returns:
             Human's response string, or None if skipped/timeout
         """
-        import asyncio
         import sys
         import termios
 

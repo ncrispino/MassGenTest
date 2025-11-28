@@ -7,6 +7,7 @@ TODO: This file is outdated - check claude_code config and
 deprecated patterns. Update to reflect current backend architecture.
 """
 
+import logging
 import warnings
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
@@ -57,9 +58,6 @@ class CoordinationConfig:
         broadcast_timeout: Maximum time to wait for broadcast responses (seconds).
         broadcast_wait_by_default: If True, ask_others() blocks until responses collected (blocking mode).
                                    If False, ask_others() returns immediately for polling (polling mode).
-        broadcast_response_mode: How agents should respond to broadcasts.
-                                - "inline": Inject question into current conversation context
-                                - "background": Separate LLM call with context snapshot
         max_broadcasts_per_agent: Maximum number of active broadcasts per agent.
         task_planning_filesystem_mode: If True, task planning MCP writes tasks to tasks/ directory
                                        in agent workspace for transparency and cross-agent visibility.
@@ -88,10 +86,9 @@ class CoordinationConfig:
     enable_agent_task_planning: bool = False
     max_tasks_per_plan: int = 10
     broadcast: Any = False  # False | "agents" | "human"
-    broadcast_sensitivity: str = "medium"  # "low" | "medium" | "high"
+    broadcast_sensitivity: str = "medium"  # "low" | "medium" | "high" - Used in BroadcastCommunicationSection system prompts
     broadcast_timeout: int = 300
     broadcast_wait_by_default: bool = True
-    broadcast_response_mode: str = "inline"  # "inline" | "background"
     max_broadcasts_per_agent: int = 10
     task_planning_filesystem_mode: bool = False
     enable_memory_filesystem_mode: bool = False
@@ -106,8 +103,6 @@ class CoordinationConfig:
 
     def _validate_broadcast_config(self):
         """Validate broadcast configuration settings."""
-        import logging
-
         logger = logging.getLogger(__name__)
 
         if self.broadcast:
@@ -118,10 +113,6 @@ class CoordinationConfig:
             # Validate sensitivity
             if self.broadcast_sensitivity not in ["low", "medium", "high"]:
                 raise ValueError(f"Invalid broadcast_sensitivity: {self.broadcast_sensitivity}. Must be 'low', 'medium', or 'high'")
-
-            # Validate response mode
-            if self.broadcast_response_mode not in ["inline", "background"]:
-                raise ValueError(f"Invalid broadcast_response_mode: {self.broadcast_response_mode}. Must be 'inline' or 'background'")
 
             # Warn if both task planning and high-sensitivity broadcasts enabled
             if self.enable_agent_task_planning and self.broadcast_sensitivity == "high":

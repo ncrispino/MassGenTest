@@ -4,7 +4,7 @@
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, Literal
+from typing import Any, Dict
 
 
 class BroadcastStatus(Enum):
@@ -25,11 +25,11 @@ class BroadcastRequest:
         sender_agent_id: ID of the agent sending the broadcast
         question: The question or message being broadcast
         timestamp: When the broadcast was created
-        response_mode: How agents should respond ("inline" or "background")
         status: Current status of the broadcast
         timeout: Maximum time to wait for responses (seconds)
         responses_received: Number of responses collected so far
         expected_response_count: Expected number of responses (num agents + human if applicable)
+        response_mode: How the broadcast should be handled ("inline" only for now; other modes like "background" could be added in future)
         metadata: Additional metadata for the broadcast
     """
 
@@ -37,11 +37,11 @@ class BroadcastRequest:
     sender_agent_id: str
     question: str
     timestamp: datetime
-    response_mode: Literal["inline", "background"]
     status: BroadcastStatus = BroadcastStatus.PENDING
     timeout: int = 300
     responses_received: int = 0
     expected_response_count: int = 0
+    response_mode: str = "inline"  # Always "inline" for now. Could support other modes (e.g., "background") in future if needed.
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -51,11 +51,11 @@ class BroadcastRequest:
             "sender_agent_id": self.sender_agent_id,
             "question": self.question,
             "timestamp": self.timestamp.isoformat(),
-            "response_mode": self.response_mode,
             "status": self.status.value,
             "timeout": self.timeout,
             "responses_received": self.responses_received,
             "expected_response_count": self.expected_response_count,
+            "response_mode": self.response_mode,
             "metadata": self.metadata,
         }
 

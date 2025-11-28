@@ -869,7 +869,6 @@ Based on the coordination process above, present your final answer:"""
         self,
         broadcast_mode: str,
         wait_by_default: bool = True,
-        response_mode: str = "inline",
         sensitivity: str = "medium",
     ) -> str:
         """Generate guidance for using broadcast/communication tools.
@@ -877,7 +876,6 @@ Based on the coordination process above, present your final answer:"""
         Args:
             broadcast_mode: "agents" or "human"
             wait_by_default: Whether ask_others() blocks by default
-            response_mode: "inline" or "background"
             sensitivity: How frequently to use ask_others() ("low", "medium", "high")
 
         Returns:
@@ -974,12 +972,6 @@ When you receive responses from ask_others(), INCLUDE THEM in your new_answer() 
         if broadcast_mode == "human":
             guidance += """
 **Note:** The human user may also respond to your questions alongside other agents.
-"""
-
-        if response_mode == "background":
-            guidance += """
-**Technical note:** When you receive broadcast questions, you'll respond based on a snapshot
-of your current context without interrupting your main task flow.
 """
 
         return guidance

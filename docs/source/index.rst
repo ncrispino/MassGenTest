@@ -363,6 +363,7 @@ Documentation Sections
    user_guide/memory_filesystem_mode
    user_guide/orchestration_restart
    user_guide/agent_task_planning
+   user_guide/agent_communication
    user_guide/multimodal
    user_guide/terminal_evaluation
    user_guide/general_interoperability
