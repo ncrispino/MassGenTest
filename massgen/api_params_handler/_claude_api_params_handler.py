@@ -188,7 +188,7 @@ class ClaudeAPIParamsHandler(APIParamsHandlerBase):
 
         # Claude API requires max_tokens - add default if not provided
         if "max_tokens" not in api_params:
-            api_params["max_tokens"] = 4096
+            api_params["max_tokens"] = 32000
 
         enable_programmatic = all_params.get("enable_programmatic_flow", False)
         enable_tool_search = all_params.get("enable_tool_search", False)

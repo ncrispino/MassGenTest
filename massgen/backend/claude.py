@@ -596,16 +596,34 @@ class ClaudeBackend(CustomToolAndMCPBackend):
 
         Note:
             Claude uses tool_result format with tool_use_id.
+            All tool_result blocks for a given assistant turn MUST be in a SINGLE user message immediately after the assistant message with tool_use blocks
         """
+        tool_result_block = {
+            "type": "tool_result",
+            "tool_use_id": call.get("call_id", "") or call.get("id", ""),
+            "content": str(result),
+        }
+
+        tool_result_msg_idx = None
+        for i in range(len(updated_messages) - 1, -1, -1):
+            msg = updated_messages[i]
+
+            if msg.get("role") == "assistant":
+                break
+            # Found a user message with tool_result content
+            if msg.get("role") == "user" and isinstance(msg.get("content"), list) and msg["content"] and isinstance(msg["content"][0], dict) and msg["content"][0].get("type") == "tool_result":
+                tool_result_msg_idx = i
+                break
+
+        if tool_result_msg_idx is not None:
+            # Merge into existing tool_result user message
+            updated_messages[tool_result_msg_idx]["content"].append(tool_result_block)
+            return
+
+        # Otherwise create a new user message with this tool_result
         tool_result_msg = {
             "role": "user",
-            "content": [
-                {
-                    "type": "tool_result",
-                    "tool_use_id": call.get("call_id", "") or call.get("id", ""),
-                    "content": str(result),
-                },
-            ],
+            "content": [tool_result_block],
         }
         updated_messages.append(tool_result_msg)
 
@@ -627,15 +645,32 @@ class ClaudeBackend(CustomToolAndMCPBackend):
         Note:
             Claude uses tool_result format with tool_use_id for errors too.
         """
+        error_result_block = {
+            "type": "tool_result",
+            "tool_use_id": call.get("call_id", "") or call.get("id", ""),
+            "content": error_msg,
+            "is_error": True,
+        }
+
+        tool_result_msg_idx = None
+        for i in range(len(updated_messages) - 1, -1, -1):
+            msg = updated_messages[i]
+            if msg.get("role") == "assistant":
+                break
+            # Found a user message with tool_result content
+            if msg.get("role") == "user" and isinstance(msg.get("content"), list) and msg["content"] and isinstance(msg["content"][0], dict) and msg["content"][0].get("type") == "tool_result":
+                tool_result_msg_idx = i
+                break
+
+        if tool_result_msg_idx is not None:
+            # Merge into existing tool_result user message
+            updated_messages[tool_result_msg_idx]["content"].append(error_result_block)
+            return
+
+        # Otherwise create a new user message with this tool_result
         error_result_msg = {
             "role": "user",
-            "content": [
-                {
-                    "type": "tool_result",
-                    "tool_use_id": call.get("call_id", "") or call.get("id", ""),
-                    "content": error_msg,
-                },
-            ],
+            "content": [error_result_block],
         }
         updated_messages.append(error_result_msg)
 
