@@ -6,7 +6,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Settings, FolderOpen, Users, ChevronDown, RefreshCw, Plus, FileText, Sun, Moon, Monitor } from 'lucide-react';
+import { Settings, FolderOpen, Users, ChevronDown, RefreshCw, Plus, FileText, Sun, Moon, Monitor, Search, X } from 'lucide-react';
 import type { ConfigInfo, SessionInfo } from '../types';
 import { useThemeStore, selectThemeMode, selectSetThemeMode, type ThemeMode } from '../stores/themeStore';
 
@@ -35,6 +35,7 @@ export function HeaderControls({
   const [showConfigDropdown, setShowConfigDropdown] = useState(false);
   const [showSessionDropdown, setShowSessionDropdown] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [configSearch, setConfigSearch] = useState('');
 
   // Theme state
   const themeMode = useThemeStore(selectThemeMode);
@@ -85,8 +86,17 @@ export function HeaderControls({
     return () => clearInterval(interval);
   }, [fetchConfigs, fetchSessions]);
 
-  // Group configs by category
-  const groupedConfigs = configs.reduce<Record<string, ConfigInfo[]>>((acc, config) => {
+  // Filter configs by search term
+  const filteredConfigs = configSearch.trim()
+    ? configs.filter(c =>
+        c.name.toLowerCase().includes(configSearch.toLowerCase()) ||
+        c.category.toLowerCase().includes(configSearch.toLowerCase()) ||
+        c.path.toLowerCase().includes(configSearch.toLowerCase())
+      )
+    : configs;
+
+  // Group filtered configs by category
+  const groupedConfigs = filteredConfigs.reduce<Record<string, ConfigInfo[]>>((acc, config) => {
     const cat = config.category || 'root';
     if (!acc[cat]) acc[cat] = [];
     acc[cat].push(config);
@@ -101,8 +111,10 @@ export function HeaderControls({
       <div className="relative">
         <button
           onClick={() => {
-            setShowConfigDropdown(!showConfigDropdown);
+            const newShowConfig = !showConfigDropdown;
+            setShowConfigDropdown(newShowConfig);
             setShowSessionDropdown(false);
+            if (!newShowConfig) setConfigSearch(''); // Clear search when closing
           }}
           className="flex items-center gap-2 px-3 py-2 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600
                    rounded-lg border border-gray-300 dark:border-gray-600 text-sm transition-colors"
@@ -123,7 +135,36 @@ export function HeaderControls({
               className="absolute right-0 mt-2 w-80 max-h-[400px] overflow-y-auto
                        bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-xl z-50"
             >
-              {defaultConfig && (
+              {/* Search Input */}
+              <div className="p-2 border-b border-gray-200 dark:border-gray-700 sticky top-0 bg-white dark:bg-gray-800 z-10">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                  <input
+                    type="text"
+                    value={configSearch}
+                    onChange={(e) => setConfigSearch(e.target.value)}
+                    placeholder="Search configs..."
+                    className="w-full pl-9 pr-8 py-2 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600
+                             rounded-lg text-sm text-gray-900 dark:text-gray-100 placeholder-gray-500
+                             focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    autoFocus
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                  {configSearch && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setConfigSearch('');
+                      }}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 p-1 hover:bg-gray-200 dark:hover:bg-gray-600 rounded"
+                    >
+                      <X className="w-4 h-4 text-gray-400" />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {defaultConfig && !configSearch && (
                 <div className="p-2 border-b border-gray-200 dark:border-gray-700">
                   <div className="text-xs text-gray-500 mb-1">Default (from CLI)</div>
                   <button
@@ -165,9 +206,9 @@ export function HeaderControls({
                 </div>
               ))}
 
-              {configs.length === 0 && !loading && (
+              {filteredConfigs.length === 0 && !loading && (
                 <div className="p-4 text-center text-gray-500 text-sm">
-                  No configs found
+                  {configSearch ? `No configs matching "${configSearch}"` : 'No configs found'}
                 </div>
               )}
             </motion.div>
@@ -181,6 +222,7 @@ export function HeaderControls({
           onClick={() => {
             setShowSessionDropdown(!showSessionDropdown);
             setShowConfigDropdown(false);
+            setConfigSearch(''); // Clear config search when opening sessions
           }}
           className="flex items-center gap-2 px-3 py-2 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600
                    rounded-lg border border-gray-300 dark:border-gray-600 text-sm transition-colors"

@@ -17,6 +17,7 @@ import { ConvergenceAnimation } from './components/ConvergenceAnimation';
 import { HeaderControls } from './components/HeaderControls';
 import { AnswerToast } from './components/AnswerToast';
 import { AnswerBrowserModal } from './components/AnswerBrowserModal';
+import { InlineAnswerBrowser } from './components/InlineAnswerBrowser';
 
 function ConnectionIndicator({ status }: { status: ConnectionStatus }) {
   const config: Record<ConnectionStatus, { icon: typeof Wifi; color: string; text: string }> = {
@@ -196,7 +197,7 @@ export function App() {
             </motion.div>
           )}
 
-          {/* Winner View - Single Agent */}
+          {/* Winner View - Single Agent + Inline Browser when complete */}
           {viewMode === 'winner' && winnerAgent ? (
             <section>
               <div className="flex items-center gap-4 mb-4">
@@ -212,9 +213,21 @@ export function App() {
                   Winner: {winnerAgent.modelName ? `${winnerAgent.id} (${winnerAgent.modelName})` : winnerAgent.id}
                 </h2>
               </div>
-              <div className="h-[600px]">
-                <AgentCard agent={winnerAgent} isWinner={true} />
-              </div>
+              {isComplete ? (
+                /* When complete, show agent card alongside inline browser */
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <div className="h-[500px]">
+                    <AgentCard agent={winnerAgent} isWinner={true} />
+                  </div>
+                  <div className="h-[500px] bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
+                    <InlineAnswerBrowser />
+                  </div>
+                </div>
+              ) : (
+                <div className="h-[600px]">
+                  <AgentCard agent={winnerAgent} isWinner={true} />
+                </div>
+              )}
             </section>
           ) : (
             /* Agent Carousel - Normal View */

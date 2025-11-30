@@ -489,7 +489,18 @@ def create_app(config_path: Optional[str] = None) -> "FastAPI":
 
         @app.get("/{path:path}")
         async def serve_spa(path: str):
-            """Serve React SPA - route all paths to index.html."""
+            """Serve React SPA - route all paths to index.html.
+
+            Note: API routes (/api/*) are handled by the routes defined above.
+            This catch-all only handles frontend routes.
+            """
+            # Don't serve SPA for API routes - they should 404 if not found
+            if path.startswith("api/"):
+                return JSONResponse(
+                    {"error": "API endpoint not found", "path": path},
+                    status_code=404,
+                )
+
             file_path = static_dir / path
             if file_path.exists() and file_path.is_file():
                 return FileResponse(file_path)

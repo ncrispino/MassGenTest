@@ -157,8 +157,8 @@ export interface VoteResults {
 export interface AgentRound {
   id: string;
   roundNumber: number;
-  type: 'answer' | 'vote';
-  label: string;  // e.g., "answer1.1" or "vote1"
+  type: 'answer' | 'vote' | 'final';
+  label: string;  // e.g., "answer1.1", "vote1", or "final"
   content: string;
   startTimestamp: number;
   endTimestamp?: number;

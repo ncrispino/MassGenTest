@@ -36,7 +36,7 @@ interface AgentStore extends SessionState {
   setError: (message: string) => void;
   setComplete: (isComplete: boolean) => void;
   setViewMode: (mode: ViewMode) => void;
-  startNewRound: (agentId: string, roundType: 'answer' | 'vote') => void;
+  startNewRound: (agentId: string, roundType: 'answer' | 'vote' | 'final', customLabel?: string) => void;
   setAgentRound: (agentId: string, roundId: string) => void;
   reset: () => void;
   processWSEvent: (event: WSEvent) => void;
@@ -192,7 +192,11 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
   },
 
   setConsensus: (winnerId) => {
-    set({ selectedAgent: winnerId });
+    const store = get();
+    // Start a "final" round for the winner to give their final answer
+    store.startNewRound(winnerId, 'final', 'final');
+    // Auto-switch to winner view
+    set({ selectedAgent: winnerId, viewMode: 'winner' });
   },
 
   setFinalAnswer: (answer, _voteResults, selectedAgent) => {
@@ -294,20 +298,23 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     set({ viewMode: mode });
   },
 
-  startNewRound: (agentId, roundType) => {
+  startNewRound: (agentId, roundType, customLabel) => {
     set((state) => {
       const agent = state.agents[agentId];
       if (!agent) return state;
 
-      // Calculate new round number
-      const existingRoundsOfType = agent.rounds.filter(r => r.type === roundType).length;
+      // Calculate new round number - only count non-initial rounds of this type
+      // The initial "current" round has label "current" and shouldn't be counted
+      const existingRoundsOfType = agent.rounds.filter(
+        r => r.type === roundType && r.label !== 'current'
+      ).length;
       const agentIndex = state.agentOrder.indexOf(agentId) + 1;
       const newRoundNumber = existingRoundsOfType + 1;
 
-      // Generate label like "answer1.1" or "vote1"
-      const label = roundType === 'answer'
+      // Generate label like "answer1.1" or "vote1" or use custom label
+      const label = customLabel ?? (roundType === 'answer'
         ? `answer${agentIndex}.${newRoundNumber}`
-        : `vote${newRoundNumber}`;
+        : `vote${newRoundNumber}`);
 
       // Close previous round
       const now = Date.now();

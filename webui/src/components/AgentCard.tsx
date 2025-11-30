@@ -213,6 +213,13 @@ export function AgentCard({ agent, isWinner = false, isVisible = true }: AgentCa
         <pre className="whitespace-pre-wrap text-gray-700 dark:text-gray-300 leading-relaxed">
           {agent.currentContent ? (
             renderHighlightedContent(agent.currentContent)
+          ) : agent.status === 'waiting' ? (
+            <span className="text-gray-500 italic">
+              Waiting
+              <span className="typing-dot">.</span>
+              <span className="typing-dot">.</span>
+              <span className="typing-dot">.</span>
+            </span>
           ) : (
             <span className="text-gray-500 italic">Enter a prompt below to start coordination...</span>
           )}
