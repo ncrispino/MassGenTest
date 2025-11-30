@@ -1073,6 +1073,46 @@ Topics covered:
 - Parallel experiment execution
 - Performance tips and troubleshooting
 
+### Python API & LiteLLM
+
+Use MassGen programmatically with the familiar LiteLLM/OpenAI interface:
+
+```python
+from dotenv import load_dotenv
+load_dotenv()  # Load API keys from .env
+
+import litellm
+from massgen import register_with_litellm
+
+register_with_litellm()
+
+# Multi-agent with slash format: "backend/model"
+response = litellm.completion(
+    model="massgen/build",
+    messages=[{"role": "user", "content": "Compare AI approaches"}],
+    optional_params={"models": ["openai/gpt-5", "groq/llama-3.3-70b"]}
+)
+print(response.choices[0].message.content)  # Final consensus answer
+```
+
+Or use the direct Python API:
+
+```python
+from dotenv import load_dotenv
+load_dotenv()
+
+import asyncio
+import massgen
+
+result = asyncio.run(massgen.run(
+    query="What is machine learning?",
+    models=["openai/gpt-5", "gemini/gemini-2.5-flash"]
+))
+print(result["final_answer"])  # Consensus answer from winning agent
+```
+
+> **Full API reference:** [Programmatic API Guide](https://docs.massgen.ai/en/latest/user_guide/programmatic_api.html)
+
 ---
 
 ## 💡 Case Studies

@@ -322,6 +322,47 @@ Store frequently-used configs in ``~/.config/massgen/agents/`` for easy access:
 .. seealso::
    For detailed information on configuration files and examples, see :doc:`../reference/configuration_examples`
 
+Python API & LiteLLM
+--------------------
+
+**LiteLLM Integration** - Use MassGen with the familiar LiteLLM/OpenAI interface:
+
+.. code-block:: python
+
+   from dotenv import load_dotenv
+   load_dotenv()  # Load API keys from .env
+
+   import litellm
+   from massgen import register_with_litellm
+
+   register_with_litellm()
+
+   # Multi-agent with slash format: "backend/model"
+   response = litellm.completion(
+       model="massgen/build",
+       messages=[{"role": "user", "content": "Compare AI approaches"}],
+       optional_params={"models": ["openai/gpt-5", "groq/llama-3.3-70b"]}
+   )
+   print(response.choices[0].message.content)  # Final consensus answer
+
+**Direct Python API:**
+
+.. code-block:: python
+
+   from dotenv import load_dotenv
+   load_dotenv()
+
+   import asyncio
+   import massgen
+
+   result = asyncio.run(massgen.run(
+       query="What is machine learning?",
+       models=["openai/gpt-5", "gemini/gemini-2.5-flash"]
+   ))
+   print(result["final_answer"])  # Consensus answer from winning agent
+
+See :doc:`../user_guide/programmatic_api` for the complete API reference.
+
 Next Steps
 ----------
 

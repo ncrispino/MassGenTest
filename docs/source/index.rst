@@ -368,6 +368,8 @@ Documentation Sections
    user_guide/terminal_evaluation
    user_guide/general_interoperability
    user_guide/logging
+   user_guide/automation
+   user_guide/programmatic_api
 
 .. toctree::
    :maxdepth: 2

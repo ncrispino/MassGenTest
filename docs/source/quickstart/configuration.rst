@@ -255,16 +255,124 @@ Each agent requires a ``backend`` configuration that specifies the model provide
 .. important::
    **Choosing the right backend?** Different backends support different features (web search, code execution, file operations, etc.). Check the **Backend Capabilities Matrix** in :doc:`../user_guide/backends` to see which features are available for each backend type.
 
-Backend Types
-~~~~~~~~~~~~~
+Supported Providers
+~~~~~~~~~~~~~~~~~~~
 
-Available backend types:
+MassGen supports many LLM providers. Use the **slash format** (``provider/model``) for the Python API and LiteLLM:
+
+.. list-table:: Provider Reference
+   :header-rows: 1
+   :widths: 15 20 30 20
+
+   * - Provider
+     - Backend Type
+     - Example Models
+     - Slash Format Example
+   * - OpenAI
+     - ``openai``
+     - ``gpt-5``, ``gpt-5-nano``, ``gpt-5.1``
+     - ``openai/gpt-5``
+   * - Anthropic
+     - ``claude``
+     - ``claude-sonnet-4-5-20250929``, ``claude-opus-4-5-20251101``
+     - ``claude/claude-sonnet-4-5-20250929``
+   * - Google
+     - ``gemini``
+     - ``gemini-2.5-flash``, ``gemini-2.5-pro``, ``gemini-3-pro-preview``
+     - ``gemini/gemini-2.5-flash``
+   * - xAI
+     - ``grok``
+     - ``grok-4``, ``grok-4-1-fast-reasoning``, ``grok-3-mini``
+     - ``grok/grok-4``
+   * - Groq
+     - ``groq``
+     - ``llama-3.3-70b-versatile``, ``mixtral-8x7b-32768``
+     - ``groq/llama-3.3-70b-versatile``
+   * - Cerebras
+     - ``cerebras``
+     - ``llama-3.3-70b``, ``llama-3.1-8b``
+     - ``cerebras/llama-3.3-70b``
+   * - Together
+     - ``together``
+     - ``meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo``
+     - ``together/meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo``
+   * - Fireworks
+     - ``fireworks``
+     - ``accounts/fireworks/models/llama-v3p3-70b-instruct``
+     - ``fireworks/accounts/fireworks/models/llama-v3p3-70b-instruct``
+   * - OpenRouter
+     - ``openrouter``
+     - 200+ models (e.g., ``x-ai/grok-4.1-mini``)
+     - ``openrouter/x-ai/grok-4.1-mini``
+   * - Qwen
+     - ``qwen``
+     - ``qwen-max``, ``qwen-plus``, ``qwen-turbo``
+     - ``qwen/qwen-max``
+   * - Moonshot
+     - ``moonshot``
+     - ``moonshot-v1-128k``, ``moonshot-v1-32k``
+     - ``moonshot/moonshot-v1-128k``
+   * - Nebius
+     - ``nebius``
+     - ``Qwen/Qwen3-4B-fast``
+     - ``nebius/Qwen/Qwen3-4B-fast``
+   * - Claude Code
+     - ``claude_code``
+     - ``claude-sonnet-4-5-20250929``
+     - (YAML only)
+   * - Azure OpenAI
+     - ``azure_openai``
+     - ``gpt-4o`` (deployment name)
+     - (YAML only)
+
+.. tip::
+   **Nested slashes are supported!** For providers like OpenRouter, Together, and Fireworks where model names contain slashes, the format still works:
+
+   - ``openrouter/x-ai/grok-4.1-mini`` → provider=openrouter, model=x-ai/grok-4.1-mini
+   - ``together/meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo`` → provider=together, model=meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo
+
+**Using slash format in Python:**
+
+.. code-block:: python
+
+   import massgen
+
+   # Build config with slash format
+   config = massgen.build_config(models=[
+       "openai/gpt-5",
+       "groq/llama-3.3-70b-versatile",
+       "openrouter/x-ai/grok-4.1-mini"
+   ])
+
+   # Or with LiteLLM
+   from massgen import register_with_litellm
+   import litellm
+
+   register_with_litellm()
+   response = litellm.completion(
+       model="massgen/build",
+       messages=[{"role": "user", "content": "Your question"}],
+       optional_params={"models": ["openai/gpt-5", "groq/llama-3.3-70b-versatile"]}
+   )
+
+Backend Types (YAML)
+~~~~~~~~~~~~~~~~~~~~
+
+For YAML configuration files, use the ``type`` field:
 
 * ``openai`` - OpenAI models (GPT-5, GPT-4, etc.)
 * ``claude`` - Anthropic Claude models
 * ``claude_code`` - Claude Code SDK with dev tools
 * ``gemini`` - Google Gemini models
 * ``grok`` - xAI Grok models
+* ``groq`` - Groq inference (ultra-fast)
+* ``cerebras`` - Cerebras AI
+* ``together`` - Together AI
+* ``fireworks`` - Fireworks AI
+* ``openrouter`` - OpenRouter (200+ models)
+* ``qwen`` - Alibaba Qwen models
+* ``moonshot`` - Kimi/Moonshot AI
+* ``nebius`` - Nebius AI Studio
 * ``azure_openai`` - Azure OpenAI deployment
 * ``zai`` - ZhipuAI GLM models
 * ``ag2`` - AG2 framework integration

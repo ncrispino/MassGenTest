@@ -92,6 +92,7 @@ class BackendCapabilities:
     env_var: Optional[str] = None  # Required environment variable (e.g., "OPENAI_API_KEY")
     notes: str = ""  # Additional notes about the backend
     model_release_dates: Optional[Dict[str, str]] = None  # Model -> "YYYY-MM" release date mapping
+    base_url: Optional[str] = None  # API base URL for OpenAI-compatible providers
 
 
 # THE REGISTRY - Single source of truth for all backend capabilities
@@ -125,7 +126,7 @@ BACKEND_CAPABILITIES: Dict[str, BackendCapabilities] = {
             "gpt-4o-mini",
             "o4-mini",
         ],
-        default_model="gpt-4o",
+        default_model="gpt-5",
         env_var="OPENAI_API_KEY",
         notes="Reasoning support in GPT-5 and o-series models. Audio/video generation (v0.0.30+). Video generation via Sora-2 API (v0.0.31).",
         model_release_dates={
@@ -390,7 +391,8 @@ BACKEND_CAPABILITIES: Dict[str, BackendCapabilities] = {
         models=["llama-3.3-70b", "llama-3.1-70b", "llama-3.1-8b"],
         default_model="llama-3.3-70b",
         env_var="CEREBRAS_API_KEY",
-        notes="OpenAI-compatible API. Base URL: https://api.cerebras.ai/v1. Ultra-fast inference with Cerebras WSE hardware.",
+        notes="OpenAI-compatible API. Ultra-fast inference with Cerebras WSE hardware.",
+        base_url="https://api.cerebras.ai/v1",
     ),
     "together": BackendCapabilities(
         backend_type="together",
@@ -407,7 +409,8 @@ BACKEND_CAPABILITIES: Dict[str, BackendCapabilities] = {
         ],
         default_model="meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo",
         env_var="TOGETHER_API_KEY",
-        notes="OpenAI-compatible API. Base URL: https://api.together.xyz/v1. Access to open-source models at scale.",
+        notes="OpenAI-compatible API. Access to open-source models at scale.",
+        base_url="https://api.together.xyz/v1",
     ),
     "fireworks": BackendCapabilities(
         backend_type="fireworks",
@@ -424,7 +427,8 @@ BACKEND_CAPABILITIES: Dict[str, BackendCapabilities] = {
         ],
         default_model="accounts/fireworks/models/llama-v3p3-70b-instruct",
         env_var="FIREWORKS_API_KEY",
-        notes="OpenAI-compatible API. Base URL: https://api.fireworks.ai/inference/v1. Fast inference for production workloads.",
+        notes="OpenAI-compatible API. Fast inference for production workloads.",
+        base_url="https://api.fireworks.ai/inference/v1",
     ),
     "groq": BackendCapabilities(
         backend_type="groq",
@@ -441,7 +445,8 @@ BACKEND_CAPABILITIES: Dict[str, BackendCapabilities] = {
         ],
         default_model="llama-3.3-70b-versatile",
         env_var="GROQ_API_KEY",
-        notes="OpenAI-compatible API. Base URL: https://api.groq.com/openai/v1. Ultra-fast inference with LPU hardware.",
+        notes="OpenAI-compatible API. Ultra-fast inference with LPU hardware.",
+        base_url="https://api.groq.com/openai/v1",
     ),
     "openrouter": BackendCapabilities(
         backend_type="openrouter",
@@ -456,7 +461,8 @@ BACKEND_CAPABILITIES: Dict[str, BackendCapabilities] = {
         models=["custom"],  # OpenRouter supports 200+ models
         default_model="custom",
         env_var="OPENROUTER_API_KEY",
-        notes="OpenAI-compatible API. Base URL: https://openrouter.ai/api/v1. Unified access to 200+ AI models. Audio/video understanding available on compatible models (v0.0.30+).",
+        notes="OpenAI-compatible API. Unified access to 200+ AI models. Audio/video understanding available on compatible models (v0.0.30+).",
+        base_url="https://openrouter.ai/api/v1",
     ),
     "moonshot": BackendCapabilities(
         backend_type="moonshot",
@@ -469,7 +475,8 @@ BACKEND_CAPABILITIES: Dict[str, BackendCapabilities] = {
         models=["moonshot-v1-8k", "moonshot-v1-32k", "moonshot-v1-128k"],
         default_model="moonshot-v1-128k",
         env_var="MOONSHOT_API_KEY",
-        notes="OpenAI-compatible API. Base URL: https://api.moonshot.cn/v1. Chinese language optimized models with long context windows.",
+        notes="OpenAI-compatible API. Chinese language optimized models with long context windows.",
+        base_url="https://api.moonshot.cn/v1",
     ),
     "nebius": BackendCapabilities(
         backend_type="nebius",
@@ -482,7 +489,8 @@ BACKEND_CAPABILITIES: Dict[str, BackendCapabilities] = {
         models=["Qwen/Qwen3-4B-fast", "custom"],
         default_model="Qwen/Qwen3-4B-fast",
         env_var="NEBIUS_API_KEY",
-        notes="OpenAI-compatible API. Base URL: https://api.studio.nebius.ai/v1. Nebius AI Studio cloud platform.",
+        notes="OpenAI-compatible API. Nebius AI Studio cloud platform.",
+        base_url="https://api.studio.nebius.ai/v1",
     ),
     "poe": BackendCapabilities(
         backend_type="poe",
@@ -510,7 +518,8 @@ BACKEND_CAPABILITIES: Dict[str, BackendCapabilities] = {
         models=["qwen-max", "qwen-plus", "qwen-turbo", "qwen3-vl-30b-a3b-thinking"],
         default_model="qwen-max",
         env_var="QWEN_API_KEY",
-        notes="OpenAI-compatible API. Base URL: https://dashscope-intl.aliyuncs.com/compatible-mode/v1. Qwen models from Alibaba Cloud. Audio/video understanding support (v0.0.30+).",
+        notes="OpenAI-compatible API. Qwen models from Alibaba Cloud. Audio/video understanding support (v0.0.30+).",
+        base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
     ),
 }
 
