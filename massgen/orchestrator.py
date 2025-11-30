@@ -1942,6 +1942,18 @@ Your answer:"""
                                 result_data,
                                 snapshot_timestamp=answer_timestamp,
                             )
+                            # Notify web display if available
+                            if hasattr(self, "coordination_ui") and self.coordination_ui:
+                                display = getattr(self.coordination_ui, "display", None)
+                                if display and hasattr(display, "send_new_answer"):
+                                    # Get answer count for this agent
+                                    agent_answers = self.coordination_tracker.answers_by_agent.get(agent_id, [])
+                                    answer_number = len(agent_answers)
+                                    display.send_new_answer(
+                                        agent_id=agent_id,
+                                        content=result_data,
+                                        answer_number=answer_number,
+                                    )
                             # Update status file for real-time monitoring
                             log_session_dir = get_log_session_dir()
                             if log_session_dir:

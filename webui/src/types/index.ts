@@ -1,0 +1,238 @@
+/**
+ * MassGen Web UI Type Definitions
+ */
+
+// Agent status types
+export type AgentStatus = 'waiting' | 'working' | 'voting' | 'completed' | 'failed';
+
+// WebSocket event types (match Python WebDisplay events)
+export type WSEventType =
+  | 'init'
+  | 'agent_content'
+  | 'agent_status'
+  | 'orchestrator_event'
+  | 'vote_cast'
+  | 'vote_distribution'
+  | 'consensus_reached'
+  | 'final_answer'
+  | 'new_answer'
+  | 'post_evaluation'
+  | 'file_change'
+  | 'tool_call'
+  | 'tool_result'
+  | 'restart'
+  | 'restart_context'
+  | 'error'
+  | 'done'
+  | 'state_snapshot'
+  | 'coordination_started'
+  | 'coordination_complete'
+  | 'keepalive';
+
+// Base WebSocket message
+export interface WSMessage {
+  type: WSEventType;
+  session_id: string;
+  timestamp: number;
+  sequence: number;
+}
+
+// Specific event payloads
+export interface InitEvent extends WSMessage {
+  type: 'init';
+  question: string;
+  log_filename?: string;
+  agents: string[];
+  theme: string;
+}
+
+export interface AgentContentEvent extends WSMessage {
+  type: 'agent_content';
+  agent_id: string;
+  content: string;
+  content_type: 'thinking' | 'tool' | 'status';
+}
+
+export interface AgentStatusEvent extends WSMessage {
+  type: 'agent_status';
+  agent_id: string;
+  status: AgentStatus;
+}
+
+export interface OrchestratorEvent extends WSMessage {
+  type: 'orchestrator_event';
+  event: string;
+}
+
+export interface VoteCastEvent extends WSMessage {
+  type: 'vote_cast';
+  voter_id: string;
+  target_id: string;
+  reason: string;
+}
+
+export interface VoteDistributionEvent extends WSMessage {
+  type: 'vote_distribution';
+  votes: Record<string, number>;
+}
+
+export interface ConsensusReachedEvent extends WSMessage {
+  type: 'consensus_reached';
+  winner_id: string;
+  vote_distribution: Record<string, number>;
+}
+
+export interface FinalAnswerEvent extends WSMessage {
+  type: 'final_answer';
+  answer: string;
+  vote_results: VoteResults;
+  selected_agent: string;
+}
+
+export interface NewAnswerEvent extends WSMessage {
+  type: 'new_answer';
+  agent_id: string;
+  answer_id: string;
+  answer_number: number;
+  content: string;
+}
+
+export interface FileChangeEvent extends WSMessage {
+  type: 'file_change';
+  agent_id: string;
+  path: string;
+  operation: 'create' | 'modify' | 'delete';
+  content_preview?: string;
+}
+
+export interface ToolCallEvent extends WSMessage {
+  type: 'tool_call';
+  agent_id: string;
+  tool_name: string;
+  tool_args: Record<string, unknown>;
+  tool_id?: string;
+}
+
+export interface ToolResultEvent extends WSMessage {
+  type: 'tool_result';
+  agent_id: string;
+  tool_name: string;
+  result: string;
+  tool_id?: string;
+  success: boolean;
+}
+
+export interface RestartEvent extends WSMessage {
+  type: 'restart';
+  reason: string;
+  instructions: string;
+  attempt: number;
+  max_attempts: number;
+}
+
+export interface ErrorEvent extends WSMessage {
+  type: 'error';
+  message: string;
+  agent_id?: string;
+}
+
+// Vote results structure
+export interface VoteResults {
+  vote_counts?: Record<string, number>;
+  voter_details?: Record<string, { voter: string; reason: string }[]>;
+  winner?: string;
+  is_tie?: boolean;
+  total_votes?: number;
+  agents_voted?: number;
+}
+
+// Agent state in store
+export interface AgentState {
+  id: string;
+  status: AgentStatus;
+  content: string[];
+  currentContent: string;
+  voteTarget?: string;
+  voteReason?: string;
+  answerCount: number;
+  files: FileInfo[];
+  toolCalls: ToolCallInfo[];
+}
+
+export interface FileInfo {
+  path: string;
+  operation: 'create' | 'modify' | 'delete';
+  timestamp: number;
+  contentPreview?: string;
+}
+
+export interface ToolCallInfo {
+  id?: string;
+  name: string;
+  args: Record<string, unknown>;
+  result?: string;
+  success?: boolean;
+  timestamp: number;
+}
+
+// Answer from an agent
+export interface Answer {
+  id: string;
+  agentId: string;
+  answerNumber: number;
+  content: string;
+  timestamp: number;
+  votes: number;
+  isWinner?: boolean;
+}
+
+// Full session state
+export interface SessionState {
+  sessionId: string;
+  question: string;
+  agents: Record<string, AgentState>;
+  agentOrder: string[];
+  answers: Answer[];
+  voteDistribution: Record<string, number>;
+  selectedAgent?: string;
+  finalAnswer?: string;
+  orchestratorEvents: string[];
+  isComplete: boolean;
+  error?: string;
+  theme: string;
+}
+
+// Union type for all WebSocket events
+export type WSEvent =
+  | InitEvent
+  | AgentContentEvent
+  | AgentStatusEvent
+  | OrchestratorEvent
+  | VoteCastEvent
+  | VoteDistributionEvent
+  | ConsensusReachedEvent
+  | FinalAnswerEvent
+  | NewAnswerEvent
+  | FileChangeEvent
+  | ToolCallEvent
+  | ToolResultEvent
+  | RestartEvent
+  | ErrorEvent
+  | WSMessage;
+
+// Config file info from API
+export interface ConfigInfo {
+  name: string;
+  path: string;
+  category: string;
+  relative: string;
+}
+
+// Session info from API
+export interface SessionInfo {
+  session_id: string;
+  connections: number;
+  has_display: boolean;
+  is_running: boolean;
+  question?: string;
+}
