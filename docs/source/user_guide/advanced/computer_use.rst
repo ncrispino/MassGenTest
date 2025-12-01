@@ -11,7 +11,7 @@ MassGen provides powerful computer use tools that allow AI agents to autonomousl
    * ``claude_computer_use`` - Anthropic Claude Computer Use (requires ``claude-sonnet-4-5`` or newer)
    * ``browser_automation`` - Simple browser automation (works with ANY model: gpt-4.1, gpt-4o, etc.)
    * ``computer_use`` - OpenAI Computer Use (requires ``computer-use-preview`` model from OpenAI)
-   ** WARNING: OpenAI Computer Use model has not gone through sophisticated testing due to access restrictions on computer-use-preview model. Performance is not guaranteed. Be cautious while using.
+   * - WARNING: OpenAI Computer Use model has not gone through sophisticated testing due to access restrictions on computer-use-preview model. Performance is not guaranteed. Be cautious while using.
 
    **Incoming Tools:**
    * `UI-TARS_computer_use` - From ByteDance, open sourced.
