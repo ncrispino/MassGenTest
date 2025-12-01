@@ -107,12 +107,7 @@ OpenRouter (Recommended)
    # Single key for all models
    export OPENROUTER_API_KEY=sk-or-v1-...
 
-Then use models with the ``openrouter/`` prefix:
-
-.. code-block:: bash
-
-   uv run massgen --model openrouter/openai/gpt-5 "Your question"
-   uv run massgen --model openrouter/anthropic/claude-sonnet-4.5 "Your question"
+Then use OpenRouter models in your multi-agent configurations
 
 Get your key: `OpenRouter <https://openrouter.ai/keys>`_
 
