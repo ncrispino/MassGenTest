@@ -104,7 +104,11 @@ docker = [
 external = [
     "ag2>=0.9.10",
 ]
+litellm = [
+    "litellm>=1.0.0",
+]
 all = [
+    "litellm>=1.0.0",
 ]
 
 [project.scripts]

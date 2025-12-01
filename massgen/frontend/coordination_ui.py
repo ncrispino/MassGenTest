@@ -11,6 +11,7 @@ import threading
 from typing import Any, Dict, List, Optional
 
 from .displays.base_display import BaseDisplay
+from .displays.none_display import NoneDisplay
 from .displays.rich_terminal_display import RichTerminalDisplay, is_rich_available
 from .displays.silent_display import SilentDisplay
 from .displays.simple_display import SimpleDisplay
@@ -412,6 +413,8 @@ class CoordinationUI:
                 self.display = SimpleDisplay(self.agent_ids, **self.config)
             elif self.display_type == "silent":
                 self.display = SilentDisplay(self.agent_ids, **self.config)
+            elif self.display_type == "none":
+                self.display = NoneDisplay(self.agent_ids, **self.config)
             elif self.display_type == "rich_terminal":
                 if not is_rich_available():
                     print("⚠️  Rich library not available. Falling back to terminal display.")
@@ -815,6 +818,8 @@ class CoordinationUI:
                 self.display = SimpleDisplay(self.agent_ids, **self.config)
             elif self.display_type == "silent":
                 self.display = SilentDisplay(self.agent_ids, **self.config)
+            elif self.display_type == "none":
+                self.display = NoneDisplay(self.agent_ids, **self.config)
             elif self.display_type == "rich_terminal":
                 if not is_rich_available():
                     print("⚠️  Rich library not available. Falling back to terminal display.")
