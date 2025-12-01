@@ -29,7 +29,7 @@ Usage:
         model="massgen/build",
         messages=[{"role": "user", "content": "Compare approaches"}],
         optional_params={
-            "models": ["openai/gpt-5", "claude/claude-sonnet-4-5-20250929", "groq/llama-3.3-70b"],
+            "models": ["openai/gpt-5", "anthropic/claude-sonnet-4.5", "groq/llama-3.3-70b"],
         }
     )
 
@@ -38,7 +38,7 @@ Usage:
         model="massgen/build",
         messages=[{"role": "user", "content": "Your question"}],
         optional_params={
-            "models": ["gpt-5", "claude-sonnet-4-5-20250929"],  # backends auto-detected
+            "models": ["gpt-5", "claude-sonnet-4.5"],  # backends auto-detected
         }
     )
 
@@ -62,8 +62,6 @@ Usage:
 import asyncio
 import time
 from typing import Any, Dict, List, Optional
-
-from massgen import run
 
 # Type hints for litellm - actual import happens at runtime
 try:
@@ -204,7 +202,9 @@ class MassGenLLM(CustomLLM if LITELLM_AVAILABLE else object):
             if model_name:
                 run_kwargs["model"] = model_name
 
-        # Run MassGen synchronously
+        # Run MassGen synchronously (lazy import to avoid circular import)
+        from massgen import run
+
         result = asyncio.run(run(**run_kwargs))
 
         # Build LiteLLM-compatible response
@@ -303,7 +303,9 @@ class MassGenLLM(CustomLLM if LITELLM_AVAILABLE else object):
             if model_name:
                 run_kwargs["model"] = model_name
 
-        # Run MassGen asynchronously
+        # Run MassGen asynchronously (lazy import to avoid circular import)
+        from massgen import run
+
         result = await run(**run_kwargs)
 
         # Build LiteLLM-compatible response

@@ -158,19 +158,38 @@ BACKEND_CAPABILITIES: Dict[str, BackendCapabilities] = {
         builtin_tools=["web_search", "code_execution"],
         filesystem_support="mcp",
         models=[
+            # Dot notation (OpenRouter/LiteLLM style)
+            "claude-opus-4.5",
+            "claude-sonnet-4.5",
+            "claude-haiku-4.5",
+            "claude-opus-4",
+            "claude-sonnet-4",
+            # Date notation (direct Anthropic API style)
             "claude-opus-4-5-20251101",
             "claude-haiku-4-5-20251001",
             "claude-sonnet-4-5-20250929",
             "claude-opus-4-1-20250805",
             "claude-sonnet-4-20250514",
         ],
-        default_model="claude-sonnet-4-5-20250929",
+        default_model="claude-sonnet-4.5",
         env_var="ANTHROPIC_API_KEY",
-        notes="Web search and code execution are built-in tools.Programmatic tool calling and tool search require 4.5 models, Audio/video understanding support (v0.0.30+).",
+        notes=(
+            "Web search and code execution are built-in tools. "
+            "Programmatic tool calling and tool search require 4.5 models. "
+            "Audio/video understanding support (v0.0.30+). "
+            "Model IDs: use dot notation (claude-sonnet-4.5) for OpenRouter/LiteLLM, "
+            "date notation (claude-sonnet-4-5-20250929) for direct Anthropic API."
+        ),
         model_release_dates={
+            "claude-haiku-4.5": "2025-10",
             "claude-haiku-4-5-20251001": "2025-10",
+            "claude-sonnet-4.5": "2025-09",
             "claude-sonnet-4-5-20250929": "2025-09",
+            "claude-opus-4.5": "2025-11",
+            "claude-opus-4-5-20251101": "2025-11",
+            "claude-opus-4": "2025-08",
             "claude-opus-4-1-20250805": "2025-08",
+            "claude-sonnet-4": "2025-05",
             "claude-sonnet-4-20250514": "2025-05",
         },
     ),
@@ -201,16 +220,21 @@ BACKEND_CAPABILITIES: Dict[str, BackendCapabilities] = {
         ],
         filesystem_support="native",
         models=[
+            # Dot notation (OpenRouter/LiteLLM style)
+            "claude-sonnet-4.5",
+            "claude-opus-4",
+            "claude-sonnet-4",
+            # Date notation (direct Anthropic API style)
             "claude-sonnet-4-5-20250929",
             "claude-opus-4-1-20250805",
             "claude-sonnet-4-20250514",
         ],
-        default_model="claude-sonnet-4-5-20250929",
+        default_model="claude-sonnet-4.5",
         env_var="ANTHROPIC_API_KEY",
         notes=(
             "⚠️ Works with local Claude Code CLI login (`claude login`) or ANTHROPIC_API_KEY. "
             "Native filesystem access via SDK. Extensive built-in tooling for code operations. "
-            "Image understanding support."
+            "Image understanding support. Model IDs: use dot notation (claude-sonnet-4.5) for OpenRouter/LiteLLM."
         ),
     ),
     "gemini": BackendCapabilities(

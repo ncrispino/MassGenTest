@@ -88,7 +88,7 @@ Quick Start
          response = litellm.completion(
              model="massgen/build",
              messages=[{"role": "user", "content": "Your question"}],
-             optional_params={"models": ["openrouter/openai/gpt-5", "openrouter/anthropic/claude-sonnet-4-5-20250929"]}
+             optional_params={"models": ["openrouter/openai/gpt-5", "openrouter/anthropic/claude-sonnet-4.5"]}
          )
          print(response.choices[0].message.content)
 

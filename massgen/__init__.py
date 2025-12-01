@@ -65,18 +65,13 @@ from .chat_agent import (
     create_research_agent,
     create_simple_agent,
 )
+
+# LiteLLM integration
+from .litellm_provider import MassGenLLM, register_with_litellm
 from .message_templates import MessageTemplates, get_templates
 from .orchestrator import Orchestrator, create_orchestrator
 
-# LiteLLM integration (optional - requires litellm package)
-try:
-    from .litellm_provider import MassGenLLM, register_with_litellm
-
-    LITELLM_AVAILABLE = True
-except ImportError:
-    LITELLM_AVAILABLE = False
-    MassGenLLM = None
-    register_with_litellm = None
+LITELLM_AVAILABLE = True
 
 __version__ = "0.1.18"
 __version__ = "0.1.19"
@@ -316,7 +311,12 @@ async def run(
         run_question_with_history,
         run_single_question,
     )
+    from .logger_config import setup_logging
     from .utils import get_backend_type_from_model
+
+    # Initialize logging for programmatic API
+    # This ensures massgen.log is created and captures INFO+ messages
+    setup_logging(debug=False)
 
     # Generate session ID
     session_id = f"api_session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"

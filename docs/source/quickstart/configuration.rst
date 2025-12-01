@@ -112,7 +112,7 @@ Then use models with the ``openrouter/`` prefix:
 .. code-block:: bash
 
    uv run massgen --model openrouter/openai/gpt-5 "Your question"
-   uv run massgen --model openrouter/anthropic/claude-sonnet-4-5-20250929 "Your question"
+   uv run massgen --model openrouter/anthropic/claude-sonnet-4.5 "Your question"
 
 Get your key: `OpenRouter <https://openrouter.ai/keys>`_
 
@@ -351,7 +351,7 @@ MassGen supports many LLM providers. Use the **slash format** (``provider/model`
    response = litellm.completion(
        model="massgen/build",
        messages=[{"role": "user", "content": "Your question"}],
-       optional_params={"models": ["openrouter/openai/gpt-5", "openrouter/anthropic/claude-sonnet-4-5-20250929"]}
+       optional_params={"models": ["openrouter/openai/gpt-5", "openrouter/anthropic/claude-sonnet-4.5"]}
    )
    print(response.choices[0].message.content)
 
@@ -595,7 +595,7 @@ For quick tests, you can use CLI flags without a configuration file:
 
    # With custom system message
    uv run massgen \
-     --model openrouter/anthropic/claude-sonnet-4-5-20250929 \
+     --model openrouter/anthropic/claude-sonnet-4.5 \
      --system-message "You are a helpful coding assistant" \
      "Write a Python function to sort a list"
 

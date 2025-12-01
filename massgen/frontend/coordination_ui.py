@@ -350,6 +350,19 @@ class CoordinationUI:
             except asyncio.CancelledError:
                 pass
 
+            # Always save coordination logs - even for incomplete runs
+            # This ensures we capture partial progress for debugging/analysis
+            try:
+                is_finished = hasattr(orchestrator, "workflow_phase") and orchestrator.workflow_phase == "presenting"
+                if hasattr(orchestrator, "save_coordination_logs"):
+                    # Check if logs were already saved (happens in finalize_presentation for complete runs)
+                    if not is_finished:
+                        orchestrator.save_coordination_logs()
+            except Exception as e:
+                import logging
+
+                logging.getLogger("massgen").warning(f"Failed to save coordination logs: {e}")
+
     def reset(self):
         """Reset UI state for next coordination session."""
         # Clean up display if exists
@@ -755,13 +768,17 @@ class CoordinationUI:
             if self.display and is_finished:
                 self.display.cleanup()
 
-            # Don't print - display already showed this info
-            # if selected_agent:
-            #     print(f"✅ Selected by: {selected_agent}")
-            #     if vote_results.get("vote_counts"):
-            #         vote_summary = ", ".join([f"{agent}: {count}" for agent, count in vote_results["vote_counts"].items()])
-            #         print(f"🗳️ Vote results: {vote_summary}")
-            # print()
+            # Always save coordination logs - even for incomplete runs
+            # This ensures we capture partial progress for debugging/analysis
+            try:
+                if hasattr(orchestrator, "save_coordination_logs"):
+                    # Check if logs were already saved (happens in finalize_presentation for complete runs)
+                    if not is_finished:
+                        orchestrator.save_coordination_logs()
+            except Exception as e:
+                import logging
+
+                logging.getLogger("massgen").warning(f"Failed to save coordination logs: {e}")
 
             if self.logger and is_finished:
                 session_info = self.logger.finalize_session(
@@ -1100,6 +1117,18 @@ class CoordinationUI:
             is_finished = hasattr(orchestrator, "workflow_phase") and orchestrator.workflow_phase == "presenting"
             if self.display and is_finished:
                 self.display.cleanup()
+
+            # Always save coordination logs - even for incomplete runs
+            # This ensures we capture partial progress for debugging/analysis
+            try:
+                if hasattr(orchestrator, "save_coordination_logs"):
+                    # Check if logs were already saved (happens in finalize_presentation for complete runs)
+                    if not is_finished:
+                        orchestrator.save_coordination_logs()
+            except Exception as e:
+                import logging
+
+                logging.getLogger("massgen").warning(f"Failed to save coordination logs: {e}")
 
     def _display_vote_results(self, vote_results: Dict[str, Any]):
         """Display voting results in a formatted table."""
