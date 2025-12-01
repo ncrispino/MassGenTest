@@ -8,7 +8,7 @@ MassGen's filesystem-based memory mode provides a simple, transparent two-tier m
 
 .. note::
 
-   This is different from the :doc:`memory` system. Filesystem mode is designed for transparent, file-based memory storage suitable for coordination and cross-agent visibility, while persistent memory uses vector databases for semantic retrieval across sessions.
+   This is different from the :doc:`../sessions/memory` system. Filesystem mode is designed for transparent, file-based memory storage suitable for coordination and cross-agent visibility, while persistent memory uses vector databases for semantic retrieval across sessions.
 
 .. contents:: Table of Contents
    :local:
@@ -836,7 +836,7 @@ This feature is experimental. Key limitations:
 Related Documentation
 ---------------------
 
-- :doc:`memory` - Persistent memory with Qdrant (different system)
-- :doc:`agent_task_planning` - Task planning MCP (similar filesystem pattern)
-- :doc:`skills` - Skills system (similar injection pattern)
+- :doc:`../sessions/memory` - Persistent memory with Qdrant (different system)
+- :doc:`../advanced/agent_task_planning` - Task planning MCP (similar filesystem pattern)
+- :doc:`../tools/skills` - Skills system (similar injection pattern)
 - `Letta Context Hierarchy <https://docs.letta.com/guides/agents/context-hierarchy>`_ - Inspiration for tier design

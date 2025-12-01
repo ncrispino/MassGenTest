@@ -535,7 +535,7 @@ Pass MassGen-specific options via ``optional_params``:
 .. tip::
    For more advanced configurations (custom system prompts, MCP tools, specific orchestration settings, etc.),
    create a YAML config file and use ``massgen/path:/path/to/config.yaml`` instead. See
-   :doc:`../reference/yaml_schema` for the full configuration schema.
+   :doc:`../../reference/yaml_schema` for the full configuration schema.
 
 Accessing Coordination Metadata
 -------------------------------
@@ -806,6 +806,6 @@ Next Steps
 ==========
 
 - **See** :doc:`automation` for LLM agent automation guide
-- **Read** :doc:`../reference/cli` for all CLI options
-- **Check** :doc:`../reference/yaml_schema` for configuration details
-- **Browse** :doc:`../examples/basic_examples` for working examples
+- **Read** :doc:`../../reference/cli` for all CLI options
+- **Check** :doc:`../../reference/yaml_schema` for configuration details
+- **Browse** :doc:`../../examples/basic_examples` for working examples

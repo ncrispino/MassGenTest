@@ -11,7 +11,7 @@ MassGen provides a simple, async-first Python API for programmatic usage. This a
    MassGen is inherently asynchronous, so the API is naturally async. Use ``asyncio`` for sync contexts.
 
 .. tip::
-   **Multiple Integration Options:** MassGen offers three ways to integrate: this Python API (``massgen.run()``), LiteLLM integration for OpenAI-compatible interfaces, and CLI for interactive use. See :doc:`../user_guide/programmatic_api` for comprehensive examples including LiteLLM.
+   **Multiple Integration Options:** MassGen offers three ways to integrate: this Python API (``massgen.run()``), LiteLLM integration for OpenAI-compatible interfaces, and CLI for interactive use. See :doc:`../user_guide/integration/python_api` for comprehensive examples including LiteLLM.
 
 Quick Start
 ===========

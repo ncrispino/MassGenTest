@@ -483,7 +483,7 @@ Add MCP (Model Context Protocol) servers for external tools:
              command: "npx"
              args: ["-y", "@fak111/weather-mcp"]
 
-See :doc:`../user_guide/mcp_integration` for details.
+See :doc:`../user_guide/tools/mcp_integration` for details.
 
 File Operations
 ~~~~~~~~~~~~~~~
@@ -503,7 +503,7 @@ Enable file system access for agents:
      snapshot_storage: "snapshots"
      agent_temporary_workspace: "temp_workspaces"
 
-See :doc:`../user_guide/file_operations` for details.
+See :doc:`../user_guide/files/file_operations` for details.
 
 Project Integration
 ~~~~~~~~~~~~~~~~~~~
@@ -525,7 +525,7 @@ Share directories with agents (read or write access):
        - path: "/absolute/path/to/project/docs"
          permission: "write"     # Agents can update docs
 
-See :doc:`../user_guide/project_integration` for details.
+See :doc:`../user_guide/files/project_integration` for details.
 
 Protected Paths
 ~~~~~~~~~~~~~~~
@@ -545,7 +545,7 @@ Make specific files read-only within writable context paths:
 
 **Use Case**: Allow agents to modify most files while protecting critical configurations or templates.
 
-See :doc:`../user_guide/protected_paths` for complete documentation.
+See :doc:`../user_guide/files/protected_paths` for complete documentation.
 
 Planning Mode
 ~~~~~~~~~~~~~
@@ -563,7 +563,7 @@ Prevent irreversible actions during multi-agent coordination:
 
 **Use Case**: File operations, API calls, or any task with irreversible consequences.
 
-See :doc:`../user_guide/planning_mode` for complete documentation.
+See :doc:`../user_guide/advanced/planning_mode` for complete documentation.
 
 Timeout Configuration
 ~~~~~~~~~~~~~~~~~~~~~
@@ -635,7 +635,7 @@ Next Steps
 
 ⬜ **Go deeper:** :doc:`../user_guide/concepts` - Understand how multi-agent coordination works
 
-⬜ **Add capabilities:** :doc:`../user_guide/mcp_integration` - Integrate external tools
+⬜ **Add capabilities:** :doc:`../user_guide/tools/mcp_integration` - Integrate external tools
 
 **Need a reference?** The complete configuration schema is at :doc:`../reference/yaml_schema`
 

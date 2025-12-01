@@ -700,7 +700,7 @@ Next Steps
 ----------
 
 * :doc:`file_operations` - Learn more about workspace management and file operation safety
-* :doc:`mcp_integration` - Additional tools for project work
-* :doc:`planning_mode` - Combine with planning mode for safer coordination
-* :doc:`multi_turn_mode` - Iterative project development across turns
-* :doc:`../quickstart/running-massgen` - More examples
+* :doc:`../tools/mcp_integration` - Additional tools for project work
+* :doc:`../advanced/planning_mode` - Combine with planning mode for safer coordination
+* :doc:`../sessions/multi_turn_mode` - Iterative project development across turns
+* :doc:`../../quickstart/running-massgen` - More examples
