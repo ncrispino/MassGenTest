@@ -990,8 +990,8 @@ Next Steps
 
   * :doc:`mcp_integration` - External tools via MCP
   * :doc:`tools` - Tools and capabilities overview
-  * :doc:`backends` - Backend capabilities
-  * :doc:`../reference/yaml_schema` - Complete YAML reference
+  * :doc:`../backends` - Backend capabilities
+  * :doc:`../../reference/yaml_schema` - Complete YAML reference
 
 * **Developer API Documentation:**
 
