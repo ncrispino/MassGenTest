@@ -33,10 +33,7 @@ Quick Start Examples
 
       .. code-block:: bash
 
-         # Single agent - quick test
-         uv run massgen --model openrouter/openai/gpt-5 "What is machine learning?"
-
-         # Multi-agent collaboration
+         # Multi-agent collaboration (recommended)
          uv run massgen --config @examples/basic/multi/three_agents_default "Analyze renewable energy"
 
          # Interactive mode (multi-turn)
@@ -58,7 +55,7 @@ Quick Start Examples
          response = litellm.completion(
              model="massgen/build",
              messages=[{"role": "user", "content": "Analyze renewable energy"}],
-             optional_params={"models": ["openrouter/openai/gpt-5", "openrouter/anthropic/claude-sonnet-4-5-20250929"]}
+             optional_params={"models": ["openrouter/openai/gpt-5", "openrouter/anthropic/claude-sonnet-4.5"]}
          )
          print(response.choices[0].message.content)
 
@@ -74,24 +71,10 @@ Basic Command Structure
 
 For the complete list of CLI options, see :doc:`../reference/cli`.
 
-Single Agent Mode
-~~~~~~~~~~~~~~~~~
-
-The fastest way to test MassGen - no configuration file needed:
-
-.. code-block:: bash
-
-   # Quick test with OpenRouter (recommended - single API key for all models)
-   uv run massgen --model openrouter/openai/gpt-5 "What is machine learning?"
-   uv run massgen --model openrouter/anthropic/claude-sonnet-4-5-20250929 "Explain quantum computing"
-
-   # Or use provider-specific API keys
-   uv run massgen --model openai/gpt-4o "What is machine learning?"
-
 Multi-Agent Collaboration
 ~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Multiple agents working together (recommended for complex tasks):
+MassGen is designed for multi-agent collaboration - multiple agents working together on complex tasks:
 
 .. code-block:: bash
 
@@ -106,9 +89,6 @@ Interactive Multi-Turn Mode
 Start without a question to enter interactive chat mode:
 
 .. code-block:: bash
-
-   # Interactive with single agent
-   uv run massgen --model openrouter/openai/gpt-5
 
    # Interactive with multi-agent team
    uv run massgen --config @examples/basic/multi/three_agents_default
@@ -153,14 +133,7 @@ Model String Formats
    response = litellm.completion(
        model="massgen/build",
        messages=[{"role": "user", "content": "Your question"}],
-       optional_params={"models": ["openrouter/openai/gpt-5", "openrouter/anthropic/claude-sonnet-4-5-20250929"]}
-   )
-   print(response.choices[0].message.content)
-
-   # Single model shorthand
-   response = litellm.completion(
-       model="massgen/model:openrouter/openai/gpt-5",
-       messages=[{"role": "user", "content": "Your question"}]
+       optional_params={"models": ["openrouter/openai/gpt-5", "openrouter/anthropic/claude-sonnet-4.5"]}
    )
    print(response.choices[0].message.content)
 

@@ -578,22 +578,6 @@ Control maximum coordination time:
 
 See :doc:`../reference/timeouts` for complete timeout documentation.
 
-Configuration Without Files
----------------------------
-
-For quick tests, you can use CLI flags without a configuration file:
-
-.. code-block:: bash
-
-   # Single agent with OpenRouter (recommended)
-   uv run massgen --model openrouter/openai/gpt-5 "Your question"
-
-   # With custom system message
-   uv run massgen \
-     --model openrouter/anthropic/claude-sonnet-4.5 \
-     --system-message "You are a helpful coding assistant" \
-     "Write a Python function to sort a list"
-
 For the complete list of CLI parameters, see :doc:`../reference/cli`
 
 Configuration Best Practices

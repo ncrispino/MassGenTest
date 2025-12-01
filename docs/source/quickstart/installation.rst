@@ -107,11 +107,11 @@ Verify Installation
    # Check CLI is available
    uv run massgen --help
 
-   # Quick test (single agent with OpenRouter)
-   uv run massgen --model openrouter/openai/gpt-5 "What is machine learning?"
-
    # List example configurations
    uv run massgen --list-examples
+
+   # Run multi-agent collaboration
+   uv run massgen --config @examples/basic/multi/three_agents_default "What is machine learning?"
 
 Optional: Docker & Skills
 =========================
