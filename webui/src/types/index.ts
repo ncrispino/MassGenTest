@@ -222,7 +222,10 @@ export interface AnswerWorkspace {
 }
 
 // View mode for UI
-export type ViewMode = 'coordination' | 'winner';
+// - 'coordination': Shows all agents in carousel during coordination
+// - 'finalStreaming': Shows winner agent streaming final answer after consensus
+// - 'finalComplete': Shows full-screen final answer view when complete
+export type ViewMode = 'coordination' | 'finalStreaming' | 'finalComplete';
 
 // Full session state
 export interface SessionState {

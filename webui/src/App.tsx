@@ -4,9 +4,9 @@
  * Real-time visualization of multi-agent coordination.
  */
 
-import { useState, useCallback, useEffect } from 'react';
-import { motion } from 'framer-motion';
-import { Send, Wifi, WifiOff, AlertCircle, XCircle, ArrowLeft } from 'lucide-react';
+import { useState, useCallback, useEffect, useRef } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { Send, Wifi, WifiOff, AlertCircle, XCircle, ArrowLeft, Loader2, Trophy } from 'lucide-react';
 import { useWebSocket, ConnectionStatus } from './hooks/useWebSocket';
 import { useAgentStore, selectQuestion, selectIsComplete, selectAnswers, selectViewMode, selectSelectedAgent, selectAgents } from './stores/agentStore';
 import { useThemeStore } from './stores/themeStore';
@@ -15,9 +15,8 @@ import { AgentCard } from './components/AgentCard';
 import { StatusToolbar } from './components/StatusToolbar';
 import { ConvergenceAnimation } from './components/ConvergenceAnimation';
 import { HeaderControls } from './components/HeaderControls';
-import { AnswerToast } from './components/AnswerToast';
 import { AnswerBrowserModal } from './components/AnswerBrowserModal';
-import { InlineAnswerBrowser } from './components/InlineAnswerBrowser';
+import { FinalAnswerView } from './components/FinalAnswerView';
 
 function ConnectionIndicator({ status }: { status: ConnectionStatus }) {
   const config: Record<ConnectionStatus, { icon: typeof Wifi; color: string; text: string }> = {
@@ -50,10 +49,13 @@ export function App() {
   const selectedAgent = useAgentStore(selectSelectedAgent);
   const agents = useAgentStore(selectAgents);
   const reset = useAgentStore((s) => s.reset);
-  const setViewMode = useAgentStore((s) => s.setViewMode);
+  const backToCoordination = useAgentStore((s) => s.backToCoordination);
 
-  // Get winner agent for winner view
+  // Get winner agent for finalStreaming view
   const winnerAgent = selectedAgent ? agents[selectedAgent] : null;
+
+  // Store scroll position when leaving coordination view
+  const coordinationScrollRef = useRef<number>(0);
 
   // Theme - apply effective theme class to document
   const getEffectiveTheme = useThemeStore((s) => s.getEffectiveTheme);
@@ -77,15 +79,14 @@ export function App() {
     autoConnect: true,
   });
 
-  // Handle switching to winner view
-  const handleViewWinner = useCallback(() => {
-    setViewMode('winner');
-  }, [setViewMode]);
-
-  // Handle going back to coordination view
+  // Handle going back to coordination view with scroll position restoration
   const handleBackToCoordination = useCallback(() => {
-    setViewMode('coordination');
-  }, [setViewMode]);
+    backToCoordination();
+    // Restore scroll position after render
+    requestAnimationFrame(() => {
+      window.scrollTo(0, coordinationScrollRef.current);
+    });
+  }, [backToCoordination]);
 
   // Handle cancel
   const handleCancel = useCallback(() => {
@@ -197,44 +198,59 @@ export function App() {
             </motion.div>
           )}
 
-          {/* Winner View - Single Agent + Inline Browser when complete */}
-          {viewMode === 'winner' && winnerAgent ? (
-            <section>
-              <div className="flex items-center gap-4 mb-4">
-                <button
-                  onClick={handleBackToCoordination}
-                  className="flex items-center gap-2 px-3 py-2 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600
-                           rounded-lg text-sm transition-colors"
-                >
-                  <ArrowLeft className="w-4 h-4" />
-                  Back to All Agents
-                </button>
-                <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-200">
-                  Winner: {winnerAgent.modelName ? `${winnerAgent.id} (${winnerAgent.modelName})` : winnerAgent.id}
-                </h2>
-              </div>
-              {isComplete ? (
-                /* When complete, show agent card alongside inline browser */
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                  <div className="h-[500px]">
+          {/* View Mode Routing */}
+          <AnimatePresence mode="wait">
+            {/* Coordination View - All Agents */}
+            {viewMode === 'coordination' && (
+              <motion.section
+                key="coordination"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.2 }}
+              >
+                <AgentCarousel />
+              </motion.section>
+            )}
+
+            {/* Final Streaming View - Winner streaming final answer */}
+            {viewMode === 'finalStreaming' && winnerAgent && (
+              <motion.section
+                key="finalStreaming"
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -20 }}
+                transition={{ duration: 0.3 }}
+              >
+                <div className="flex items-center gap-4 mb-4">
+                  <button
+                    onClick={handleBackToCoordination}
+                    className="flex items-center gap-2 px-3 py-2 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600
+                             rounded-lg text-sm transition-colors"
+                  >
+                    <ArrowLeft className="w-4 h-4" />
+                    Back to All Agents
+                  </button>
+                  <div className="flex items-center gap-2">
+                    <Trophy className="w-5 h-5 text-yellow-500" />
+                    <h2 className="text-lg font-semibold text-gray-800 dark:text-gray-200">
+                      {winnerAgent.modelName ? `${winnerAgent.id} (${winnerAgent.modelName})` : winnerAgent.id}
+                    </h2>
+                  </div>
+                  <div className="flex items-center gap-2 text-blue-500 dark:text-blue-400 ml-auto">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    <span className="text-sm">Generating final answer...</span>
+                  </div>
+                </div>
+                {/* Match the single-agent grid layout from AgentCarousel */}
+                <div className="grid grid-cols-1 gap-4 py-4">
+                  <div className="h-[450px] min-w-0">
                     <AgentCard agent={winnerAgent} isWinner={true} />
                   </div>
-                  <div className="h-[500px] bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 overflow-hidden">
-                    <InlineAnswerBrowser />
-                  </div>
                 </div>
-              ) : (
-                <div className="h-[600px]">
-                  <AgentCard agent={winnerAgent} isWinner={true} />
-                </div>
-              )}
-            </section>
-          ) : (
-            /* Agent Carousel - Normal View */
-            <section>
-              <AgentCarousel />
-            </section>
-          )}
+              </motion.section>
+            )}
+          </AnimatePresence>
         </div>
       </main>
 
@@ -294,13 +310,17 @@ export function App() {
         </div>
       </footer>
 
-      {/* Convergence Animation Toast */}
-      <ConvergenceAnimation onViewWinner={handleViewWinner} />
+      {/* Full-screen Final Answer View */}
+      <AnimatePresence>
+        {viewMode === 'finalComplete' && (
+          <FinalAnswerView onBackToAgents={handleBackToCoordination} />
+        )}
+      </AnimatePresence>
 
-      {/* Answer Toast Notifications */}
-      <AnswerToast />
+      {/* Celebration Animation (shows briefly on finalComplete) */}
+      <ConvergenceAnimation />
 
-      {/* Answer Browser Modal */}
+      {/* Answer Browser Modal (accessible via header button) */}
       <AnswerBrowserModal
         isOpen={isAnswerBrowserOpen}
         onClose={() => setIsAnswerBrowserOpen(false)}

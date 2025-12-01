@@ -1,26 +1,23 @@
 /**
  * ConvergenceAnimation Component
  *
- * Popup notification when consensus is reached.
- * Auto-dismisses and switches to winner-only view.
+ * Brief celebration overlay when final answer is complete.
+ * Shows a golden glow effect before transitioning to the full-screen view.
  */
 
 import { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Trophy, Sparkles, ArrowRight } from 'lucide-react';
-import { useAgentStore, selectSelectedAgent, selectIsComplete, selectAgents } from '../stores/agentStore';
+import { Trophy, Sparkles } from 'lucide-react';
+import { useAgentStore, selectSelectedAgent, selectAgents, selectViewMode } from '../stores/agentStore';
 
-interface ConvergenceAnimationProps {
-  onViewWinner?: () => void;
-}
-
-export function ConvergenceAnimation({ onViewWinner }: ConvergenceAnimationProps) {
+export function ConvergenceAnimation() {
   const selectedAgent = useAgentStore(selectSelectedAgent);
   const agents = useAgentStore(selectAgents);
-  const isComplete = useAgentStore(selectIsComplete);
+  const viewMode = useAgentStore(selectViewMode);
   const [dismissed, setDismissed] = useState(false);
 
-  const showAnimation = isComplete && selectedAgent && !dismissed;
+  // Show celebration when entering finalComplete mode
+  const showAnimation = viewMode === 'finalComplete' && selectedAgent && !dismissed;
 
   // Get winner's model name for display
   const winnerAgent = selectedAgent ? agents[selectedAgent] : null;
@@ -28,81 +25,79 @@ export function ConvergenceAnimation({ onViewWinner }: ConvergenceAnimationProps
     ? `${selectedAgent} (${winnerAgent.modelName})`
     : selectedAgent;
 
-  // Auto-dismiss after 5 seconds and switch to winner view
+  // Auto-dismiss after 1.5 seconds (brief celebration)
   useEffect(() => {
     if (showAnimation) {
       const timer = setTimeout(() => {
         setDismissed(true);
-        onViewWinner?.();
-      }, 5000);
+      }, 1500);
       return () => clearTimeout(timer);
     }
-  }, [showAnimation, onViewWinner]);
+  }, [showAnimation]);
 
-  // Reset dismissed state when a new session starts
+  // Reset dismissed state when going back to coordination
   useEffect(() => {
-    if (!isComplete) {
+    if (viewMode === 'coordination') {
       setDismissed(false);
     }
-  }, [isComplete]);
-
-  const handleViewNow = () => {
-    setDismissed(true);
-    onViewWinner?.();
-  };
+  }, [viewMode]);
 
   return (
     <AnimatePresence>
       {showAnimation && (
-        <motion.div
-          initial={{ opacity: 0, y: 50, x: '-50%' }}
-          animate={{ opacity: 1, y: 0, x: '-50%' }}
-          exit={{ opacity: 0, y: 50, x: '-50%' }}
-          className="fixed bottom-6 left-1/2 z-50 max-w-lg w-full mx-4"
-        >
-          {/* Toast Card */}
-          <div className="bg-gray-900 border-2 border-yellow-500 rounded-xl p-4 shadow-2xl shadow-yellow-500/20">
-            <div className="flex items-center gap-4">
-              {/* Icon */}
-              <motion.div
-                animate={{ rotate: [0, 10, -10, 0] }}
-                transition={{ duration: 0.5, repeat: 2 }}
-                className="shrink-0"
-              >
-                <Trophy className="w-10 h-10 text-yellow-500" />
-              </motion.div>
-
-              {/* Content */}
-              <div className="flex-1 min-w-0">
-                <h2 className="text-lg font-bold text-yellow-400 flex items-center gap-2">
-                  Consensus Reached!
-                  <Sparkles className="w-5 h-5" />
-                </h2>
-                <p className="text-gray-400 text-sm">
-                  Winner: <span className="text-yellow-300 font-medium">{winnerDisplayName}</span>
-                </p>
-              </div>
-
-              {/* View Winner Button */}
-              <button
-                onClick={handleViewNow}
-                className="shrink-0 flex items-center gap-2 px-4 py-2 bg-yellow-600 hover:bg-yellow-500
-                         text-white rounded-lg transition-colors font-medium"
-              >
-                View
-                <ArrowRight className="w-4 h-4" />
-              </button>
-            </div>
-
-            {/* Progress bar for auto-dismiss */}
+        <>
+          {/* Full-screen golden overlay */}
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.3 }}
+            className="fixed inset-0 z-50 pointer-events-none"
+          >
+            {/* Radial glow from center */}
             <motion.div
-              initial={{ width: '100%' }}
-              animate={{ width: '0%' }}
-              transition={{ duration: 5, ease: 'linear' }}
-              className="h-1 bg-yellow-500/50 rounded-full mt-3"
-            />
-          </div>
-        </motion.div>
+              initial={{ scale: 0.8, opacity: 0 }}
+              animate={{ scale: 1.5, opacity: [0, 0.3, 0] }}
+              transition={{ duration: 1.5, ease: 'easeOut' }}
+              className="absolute inset-0 flex items-center justify-center"
+            >
+              <div className="w-96 h-96 rounded-full bg-yellow-400 blur-3xl" />
+            </motion.div>
+
+            {/* Center celebration card */}
+            <motion.div
+              initial={{ scale: 0.8, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              transition={{ duration: 0.4, type: 'spring', stiffness: 300 }}
+              className="absolute inset-0 flex items-center justify-center"
+            >
+              <div className="bg-gray-900/95 border-2 border-yellow-500 rounded-2xl p-8 shadow-2xl shadow-yellow-500/30 final-answer-glow">
+                <div className="flex flex-col items-center gap-4">
+                  {/* Trophy with shake animation */}
+                  <motion.div
+                    animate={{ rotate: [0, 10, -10, 10, -10, 0] }}
+                    transition={{ duration: 0.6, repeat: 1 }}
+                  >
+                    <Trophy className="w-16 h-16 text-yellow-500" />
+                  </motion.div>
+
+                  {/* Text */}
+                  <div className="text-center">
+                    <h2 className="text-2xl font-bold text-yellow-400 flex items-center justify-center gap-2">
+                      <Sparkles className="w-6 h-6" />
+                      Final Answer Ready!
+                      <Sparkles className="w-6 h-6" />
+                    </h2>
+                    <p className="text-gray-400 mt-2">
+                      Winner: <span className="text-yellow-300 font-semibold">{winnerDisplayName}</span>
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </motion.div>
+          </motion.div>
+        </>
       )}
     </AnimatePresence>
   );

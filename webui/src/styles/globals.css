@@ -160,3 +160,17 @@
 .streaming-dot:nth-child(3) {
   animation-delay: 0.3s;
 }
+
+/* Final answer celebration glow animation */
+@keyframes final-answer-glow {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(234, 179, 8, 0);
+  }
+  50% {
+    box-shadow: 0 0 40px 20px rgba(234, 179, 8, 0.3);
+  }
+}
+
+.final-answer-glow {
+  animation: final-answer-glow 1.5s ease-in-out;
+}

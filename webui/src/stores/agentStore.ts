@@ -36,6 +36,7 @@ interface AgentStore extends SessionState {
   setError: (message: string) => void;
   setComplete: (isComplete: boolean) => void;
   setViewMode: (mode: ViewMode) => void;
+  backToCoordination: () => void;
   startNewRound: (agentId: string, roundType: 'answer' | 'vote' | 'final', customLabel?: string) => void;
   finalizeRoundWithLabel: (agentId: string, label: string, createNewRound?: boolean) => void;
   setAgentRound: (agentId: string, roundId: string) => void;
@@ -144,6 +145,8 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
   },
 
   updateAgentStatus: (agentId, status) => {
+    const currentState = get();
+
     set((state) => {
       const agent = state.agents[agentId];
       if (!agent) return state;
@@ -158,6 +161,17 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
         },
       };
     });
+
+    // Check if this is the winner agent becoming 'completed' while we're in finalStreaming
+    // If so, transition to finalComplete view
+    if (
+      status === 'completed' &&
+      currentState.selectedAgent === agentId &&
+      currentState.viewMode === 'finalStreaming' &&
+      currentState.isComplete
+    ) {
+      set({ viewMode: 'finalComplete' });
+    }
   },
 
   addOrchestratorEvent: (event) => {
@@ -196,19 +210,69 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
 
   setConsensus: (winnerId) => {
     const store = get();
+    const currentState = get();
+
+    // If already complete (final_answer arrived first), don't change viewMode
+    if (currentState.isComplete) {
+      // Just set the selected agent if not already set
+      if (!currentState.selectedAgent) {
+        set({ selectedAgent: winnerId });
+      }
+      return;
+    }
 
     // Start a "final" round for the winner to give their final answer
     // This will automatically rename the previous "current" round to the proper answer label
     store.startNewRound(winnerId, 'final', 'final');
-    // Auto-switch to winner view
-    set({ selectedAgent: winnerId, viewMode: 'winner' });
+    // Auto-switch to finalStreaming view - winner is generating final answer
+    set({ selectedAgent: winnerId, viewMode: 'finalStreaming' });
   },
 
   setFinalAnswer: (answer, _voteResults, selectedAgent) => {
+    const store = get();
+
+    // If we have a selected agent, ensure there's a "final" round with the answer content
+    if (selectedAgent && store.agents[selectedAgent]) {
+      const agent = store.agents[selectedAgent];
+      // Check if there's already a "final" round
+      const hasFinalRound = agent.rounds.some(r => r.label === 'final');
+
+      if (!hasFinalRound) {
+        // Create a final round with the answer content
+        const now = Date.now();
+        const newRoundId = `${selectedAgent}-round-${agent.rounds.length}`;
+        const finalRound = {
+          id: newRoundId,
+          roundNumber: agent.rounds.length,
+          type: 'final' as const,
+          label: 'final',
+          content: answer,
+          startTimestamp: now,
+          endTimestamp: now,
+        };
+
+        set((state) => ({
+          agents: {
+            ...state.agents,
+            [selectedAgent]: {
+              ...state.agents[selectedAgent],
+              rounds: [...state.agents[selectedAgent].rounds, finalRound],
+              displayRoundId: newRoundId,
+              currentContent: answer,
+            },
+          },
+        }));
+      }
+    }
+
+    // Store the final answer but DON'T transition to finalComplete yet
+    // Wait for the agent to finish streaming (status = 'completed')
+    // The transition will happen in updateAgentStatus when winner's status becomes 'completed'
     set({
       finalAnswer: answer,
       selectedAgent,
       isComplete: true,
+      // Don't set viewMode here - let it stay in finalStreaming until agent is done
     });
   },
 
@@ -296,11 +360,21 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
   },
 
   setComplete: (isComplete) => {
+    const currentState = get();
     set({ isComplete });
+
+    // If we're in finalStreaming and becoming complete, transition to finalComplete
+    if (isComplete && currentState.viewMode === 'finalStreaming' && currentState.selectedAgent) {
+      set({ viewMode: 'finalComplete' });
+    }
   },
 
   setViewMode: (mode) => {
     set({ viewMode: mode });
+  },
+
+  backToCoordination: () => {
+    set({ viewMode: 'coordination' });
   },
 
   startNewRound: (agentId, roundType, customLabel) => {
