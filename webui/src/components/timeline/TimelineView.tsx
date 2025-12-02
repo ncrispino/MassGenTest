@@ -226,30 +226,37 @@ export function TimelineView({ onNodeClick }: TimelineViewProps) {
             );
           })}
 
-          {/* Draw arrows first (behind nodes) */}
-          {timelineData.nodes.map(node => {
-            const nodePos = nodePositions.get(node.id);
-            if (!nodePos) return null;
+          {/* Draw context arrows (behind nodes) */}
+          {/* Context arrows show which ANSWERS provided context to other nodes */}
+          {/* Votes never provide context, so we skip arrows FROM vote nodes */}
+          {/* We also skip arrows TO vote nodes - votes have contextSources but those */}
+          {/* represent "available options", not actual context dependency */}
+          {timelineData.nodes
+            .filter(node => node.type !== 'vote') // Only draw context arrows TO non-vote nodes
+            .map(node => {
+              const nodePos = nodePositions.get(node.id);
+              if (!nodePos) return null;
 
-            // Draw arrows to context sources
-            return node.contextSources.map(sourceLabel => {
-              // Find the source node by label
-              const sourceNode = timelineData.nodes.find(n => n.label === sourceLabel);
-              if (!sourceNode) return null;
+              // Draw arrows from context sources
+              return node.contextSources.map(sourceLabel => {
+                // Find the source node by label
+                const sourceNode = timelineData.nodes.find(n => n.label === sourceLabel);
+                // Skip if source doesn't exist or is a vote (votes don't provide context)
+                if (!sourceNode || sourceNode.type === 'vote') return null;
 
-              const sourcePos = nodePositions.get(sourceNode.id);
-              if (!sourcePos) return null;
+                const sourcePos = nodePositions.get(sourceNode.id);
+                if (!sourcePos) return null;
 
-              return (
-                <TimelineArrow
-                  key={`arrow-${sourceNode.id}-${node.id}`}
-                  from={sourcePos}
-                  to={nodePos}
-                  type="context"
-                />
-              );
-            });
-          })}
+                return (
+                  <TimelineArrow
+                    key={`arrow-${sourceNode.id}-${node.id}`}
+                    from={sourcePos}
+                    to={nodePos}
+                    type="context"
+                  />
+                );
+              });
+            })}
 
           {/* Draw vote arrows (showing which answer received the vote) */}
           {timelineData.nodes
