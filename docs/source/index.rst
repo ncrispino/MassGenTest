@@ -60,6 +60,13 @@ MassGen is a cutting-edge multi-agent system that leverages the power of collabo
 
 Think of it as a "parallel study group" for AI - inspired by advanced systems like **xAI's Grok Heavy** and **Google DeepMind's Gemini Deep Think**. Agents learn from each other to produce better results than any single agent could achieve alone.
 
+
+How Does MassGen Compare?
+-------------------------
+
+**MassGen vs LLM Council:** While LLM Council follows a fixed 3-stage pipeline, MassGen agents autonomously decide to contribute new answers or vote for others, reaching consensus organically. Plus, MassGen agents can use tools, execute code, and read/write files in your codebase — backed by active development with regular releases. :doc:`See full comparison → <reference/comparisons>`
+
+
 Quick Start
 -----------
 
@@ -73,6 +80,19 @@ Quick Start
          uv venv && source .venv/bin/activate
          uv pip install massgen
          uv run massgen        # Setup wizard, then ask your first question
+
+      Rich terminal UI with real-time streaming, multi-turn conversations, and YAML configuration.
+
+   .. tab:: WebUI
+
+      .. code-block:: bash
+
+         pip install uv        # if needed
+         uv venv && source .venv/bin/activate
+         uv pip install massgen
+         uv run massgen --web  # Open http://localhost:8000
+
+      Browser-based UI with real-time agent streaming, vote visualization, and workspace browsing.
 
    .. tab:: LiteLLM
 
@@ -91,6 +111,8 @@ Quick Start
              optional_params={"models": ["openrouter/openai/gpt-5", "openrouter/anthropic/claude-sonnet-4.5"]}
          )
          print(response.choices[0].message.content)
+
+      Standard OpenAI-compatible interface for seamless integration with existing applications.
 
 :doc:`quickstart/installation` · :doc:`quickstart/running-massgen` · :doc:`quickstart/configuration`
 
@@ -135,6 +157,10 @@ Key Features
 Recent Releases
 ---------------
 
+**v0.1.20 (December 3, 2025)** - Web UI & Auto Docker Setup
+
+Browser-based real-time visualization with React frontend, WebSocket streaming, timeline views, and workspace browsing. Automatic Docker container setup for computer use agents with Ubuntu 22.04, Xfce desktop, and pre-configured tools.
+
 **v0.1.19 (December 2, 2025)** - LiteLLM Provider & Claude Strict Tool Use
 
 LiteLLM custom provider integration with programmatic API (``run()``, ``build_config()``). Claude strict tool use with structured outputs support via ``enable_strict_tool_use`` and ``output_schema``. Gemini exponential backoff for rate limit resilience.
@@ -142,10 +168,6 @@ LiteLLM custom provider integration with programmatic API (``run()``, ``build_co
 **v0.1.18 (November 28, 2025)** - Agent Communication & Claude Advanced Tooling
 
 Agent-to-agent and human broadcast communication via ``ask_others()`` tool with three modes (disabled, agents-only, human-only). Claude programmatic tool calling from code execution via ``enable_programmatic_flow`` flag. Claude tool search for deferred tool discovery via ``enable_tool_search``.
-
-**v0.1.17 (November 26, 2025)** - Textual Terminal Display
-
-Interactive terminal UI using the Textual library with dark/light theme support. Multi-panel layout with dedicated views for each agent and orchestrator status. Real-time streaming with syntax highlighting and emoji fallback.
 
 :doc:`Full changelog → <changelog>`
 
@@ -169,9 +191,9 @@ Documentation
    .. grid-item-card:: 📖 User Guide
 
       * :doc:`user_guide/concepts`
+      * :doc:`user_guide/webui`
       * :doc:`user_guide/tools/index`
       * :doc:`user_guide/integration/index`
-      * :doc:`user_guide/sessions/index`
 
    .. grid-item-card:: 📚 Reference
 
@@ -196,6 +218,7 @@ Documentation
 
    user_guide/concepts
    user_guide/backends
+   user_guide/webui
    user_guide/tools/index
    user_guide/files/index
    user_guide/sessions/index
@@ -216,6 +239,7 @@ Documentation
    reference/configuration_examples
    reference/timeouts
    reference/supported_models
+   reference/comparisons
    glossary
 
 .. toctree::
