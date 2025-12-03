@@ -115,12 +115,12 @@ export function AgentCard({ agent, isWinner = false, isVisible = true, disableLa
   const hasMultipleRounds = (agent.rounds?.length || 0) > 1;
 
   // Determine what content to display:
-  // - If viewing current round (displayRoundId === currentRoundId), use currentContent for live streaming
-  // - If viewing a different round, use that round's stored content
+  // - If viewing current round and it's still streaming (has currentContent), show live streaming content
+  // - Otherwise, use the round's stored content (for completed rounds or when browsing history)
   const isViewingCurrentRound = agent.displayRoundId === agent.currentRoundId;
-  const displayContent = isViewingCurrentRound
+  const displayContent = isViewingCurrentRound && agent.currentContent
     ? agent.currentContent
-    : displayRound?.content || '';
+    : displayRound?.content || agent.currentContent || '';
 
   // Auto-scroll to bottom on new content
   useEffect(() => {

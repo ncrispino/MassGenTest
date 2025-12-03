@@ -118,7 +118,7 @@ def create_app(config_path: Optional[str] = None) -> "FastAPI":
     """
     if not FASTAPI_AVAILABLE:
         raise ImportError(
-            "FastAPI is not installed. Install with: pip install 'massgen[web]'",
+            "FastAPI is not installed. Install with: pip install massgen",
         )
 
     # Store default config
@@ -1787,7 +1787,7 @@ def run_server(
         import uvicorn
     except ImportError:
         raise ImportError(
-            "uvicorn is not installed. Install with: pip install 'massgen[web]'",
+            "uvicorn is not installed. Install with: pip install massgen",
         )
 
     # Set default config before starting server

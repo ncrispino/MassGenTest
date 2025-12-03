@@ -3793,7 +3793,7 @@ Environment Variables:
     parser.add_argument(
         "--web",
         action="store_true",
-        help="Launch web UI server for real-time visualization (requires: pip install 'massgen[web]')",
+        help="Launch web UI server for real-time visualization",
     )
     parser.add_argument(
         "--web-port",
@@ -4137,7 +4137,7 @@ Environment Variables:
             run_server(host=args.web_host, port=args.web_port, config_path=config_path)
         except ImportError as e:
             print(f"{BRIGHT_RED}❌ Web UI dependencies not installed.{RESET}")
-            print(f"{BRIGHT_CYAN}   Run: pip install 'massgen[web]'{RESET}")
+            print(f"{BRIGHT_CYAN}   Run: pip install massgen{RESET}")
             logger.debug(f"Import error: {e}")
             sys.exit(1)
         return

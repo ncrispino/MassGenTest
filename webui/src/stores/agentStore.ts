@@ -221,24 +221,52 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
       const agent = state.agents[voterId];
       if (!agent) return state;
 
-      // Update vote distribution
-      const newDistribution = { ...state.voteDistribution };
+      // Check if this is a new voting round
+      // If ANY agent has already voted (has voteTarget set), and ALL agents have voted,
+      // then this vote must be starting a new round - reset everything
+      const allAgentsVotedInPreviousRound = state.agentOrder.every(
+        id => state.agents[id]?.voteTarget
+      );
+      const isNewRound = allAgentsVotedInPreviousRound;
+
+      // If starting a new round, reset vote distribution and clear all agents' vote targets
+      let baseDistribution = state.voteDistribution;
+      let agentsWithClearedVotes = state.agents;
+
+      if (isNewRound) {
+        console.log('[DEBUG] Starting new voting round - resetting vote distribution');
+        baseDistribution = {};
+        // Clear voteTarget for all agents so we can track who has voted in this new round
+        agentsWithClearedVotes = { ...state.agents };
+        state.agentOrder.forEach(id => {
+          if (agentsWithClearedVotes[id]) {
+            agentsWithClearedVotes[id] = {
+              ...agentsWithClearedVotes[id],
+              voteTarget: undefined,
+              voteReason: undefined,
+            };
+          }
+        });
+      }
+
+      // Update vote distribution for this vote
+      const newDistribution = { ...baseDistribution };
       newDistribution[targetId] = (newDistribution[targetId] || 0) + 1;
 
       // Check if all agents have now voted
       const updatedAgent = {
-        ...agent,
+        ...agentsWithClearedVotes[voterId],
         voteTarget: targetId,
         voteReason: reason,
         voteCount: agent.voteCount + 1,
       };
 
       const updatedAgents = {
-        ...state.agents,
+        ...agentsWithClearedVotes,
         [voterId]: updatedAgent,
       };
 
-      // Count how many agents have voted
+      // Count how many agents have voted in THIS round
       const agentCount = state.agentOrder.length;
       const votedCount = Object.values(updatedAgents).filter(a => a.voteTarget).length;
       const allVoted = votedCount >= agentCount;
