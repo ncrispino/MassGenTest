@@ -1745,6 +1745,11 @@ class RichTerminalDisplay(TerminalDisplay):
                     )
 
                 options_text.append(
+                    "  c: Show cost breakdown and token usage per agent\n",
+                    style=self.colors["info"],
+                )
+
+                options_text.append(
                     "  q: Quit Inspection\n",
                     style=self.colors["info"],
                 )
@@ -1770,6 +1775,9 @@ class RichTerminalDisplay(TerminalDisplay):
                     elif choice == "f" and self._stored_final_presentation:
                         # Display the final presentation in the terminal
                         self._redisplay_final_presentation()
+                    elif choice == "c":
+                        # Display cost breakdown
+                        self._show_cost_breakdown()
                     elif choice == "q":
                         break
                     else:
@@ -1799,6 +1807,94 @@ class RichTerminalDisplay(TerminalDisplay):
             self._stored_presentation_agent,
             self._stored_final_presentation,
         )
+
+        # Wait for user to continue
+        input("\nPress Enter to return to agent selector...")
+
+        # Add separator
+        self.console.print("\n" + "=" * 80 + "\n")
+
+    def _show_cost_breakdown(self) -> None:
+        """Display detailed cost breakdown and token usage per agent."""
+        from rich.table import Table
+
+        # Add separator
+        self.console.print("\n" + "=" * 80 + "\n")
+
+        # Collect cost data
+        cost_data = self._get_all_agent_costs()
+
+        if not cost_data["agents"]:
+            self.console.print(
+                f"[{self.colors['warning']}]No cost data available.[/{self.colors['warning']}]",
+            )
+            input("\nPress Enter to return to agent selector...")
+            self.console.print("\n" + "=" * 80 + "\n")
+            return
+
+        # Create table
+        table = Table(
+            title="💰 Cost Breakdown & Token Usage",
+            show_header=True,
+            header_style="bold cyan",
+            border_style=self.colors["border"],
+        )
+
+        table.add_column("Agent", style="cyan", no_wrap=True)
+        table.add_column("Input", justify="right", style="green")
+        table.add_column("Output", justify="right", style="blue")
+        table.add_column("Reasoning", justify="right", style="magenta")
+        table.add_column("Cached", justify="right", style="yellow")
+        table.add_column("Total Tokens", justify="right", style="white")
+        table.add_column("Est. Cost", justify="right", style="bold green")
+
+        # Add rows for each agent
+        for agent_id in sorted(cost_data["agents"].keys()):
+            usage = cost_data["agents"][agent_id]
+            total_tokens = usage.input_tokens + usage.output_tokens + usage.reasoning_tokens + usage.cached_input_tokens
+
+            # Format cost
+            if usage.estimated_cost < 0.01:
+                cost_str = f"${usage.estimated_cost:.4f}"
+            elif usage.estimated_cost < 1.0:
+                cost_str = f"${usage.estimated_cost:.3f}"
+            else:
+                cost_str = f"${usage.estimated_cost:.2f}"
+
+            table.add_row(
+                agent_id,
+                f"{usage.input_tokens:,}",
+                f"{usage.output_tokens:,}",
+                f"{usage.reasoning_tokens:,}" if usage.reasoning_tokens > 0 else "-",
+                f"{usage.cached_input_tokens:,}" if usage.cached_input_tokens > 0 else "-",
+                f"{total_tokens:,}",
+                cost_str,
+            )
+
+        # Add total row if multiple agents
+        if len(cost_data["agents"]) > 1:
+            total = cost_data["total"]
+            total_all_tokens = total.input_tokens + total.output_tokens + total.reasoning_tokens + total.cached_input_tokens
+
+            if total.estimated_cost < 0.01:
+                total_cost_str = f"${total.estimated_cost:.4f}"
+            elif total.estimated_cost < 1.0:
+                total_cost_str = f"${total.estimated_cost:.3f}"
+            else:
+                total_cost_str = f"${total.estimated_cost:.2f}"
+
+            table.add_row(
+                "TOTAL",
+                f"{total.input_tokens:,}",
+                f"{total.output_tokens:,}",
+                f"{total.reasoning_tokens:,}" if total.reasoning_tokens > 0 else "-",
+                f"{total.cached_input_tokens:,}" if total.cached_input_tokens > 0 else "-",
+                f"{total_all_tokens:,}",
+                total_cost_str,
+                style="bold",
+            )
+
+        self.console.print(table)
 
         # Wait for user to continue
         input("\nPress Enter to return to agent selector...")
@@ -2380,6 +2476,63 @@ class RichTerminalDisplay(TerminalDisplay):
             pass
         return "Unknown"
 
+    def _get_all_agent_costs(self) -> Dict[str, Any]:
+        """Collect token usage from all agent backends.
+
+        Returns:
+            Dictionary with per-agent TokenUsage and aggregated totals.
+        """
+        from massgen.token_manager.token_manager import TokenUsage
+
+        result: Dict[str, Any] = {"agents": {}, "total": TokenUsage()}
+
+        try:
+            if not hasattr(self, "orchestrator") or not self.orchestrator:
+                return result
+            if not hasattr(self.orchestrator, "agents"):
+                return result
+
+            for agent_id, agent in self.orchestrator.agents.items():
+                if agent and hasattr(agent, "backend") and hasattr(agent.backend, "token_usage"):
+                    usage = agent.backend.token_usage
+                    result["agents"][agent_id] = usage
+                    result["total"].add(usage)
+        except Exception:
+            pass  # Fail silently - cost display is non-critical
+
+        return result
+
+    def _format_cost_line(self, agent_id: str, usage: Any) -> str:
+        """Format a single agent's cost as a compact string.
+
+        Args:
+            agent_id: Agent identifier or "Total"
+            usage: TokenUsage dataclass instance
+
+        Returns:
+            Formatted string like "agent_a: 1,234 in / 567 out | $0.0123"
+        """
+        parts = [f"{usage.input_tokens:,} in", f"{usage.output_tokens:,} out"]
+
+        # Only show reasoning/cached tokens if present
+        if usage.reasoning_tokens > 0:
+            parts.append(f"{usage.reasoning_tokens:,} reason")
+        if usage.cached_input_tokens > 0:
+            parts.append(f"{usage.cached_input_tokens:,} cached")
+
+        tokens_str = " / ".join(parts)
+
+        # Adaptive cost precision
+        cost = usage.estimated_cost
+        if cost < 0.01:
+            cost_str = f"${cost:.4f}"
+        elif cost < 1.0:
+            cost_str = f"${cost:.3f}"
+        else:
+            cost_str = f"${cost:.2f}"
+
+        return f"{agent_id}: {tokens_str} | {cost_str}"
+
     def _create_footer(self) -> Panel:
         """Create the footer panel with status and events."""
         footer_content = Text()
@@ -2410,6 +2563,29 @@ class RichTerminalDisplay(TerminalDisplay):
             style=self.colors["text"],
         )
         footer_content.append("\n")
+
+        # Cost summary section
+        cost_data = self._get_all_agent_costs()
+        if cost_data["agents"]:
+            footer_content.append(
+                "💰 Cost Summary: ",
+                style=self.colors["primary"],
+            )
+
+            cost_parts = []
+            for agent_id in sorted(cost_data["agents"].keys()):
+                usage = cost_data["agents"][agent_id]
+                cost_parts.append(self._format_cost_line(agent_id, usage))
+
+            # Add total if multiple agents
+            if len(cost_data["agents"]) > 1:
+                cost_parts.append(self._format_cost_line("Total", cost_data["total"]))
+
+            footer_content.append(
+                " | ".join(cost_parts),
+                style=self.colors["text"],
+            )
+            footer_content.append("\n")
 
         # Recent events
         if self.orchestrator_events:

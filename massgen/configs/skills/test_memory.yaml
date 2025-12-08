@@ -7,6 +7,14 @@ agents:
       type: "chatcompletion"
       base_url: "https://openrouter.ai/api/v1"
       model: "x-ai/grok-4.1-fast"
+      # type: "openai"
+      # model: "gpt-5-mini"
+      # type: "gemini"
+      # model: "gemini-3-pro-preview"
+      # type: "grok"
+      # model: "grok-4-1-fast-reasoning"
+      # type: "claude_code"
+      # model: "claude-opus-4-5-20251101"
       cwd: "workspace1"  # Required for filesystem mode
       enable_mcp_command_line: true
       command_line_execution_mode: "docker"

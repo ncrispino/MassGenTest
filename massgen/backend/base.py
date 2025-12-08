@@ -5,6 +5,7 @@ Base backend interface for LLM providers.
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
@@ -14,6 +15,8 @@ from ..filesystem_manager import FilesystemManager, PathPermissionManagerHook
 from ..mcp_tools.hooks import FunctionHookManager, HookType
 from ..token_manager import TokenCostCalculator, TokenUsage
 from ..utils import CoordinationStage
+
+logger = logging.getLogger(__name__)
 
 
 class FilesystemSupport(Enum):
@@ -308,6 +311,81 @@ class LLMBackend(ABC):
     def reset_token_usage(self):
         """Reset token usage tracking."""
         self.token_usage = TokenUsage()
+
+    def _update_token_usage_from_api_response(self, usage: Any, model: str) -> None:
+        """Standardized token usage update from API response.
+
+        This is the primary method backends should use to update token tracking.
+        It handles all provider formats and updates both cost and detailed token breakdowns.
+
+        Args:
+            usage: Usage object or dict from API response
+            model: Model name for pricing lookup
+        """
+        if usage is None:
+            return
+
+        # Check if provider returned cost directly (e.g., OpenRouter includes 'cost' field)
+        # This takes priority over litellm calculation since it's the actual billed cost
+        provider_cost = None
+        if isinstance(usage, dict):
+            provider_cost = usage.get("cost")
+        elif hasattr(usage, "cost"):
+            provider_cost = getattr(usage, "cost", None)
+
+        if provider_cost is not None and provider_cost > 0:
+            cost = provider_cost
+        else:
+            # Calculate cost using litellm.completion_cost() directly
+            cost = self.token_calculator.calculate_cost_with_usage_object(
+                model=model,
+                usage=usage,
+                provider=self.get_provider_name(),
+            )
+
+        # Extract detailed token breakdown for visibility
+        breakdown = self.token_calculator.extract_token_breakdown(usage)
+
+        # Update all TokenUsage fields
+        self.token_usage.input_tokens += breakdown.get("input_tokens", 0)
+        self.token_usage.output_tokens += breakdown.get("output_tokens", 0)
+        self.token_usage.estimated_cost += cost
+        self.token_usage.reasoning_tokens += breakdown.get("reasoning_tokens", 0)
+        self.token_usage.cached_input_tokens += breakdown.get("cached_input_tokens", 0)
+        self.token_usage.cache_creation_tokens += breakdown.get("cache_creation_tokens", 0)
+
+        # Warn if cost is 0 but tokens were tracked (model likely not in pricing database)
+        input_tokens = breakdown.get("input_tokens", 0)
+        output_tokens = breakdown.get("output_tokens", 0)
+        if cost == 0 and (input_tokens > 0 or output_tokens > 0):
+            logger.warning(
+                f"[{self.__class__.__name__}] Cost is $0.00 for model '{model}' with "
+                f"{input_tokens} input + {output_tokens} output tokens. "
+                f"Model may not be in pricing database (litellm or provider-returned cost).",
+            )
+
+    def _estimate_token_usage(self, messages: List[Dict[str, Any]], response_content: str, model: str) -> None:
+        """Fallback: Estimate tokens for backends without usage data (local models).
+
+        Uses tiktoken for estimation when API doesn't return usage data.
+
+        Args:
+            messages: Input messages for token estimation
+            response_content: Response content for token estimation
+            model: Model name for pricing lookup
+        """
+        input_tokens = self.token_calculator.estimate_tokens(messages)
+        output_tokens = self.token_calculator.estimate_tokens(response_content)
+        cost = self.token_calculator.calculate_cost(
+            input_tokens,
+            output_tokens,
+            self.get_provider_name(),
+            model,
+        )
+
+        self.token_usage.input_tokens += input_tokens
+        self.token_usage.output_tokens += output_tokens
+        self.token_usage.estimated_cost += cost
 
     def format_cost(self, cost: float = None) -> str:
         """Format cost for display."""

@@ -58,6 +58,39 @@ class ChatCompletionsBackend(CustomToolAndMCPBackend):
         self.formatter = ChatCompletionsFormatter()
         self.api_params_handler = ChatCompletionsAPIParamsHandler(self)
 
+        # Track interrupted streams for token estimation
+        # When a stream is cancelled (e.g., in multi-agent restart), we need to estimate tokens
+        self._interrupted_stream_content: str = ""
+        self._interrupted_stream_model: str = ""
+        self._interrupted_stream_messages: List[Dict[str, Any]] = []  # Track input for estimation
+        self._stream_usage_received: bool = True  # True = no pending estimation needed
+
+    def finalize_token_tracking(self) -> None:
+        """Finalize token tracking by estimating tokens for any interrupted streams.
+
+        Call this method after coordination completes to ensure interrupted streams
+        (e.g., cancelled due to multi-agent restart_pending) get their tokens estimated.
+        """
+        if not self._stream_usage_received:
+            # Estimate tokens for the interrupted stream
+            # Use tracked messages for input estimation, content for output estimation
+            messages = self._interrupted_stream_messages or []
+            content = self._interrupted_stream_content or ""
+            model = self._interrupted_stream_model or "gpt-4o"
+
+            if messages or content:
+                self._estimate_token_usage(messages, content, model)
+                logger.info(
+                    f"[{self.get_provider_name()}] Estimated tokens for interrupted stream: "
+                    f"messages={len(messages)}, content_len={len(content)} -> "
+                    f"in={self.token_usage.input_tokens}, out={self.token_usage.output_tokens}",
+                )
+
+            # Clear tracking
+            self._interrupted_stream_content = ""
+            self._interrupted_stream_messages = []
+            self._stream_usage_received = True
+
     def supports_upload_files(self) -> bool:
         """Chat Completions backend supports upload_files preprocessing."""
         return True
@@ -150,6 +183,18 @@ class ChatCompletionsBackend(CustomToolAndMCPBackend):
         all_params = {**self.config, **kwargs}
         api_params = await self.api_params_handler.build_api_params(current_messages, tools, all_params)
 
+        # Enable usage tracking in streaming responses (required for token counting)
+        if "stream" in api_params and api_params["stream"]:
+            api_params["stream_options"] = {"include_usage": True}
+
+        # OpenRouter: Enable cost tracking in usage response
+        # This adds the 'cost' field to the usage object
+        base_url = all_params.get("base_url", "")
+        if "openrouter.ai" in base_url:
+            extra_body = api_params.get("extra_body", {})
+            extra_body["usage"] = {"include": True}
+            api_params["extra_body"] = extra_body
+
         # Add provider tools (web search, code interpreter) if enabled
         provider_tools = self.api_params_handler.get_provider_tools(all_params)
 
@@ -166,6 +211,7 @@ class ChatCompletionsBackend(CustomToolAndMCPBackend):
         current_tool_calls = {}
         response_completed = False
         content = ""
+        finish_reason_received = None  # Track finish reason to know when to expect usage
 
         async for chunk in stream:
             try:
@@ -211,6 +257,7 @@ class ChatCompletionsBackend(CustomToolAndMCPBackend):
 
                     # Handle finish reason
                     if getattr(choice, "finish_reason", None):
+                        finish_reason_received = choice.finish_reason
                         if choice.finish_reason == "tool_calls" and current_tool_calls:
                             final_tool_calls = []
 
@@ -249,17 +296,35 @@ class ChatCompletionsBackend(CustomToolAndMCPBackend):
                             yield StreamChunk(type="tool_calls", tool_calls=final_tool_calls)
 
                             response_completed = True
-                            break  # Exit chunk loop to execute functions
+                            # DON'T break yet - continue to capture usage chunk
 
                         elif choice.finish_reason in ["stop", "length"]:
                             response_completed = True
-                            # No function calls, we're done (base case)
-                            yield StreamChunk(type="done")
-                            return
+                            # DON'T return yet - continue to capture usage chunk
+
+                # Handle usage metadata (comes after finish_reason)
+                if hasattr(chunk, "usage") and chunk.usage:
+                    # Use standardized helper for comprehensive token tracking
+                    self._update_token_usage_from_api_response(
+                        chunk.usage,
+                        all_params.get("model"),
+                    )
+                    # Now we can safely exit or continue based on finish reason
+                    if finish_reason_received in ["stop", "length"]:
+                        yield StreamChunk(type="done")
+                        return
+                    elif finish_reason_received == "tool_calls":
+                        break  # Exit to execute functions
 
             except Exception as chunk_error:
                 yield StreamChunk(type="error", error=f"Chunk processing error: {chunk_error}")
                 continue
+
+        # Fallback: if we exited the loop without getting usage (some providers don't send it)
+        # Handle the "stop"/"length" case that might have been missed
+        if finish_reason_received in ["stop", "length"] and response_completed:
+            yield StreamChunk(type="done")
+            return
 
         # Execute any captured function calls
         if captured_function_calls and response_completed:
@@ -503,6 +568,11 @@ class ChatCompletionsBackend(CustomToolAndMCPBackend):
     async def _process_stream(self, stream, all_params, agent_id) -> AsyncGenerator[StreamChunk, None]:
         """Handle standard Chat Completions API streaming format with logging."""
 
+        # Note: Message tracking (_interrupted_stream_messages) is set by the caller
+        # (_stream_without_custom_and_mcp_tools) BEFORE this method is called.
+        # We only reset content tracking here, not messages.
+        self._interrupted_stream_content = ""
+
         content = ""
         current_tool_calls = {}
         search_sources_used = 0
@@ -527,6 +597,8 @@ class ChatCompletionsBackend(CustomToolAndMCPBackend):
                                 yield reasoning_chunk
                             content_chunk = delta.content
                             content += content_chunk
+                            # Track content for interrupted stream estimation
+                            self._interrupted_stream_content = content
                             log_backend_agent_message(
                                 agent_id or "default",
                                 "RECV",
@@ -656,24 +728,20 @@ class ChatCompletionsBackend(CustomToolAndMCPBackend):
                             )
                             log_stream_chunk(log_prefix, "done", None, agent_id)
                             yield StreamChunk(type="done")
-                            return
+                            # DON'T return yet - continue processing to capture final usage chunk
+                            # (OpenAI-compatible APIs send usage in a final chunk after finish_reason)
 
                 # Optionally handle usage metadata
                 if hasattr(chunk, "usage") and chunk.usage:
-                    # Calculate cost with litellm (handles reasoning/cached tokens)
-                    cost = self.token_calculator.calculate_cost_with_usage_object(
-                        model=all_params.get("model"),
-                        usage=chunk.usage,
-                        provider=self.get_provider_name(),
+                    # Mark that we received usage - no estimation needed for this stream
+                    self._stream_usage_received = True
+                    self._interrupted_stream_content = ""  # Clear tracking
+
+                    # Use standardized helper for comprehensive token tracking
+                    self._update_token_usage_from_api_response(
+                        chunk.usage,
+                        all_params.get("model", "gpt-4o"),
                     )
-
-                    # Track basic token counts
-                    input_tokens = getattr(chunk.usage, "prompt_tokens", 0) or getattr(chunk.usage, "input_tokens", 0)
-                    output_tokens = getattr(chunk.usage, "completion_tokens", 0) or getattr(chunk.usage, "output_tokens", 0)
-
-                    self.token_usage.input_tokens += input_tokens
-                    self.token_usage.output_tokens += output_tokens
-                    self.token_usage.estimated_cost += cost
 
                     # Handle web search metadata
                     if getattr(chunk.usage, "num_sources_used", 0) > 0:
@@ -686,11 +754,26 @@ class ChatCompletionsBackend(CustomToolAndMCPBackend):
                                 content=search_msg,
                             )
 
+                    # After receiving usage, we can safely exit
+                    # (this is the final chunk that comes after finish_reason)
+                    break
+
             except Exception as chunk_error:
                 error_msg = f"Chunk processing error: {chunk_error}"
                 log_stream_chunk(log_prefix, "error", error_msg, agent_id)
                 yield StreamChunk(type="error", error=error_msg)
                 continue
+
+        # Fallback estimation for local models that don't return usage data
+        # (e.g., LMStudio, vLLM without usage tracking enabled)
+        if content and self.token_usage.input_tokens == 0 and self.token_usage.output_tokens == 0:
+            # Note: We don't have access to messages here, so we estimate output only
+            # Input tokens will be 0 but output will be estimated from content
+            self._estimate_token_usage(
+                [],  # Empty messages - we can't access them from this method
+                content,
+                all_params.get("model", "gpt-4o"),
+            )
 
         # Fallback in case stream ends without finish_reason
         log_stream_chunk(log_prefix, "done", None, agent_id)

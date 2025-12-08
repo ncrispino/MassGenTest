@@ -751,6 +751,22 @@ class CoordinationTracker:
                                 "temp_workspace": str(fm.agent_temporary_workspace) if fm.agent_temporary_workspace else None,
                             }
 
+                # Get token usage from agent backend if available
+                token_usage = None
+                if orchestrator and hasattr(orchestrator, "agents"):
+                    agent = orchestrator.agents.get(agent_id)
+                    if agent and hasattr(agent, "backend") and agent.backend:
+                        backend = agent.backend
+                        if hasattr(backend, "token_usage") and backend.token_usage:
+                            tu = backend.token_usage
+                            token_usage = {
+                                "input_tokens": tu.input_tokens,
+                                "output_tokens": tu.output_tokens,
+                                "reasoning_tokens": tu.reasoning_tokens,
+                                "cached_input_tokens": tu.cached_input_tokens,
+                                "estimated_cost": round(tu.estimated_cost, 6),
+                            }
+
                 agent_statuses[agent_id] = {
                     "status": status,
                     "answer_count": len(answers),
@@ -760,6 +776,7 @@ class CoordinationTracker:
                     "last_activity": last_activity,
                     "error": error,
                     "workspace_paths": workspace_paths,
+                    "token_usage": token_usage,
                 }
 
             # Aggregate vote counts by answer label
@@ -788,6 +805,17 @@ class CoordinationTracker:
                     "temp_workspace_parent": orchestrator._agent_temporary_workspace if hasattr(orchestrator, "_agent_temporary_workspace") else None,
                 }
 
+            # Calculate total costs across all agents
+            total_cost = 0.0
+            total_input_tokens = 0
+            total_output_tokens = 0
+            for agent_status in agent_statuses.values():
+                if agent_status.get("token_usage"):
+                    tu = agent_status["token_usage"]
+                    total_cost += tu.get("estimated_cost", 0)
+                    total_input_tokens += tu.get("input_tokens", 0)
+                    total_output_tokens += tu.get("output_tokens", 0)
+
             # Build complete status data structure
             status_data = {
                 "meta": {
@@ -798,6 +826,11 @@ class CoordinationTracker:
                     "start_time": self.start_time,
                     "elapsed_seconds": round(elapsed, 3),
                     "orchestrator_paths": orchestrator_paths,
+                },
+                "costs": {
+                    "total_estimated_cost": round(total_cost, 6),
+                    "total_input_tokens": total_input_tokens,
+                    "total_output_tokens": total_output_tokens,
                 },
                 "coordination": {
                     "phase": phase,

@@ -2258,6 +2258,17 @@ class CustomToolAndMCPBackend(LLMBackend):
             else:
                 stream = await client.messages.create(**api_params)
         else:
+            # Enable usage tracking in streaming responses (required for token counting)
+            # Chat Completions API (used by Grok, Groq, Together, Fireworks, etc.)
+            if api_params.get("stream"):
+                api_params["stream_options"] = {"include_usage": True}
+
+            # Track messages for interrupted stream estimation (multi-agent restart handling)
+            if hasattr(self, "_interrupted_stream_messages"):
+                self._interrupted_stream_messages = processed_messages.copy()
+                self._interrupted_stream_model = all_params.get("model", "gpt-4o")
+                self._stream_usage_received = False
+
             stream = await client.chat.completions.create(**api_params)
 
         async for chunk in self._process_stream(stream, all_params, agent_id):

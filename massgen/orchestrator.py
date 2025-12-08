@@ -1225,6 +1225,8 @@ class Orchestrator(ChatAgent):
         log_session_dir = get_log_session_dir()
         if log_session_dir:
             self.coordination_tracker.save_coordination_logs(log_session_dir)
+            # Also save final status.json with complete token/cost data
+            self.coordination_tracker.save_status_file(log_session_dir, orchestrator=self)
 
     def _format_planning_mode_ui(
         self,
@@ -2018,6 +2020,12 @@ Your answer:"""
             task.cancel()
         for agent_id in list(active_streams.keys()):
             await self._close_agent_stream(agent_id, active_streams)
+
+        # Finalize token tracking for all agents
+        # This estimates tokens for any streams that were interrupted (e.g., due to restart_pending)
+        for agent_id, agent in self.agents.items():
+            if hasattr(agent.backend, "finalize_token_tracking"):
+                agent.backend.finalize_token_tracking()
 
     async def _copy_all_snapshots_to_temp_workspace(self, agent_id: str) -> Optional[str]:
         """Copy all agents' latest workspace snapshots to a temporary workspace for context sharing.
