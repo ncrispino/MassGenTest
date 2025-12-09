@@ -3443,19 +3443,59 @@ async def run_interactive_mode(
                     if context_workspaces_to_add:
                         logger.info(f"[CLI] Recreating agents with turn {current_turn} workspace(s) as read-only context path(s)")
 
-                        # Clean up existing agents' backends and filesystem managers
-                        for agent_id, agent in agents.items():
-                            # Cleanup filesystem manager (Docker containers, etc.)
-                            if hasattr(agent, "backend") and hasattr(agent.backend, "filesystem_manager"):
-                                if agent.backend.filesystem_manager:
-                                    try:
-                                        agent.backend.filesystem_manager.cleanup()
-                                    except Exception as e:
-                                        logger.warning(f"[CLI] Cleanup failed for agent {agent_id}: {e}")
+                        # Check if any agents have Docker containers to clean up
+                        agents_with_docker = [
+                            (agent_id, agent)
+                            for agent_id, agent in agents.items()
+                            if hasattr(agent, "backend")
+                            and hasattr(agent.backend, "filesystem_manager")
+                            and agent.backend.filesystem_manager
+                            and hasattr(agent.backend.filesystem_manager, "docker_manager")
+                            and agent.backend.filesystem_manager.docker_manager
+                        ]
 
-                            # Cleanup backend itself
-                            if hasattr(agent.backend, "__aexit__"):
-                                await agent.backend.__aexit__(None, None, None)
+                        # Clean up existing agents' backends and filesystem managers
+                        if agents_with_docker:
+                            from concurrent.futures import (
+                                ThreadPoolExecutor,
+                                as_completed,
+                            )
+
+                            from rich.status import Status
+
+                            def cleanup_agent_fs(agent_id: str, agent) -> tuple[str, Optional[Exception]]:
+                                """Cleanup a single agent's filesystem manager (Docker container)."""
+                                try:
+                                    agent.backend.filesystem_manager.cleanup()
+                                    return (agent_id, None)
+                                except Exception as e:
+                                    return (agent_id, e)
+
+                            # Parallel Docker cleanup with spinner
+                            with Status(f"[bold cyan]Preparing next turn ({len(agents_with_docker)} container(s))...", spinner="dots"):
+                                with ThreadPoolExecutor(max_workers=len(agents_with_docker)) as executor:
+                                    futures = {executor.submit(cleanup_agent_fs, agent_id, agent): agent_id for agent_id, agent in agents_with_docker}
+                                    for future in as_completed(futures):
+                                        agent_id, error = future.result()
+                                        if error:
+                                            logger.warning(f"[CLI] Cleanup failed for agent {agent_id}: {error}")
+
+                            # Cleanup backends (must be sequential/async)
+                            for agent_id, agent in agents.items():
+                                if hasattr(agent.backend, "__aexit__"):
+                                    await agent.backend.__aexit__(None, None, None)
+                        else:
+                            # No Docker - quick cleanup without spinner
+                            for agent_id, agent in agents.items():
+                                if hasattr(agent, "backend") and hasattr(agent.backend, "filesystem_manager"):
+                                    if agent.backend.filesystem_manager:
+                                        try:
+                                            agent.backend.filesystem_manager.cleanup()
+                                        except Exception as e:
+                                            logger.warning(f"[CLI] Cleanup failed for agent {agent_id}: {e}")
+
+                                if hasattr(agent.backend, "__aexit__"):
+                                    await agent.backend.__aexit__(None, None, None)
 
                         # Inject previous turn path(s) as read-only context
                         modified_config = original_config.copy()
@@ -4048,13 +4088,49 @@ async def main(args):
                     logger.debug(f"Marked session as completed: {memory_session_id}")
 
             # Cleanup all agents' filesystem managers (including Docker containers)
+            agents_with_docker = [
+                (agent_id, agent)
+                for agent_id, agent in agents.items()
+                if hasattr(agent, "backend")
+                and hasattr(agent.backend, "filesystem_manager")
+                and agent.backend.filesystem_manager
+                and hasattr(agent.backend.filesystem_manager, "docker_manager")
+                and agent.backend.filesystem_manager.docker_manager
+            ]
+
+            if agents_with_docker:
+                # Show spinner while cleaning up Docker containers in parallel
+                from concurrent.futures import ThreadPoolExecutor, as_completed
+
+                from rich.status import Status
+
+                def cleanup_agent(agent_id: str, agent) -> tuple[str, Optional[Exception]]:
+                    """Cleanup a single agent's Docker container."""
+                    try:
+                        agent.backend.filesystem_manager.cleanup()
+                        return (agent_id, None)
+                    except Exception as e:
+                        return (agent_id, e)
+
+                with Status(f"[bold cyan]Cleaning up {len(agents_with_docker)} Docker container(s)...", spinner="dots"):
+                    with ThreadPoolExecutor(max_workers=len(agents_with_docker)) as executor:
+                        futures = {executor.submit(cleanup_agent, agent_id, agent): agent_id for agent_id, agent in agents_with_docker}
+                        for future in as_completed(futures):
+                            agent_id, error = future.result()
+                            if error:
+                                logger.warning(f"[CLI] Cleanup failed for agent {agent_id}: {error}")
+
+                print("✅ Docker cleanup complete", flush=True)
+
+            # Cleanup non-Docker filesystem managers (quick, no spinner needed)
             for agent_id, agent in agents.items():
-                if hasattr(agent, "backend") and hasattr(agent.backend, "filesystem_manager"):
-                    if agent.backend.filesystem_manager:
-                        try:
-                            agent.backend.filesystem_manager.cleanup()
-                        except Exception as e:
-                            logger.warning(f"[CLI] Cleanup failed for agent {agent_id}: {e}")
+                if (agent_id, agent) not in agents_with_docker:
+                    if hasattr(agent, "backend") and hasattr(agent.backend, "filesystem_manager"):
+                        if agent.backend.filesystem_manager:
+                            try:
+                                agent.backend.filesystem_manager.cleanup()
+                            except Exception as e:
+                                logger.warning(f"[CLI] Cleanup failed for agent {agent_id}: {e}")
 
     except ConfigurationError as e:
         print(f"❌ Configuration error: {e}", flush=True)

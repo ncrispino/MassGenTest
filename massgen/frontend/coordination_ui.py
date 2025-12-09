@@ -287,8 +287,9 @@ class CoordinationUI:
             # Use orchestrator's clean answer or fall back to full response
             final_result = orchestrator_final_answer if orchestrator_final_answer else full_response
 
-            # Ensure Textual display shows final answer even if streaming chunks were filtered
-            if self.display_type == "textual_terminal" and hasattr(self.display, "show_final_answer"):
+            # Ensure display shows final answer even if streaming chunks were filtered
+            # This applies to all display types that have show_final_answer method
+            if hasattr(self.display, "show_final_answer") and not self._final_answer_shown:
                 display_answer = (final_result or "").strip()
                 if display_answer:
                     self._final_answer_shown = True
@@ -708,8 +709,9 @@ class CoordinationUI:
             # Use orchestrator's clean answer or fall back to full response
             final_result = orchestrator_final_answer if orchestrator_final_answer else full_response
 
-            # Ensure Textual display shows final answer even if streaming chunks were filtered
-            if self.display_type == "textual_terminal" and hasattr(self.display, "show_final_answer"):
+            # Ensure display shows final answer even if streaming chunks were filtered
+            # This applies to all display types that have show_final_answer method
+            if hasattr(self.display, "show_final_answer") and not self._final_answer_shown:
                 display_answer = (final_result or "").strip()
                 if display_answer:
                     self._final_answer_shown = True

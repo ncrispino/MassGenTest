@@ -59,7 +59,6 @@ Usage:
     )
 """
 
-import asyncio
 import time
 from typing import Any, Dict, List, Optional
 
@@ -204,8 +203,9 @@ class MassGenLLM(CustomLLM if LITELLM_AVAILABLE else object):
 
         # Run MassGen synchronously (lazy import to avoid circular import)
         from massgen import run
+        from massgen.utils import run_async_safely
 
-        result = asyncio.run(run(**run_kwargs))
+        result = run_async_safely(run(**run_kwargs))
 
         # Build LiteLLM-compatible response
         return self._build_response(model, result)

@@ -1996,7 +1996,7 @@ Your answer:"""
 
                         elif result_type == "vote":
                             # Agent voted for existing answer
-                            print(f"[DEBUG] VOTE BLOCK ENTERED for {agent_id}, result_data={result_data}")
+                            logger.debug(f"VOTE BLOCK ENTERED for {agent_id}, result_data={result_data}")
                             # Ignore votes from agents with restart pending (votes are about current state)
                             if self._check_restart_pending(agent_id):
                                 voted_for = result_data.get("agent_id", "<unknown>")
@@ -2039,12 +2039,12 @@ Your answer:"""
                                     snapshot_timestamp=vote_timestamp,
                                 )
                                 # Notify web display about the vote
-                                print(f"[DEBUG] Vote recorded - checking for coordination_ui: hasattr={hasattr(self, 'coordination_ui')}, coordination_ui={self.coordination_ui}")
+                                logger.debug(f"Vote recorded - checking for coordination_ui: hasattr={hasattr(self, 'coordination_ui')}, coordination_ui={self.coordination_ui}")
                                 if hasattr(self, "coordination_ui") and self.coordination_ui:
                                     display = getattr(self.coordination_ui, "display", None)
-                                    print(f"[DEBUG] Got display: {display}, has update_vote_target: {hasattr(display, 'update_vote_target') if display else 'N/A'}")
+                                    logger.debug(f"Got display: {display}, has update_vote_target: {hasattr(display, 'update_vote_target') if display else 'N/A'}")
                                     if display and hasattr(display, "update_vote_target"):
-                                        print(f"[DEBUG] Calling update_vote_target({agent_id}, {result_data.get('agent_id', '')}, ...)")
+                                        logger.debug(f"Calling update_vote_target({agent_id}, {result_data.get('agent_id', '')}, ...)")
                                         display.update_vote_target(
                                             voter_id=agent_id,
                                             target_id=result_data.get("agent_id", ""),
@@ -2067,7 +2067,7 @@ Your answer:"""
                                         )
                                 # Update status file for real-time monitoring
                                 log_session_dir = get_log_session_dir()
-                                print(f"[DEBUG] Log session dir: {log_session_dir}")
+                                logger.debug(f"Log session dir: {log_session_dir}")
                                 if log_session_dir:
                                     self.coordination_tracker.save_status_file(log_session_dir, orchestrator=self)
 
