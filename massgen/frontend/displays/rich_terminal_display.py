@@ -1755,6 +1755,21 @@ class RichTerminalDisplay(TerminalDisplay):
                         style=self.colors["success"],
                     )
 
+                # Add workspace options if workspace exists
+                workspace_path = self._get_workspace_path()
+                if workspace_path and Path(workspace_path).exists():
+                    workspace_files = list(Path(workspace_path).rglob("*"))
+                    workspace_files = [f for f in workspace_files if f.is_file()]
+                    if workspace_files:
+                        options_text.append(
+                            f"  w: List workspace files ({len(workspace_files)} files)\n",
+                            style=self.colors["warning"],
+                        )
+                        options_text.append(
+                            "  o: Open workspace in file browser\n",
+                            style=self.colors["warning"],
+                        )
+
                 options_text.append(
                     "  q: Quit Inspection\n",
                     style=self.colors["info"],
@@ -1781,6 +1796,12 @@ class RichTerminalDisplay(TerminalDisplay):
                     elif choice == "f" and self._stored_final_presentation:
                         # Display the final presentation in the terminal
                         self._redisplay_final_presentation()
+                    elif choice == "w" and workspace_path:
+                        # List workspace files
+                        self._list_workspace_files(workspace_path)
+                    elif choice == "o" and workspace_path:
+                        # Open workspace in file browser
+                        self._open_workspace(workspace_path)
                     elif choice == "q":
                         break
                     else:
@@ -1816,6 +1837,60 @@ class RichTerminalDisplay(TerminalDisplay):
 
         # Add separator
         self.console.print("\n" + "=" * 80 + "\n")
+
+    def _get_workspace_path(self) -> Optional[str]:
+        """Get the workspace path from the orchestrator if available."""
+        if not hasattr(self, "orchestrator") or not self.orchestrator:
+            return None
+
+        try:
+            final_result = self.orchestrator.get_final_result()
+            if final_result:
+                return final_result.get("workspace_path")
+        except Exception:
+            pass
+
+        return None
+
+    def _list_workspace_files(self, workspace_path: str) -> None:
+        """List files in the workspace directory."""
+        workspace_dir = Path(workspace_path)
+        if not workspace_dir.exists():
+            self.console.print(f"[{self.colors['error']}]Workspace not found.[/{self.colors['error']}]")
+            return
+
+        workspace_files = list(workspace_dir.rglob("*"))
+        workspace_files = [f for f in workspace_files if f.is_file()]
+
+        self.console.print("\n[bold]Workspace Files:[/bold]")
+        for f in workspace_files[:20]:  # Limit to 20 files
+            rel_path = f.relative_to(workspace_dir)
+            self.console.print(f"  {rel_path}")
+        if len(workspace_files) > 20:
+            self.console.print(f"  ... and {len(workspace_files) - 20} more files")
+        self.console.print(f"\n[dim]Workspace path: {workspace_dir}[/dim]")
+        input("\nPress Enter to continue...")
+
+    def _open_workspace(self, workspace_path: str) -> None:
+        """Open the workspace directory in the system file browser."""
+        import platform
+
+        workspace_dir = Path(workspace_path)
+        if not workspace_dir.exists():
+            self.console.print(f"[{self.colors['error']}]Workspace not found.[/{self.colors['error']}]")
+            return
+
+        try:
+            system = platform.system()
+            if system == "Darwin":  # macOS
+                subprocess.run(["open", str(workspace_dir)])
+            elif system == "Windows":
+                subprocess.run(["explorer", str(workspace_dir)])
+            else:  # Linux
+                subprocess.run(["xdg-open", str(workspace_dir)])
+            self.console.print(f"[{self.colors['success']}]Opened workspace: {workspace_dir}[/{self.colors['success']}]")
+        except Exception as e:
+            self.console.print(f"[{self.colors['error']}]Error opening workspace: {e}[/{self.colors['error']}]")
 
     def _show_coordination_rounds_table(self) -> None:
         """Display the coordination rounds table with rich formatting."""

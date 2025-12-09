@@ -49,7 +49,8 @@ Simply omit the question when running MassGen to enter interactive chat mode:
 
    ╭──────────────────────────────────────────────────────────────────────────────╮
    │  💬  Type your questions below                                               │
-   │  💡  Use slash commands: /help, /quit, /reset, /status, /config              │
+   │  💡  Use: /help, /quit, /reset, /status, /config, /context, /inspect         │
+   │  📝  For multi-line input: start with """ or '''                             │
    │  ⌨️   Press Ctrl+C to exit                                                   │
    ╰──────────────────────────────────────────────────────────────────────────────╯
 
@@ -105,12 +106,13 @@ Live visualization of agent interactions:
 Interactive Coordination Table
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Press ``r`` during a session to view:
+Use ``/inspect`` after a turn completes to view:
 
 * Complete history of agent coordination events
 * State transitions for each agent
 * Voting patterns and consensus evolution
-* Timeline of the conversation
+* Individual agent outputs before voting
+* Final coordinated answer
 
 Session Management
 ------------------
@@ -229,14 +231,86 @@ Special commands available during interactive sessions:
      - Show current session status (agents, mode, conversation history, config path)
    * - ``/config``
      - Open configuration file in default editor (macOS, Windows, Linux)
+   * - ``/context``
+     - Add or modify context paths to give agents access to project files
+   * - ``/inspect`` or ``/i``
+     - View agent outputs and coordination data from current or previous turns
+   * - ``/inspect <N>``
+     - View outputs from a specific turn number (e.g., ``/inspect 2``)
+   * - ``/inspect all``
+     - List all turns in the current session with summary
    * - ``/clear`` or ``/reset``
      - Reset conversation history and start fresh
    * - ``/quit`` or ``/exit`` or ``/q``
      - Exit interactive mode
    * - ``Ctrl+C``
      - Exit interactive mode
-   * - ``r`` (during execution)
-     - View complete coordination history
+
+Inspecting Turn History
+-----------------------
+
+The ``/inspect`` command allows you to review outputs from any turn in your multi-turn session:
+
+**List all turns:**
+
+.. code-block:: text
+
+   👤 User: /inspect all
+
+   ┌─────────────────────────────────────────────────────────────────────┐
+   │                    Session: session_20250108_143022                 │
+   ├──────┬──────────────────────────────────────────────────┬───────────┤
+   │ Turn │ Task                                             │ Winner    │
+   ├──────┼──────────────────────────────────────────────────┼───────────┤
+   │ 1    │ What is machine learning?                        │ agent_a   │
+   │ 2    │ Give me a practical example of supervised lear...│ agent_b   │
+   │ 3    │ How can I implement that in Python?              │ agent_a   │
+   └──────┴──────────────────────────────────────────────────┴───────────┘
+
+   Use /inspect <turn_number> to view details
+
+**Inspect a specific turn:**
+
+.. code-block:: text
+
+   👤 User: /inspect 2
+
+   === Turn 2 Inspection ===
+
+   ╭────────────────── Turn Metadata ──────────────────╮
+   │ Task:    Give me a practical example of supervi...│
+   │ Winner:  agent_b                                  │
+   │ Time:    2025-01-08T14:35:22.123456               │
+   │ Logs:    .massgen/massgen_logs/log_.../turn_2     │
+   ╰───────────────────────────────────────────────────╯
+
+   [Turn Inspection Menu]
+     1: View agent_a output
+     2: View agent_b output
+     f: Show final answer
+     s: Show system status log
+     r: Show coordination table
+     w: List workspace files (3 files)
+     o: Open workspace in file browser
+     q: Quit inspection
+
+   Enter your choice:
+
+**Inspection menu options:**
+
+* **Agent outputs (1, 2, ...)** - View the full output from each agent before voting
+* **Final answer (f)** - The coordinated response that was presented to you
+* **System status (s)** - Orchestrator logs showing coordination decisions
+* **Coordination table (r)** - Full history of voting and consensus
+* **Workspace files (w)** - Files created by agents during that turn
+* **Open workspace (o)** - Open the workspace folder in your file browser
+
+This is particularly useful for:
+
+* **Reviewing agent reasoning** - See how each agent approached the problem
+* **Understanding voting patterns** - Check why a particular agent was selected
+* **Debugging issues** - Examine coordination logs when results are unexpected
+* **Learning from history** - Reference previous successful approaches
 
 Real-Time Feedback
 ------------------
@@ -338,8 +412,9 @@ Best Practices
 1. **Start Broad** - Begin with general questions, then drill down
 2. **Reference Previous Turns** - Use "that", "the previous", "your earlier suggestion"
 3. **Clear When Switching Topics** - Use ``/clear`` to reset context
-4. **Review Coordination** - Press ``r`` to understand agent decision patterns
+4. **Review Coordination** - Use ``/inspect`` to understand agent decision patterns and compare outputs
 5. **Save Important Outputs** - Session storage preserves all turns for later review
+6. **Compare Agent Approaches** - Use ``/inspect`` to see how different agents approached the same problem
 
 Next Steps
 ----------

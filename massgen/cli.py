@@ -3212,12 +3212,312 @@ def should_run_builder() -> bool:
     return not default_config.exists()
 
 
+def _list_all_turns(session_id: Optional[str], current_turn: int, console: Console) -> None:
+    """List all turns in the current session."""
+    if not session_id:
+        console.print("[yellow]No active session. Complete a turn first.[/yellow]")
+        return
+
+    session_dir = Path(SESSION_STORAGE) / session_id
+
+    if not session_dir.exists():
+        console.print("[yellow]No session data available.[/yellow]")
+        return
+
+    if current_turn == 0:
+        console.print("[yellow]No turns completed yet.[/yellow]")
+        return
+
+    table = Table(title=f"Session: {session_id}")
+    table.add_column("Turn", style="cyan", width=6)
+    table.add_column("Task", style="white")
+    table.add_column("Winner", style="green", width=15)
+
+    for turn_num in range(1, current_turn + 1):
+        turn_dir = session_dir / f"turn_{turn_num}"
+        metadata_file = turn_dir / "metadata.json"
+
+        if metadata_file.exists():
+            metadata = json.loads(metadata_file.read_text())
+            task = metadata.get("task", "Unknown")
+            # Truncate long tasks
+            if len(task) > 60:
+                task = task[:57] + "..."
+            winner = metadata.get("winning_agent", "Unknown")
+            table.add_row(str(turn_num), task, winner)
+
+    console.print(table)
+    console.print("\n[dim]Use /inspect <turn_number> to view details[/dim]")
+
+
+def _find_log_dir_for_session(session_id: str, turn_number: int) -> Optional[Path]:
+    """Find the log directory for a given session and turn.
+
+    Searches through log directories to find one that matches the session_id
+    by checking execution_metadata.yaml files.
+    """
+    logs_base = Path(".massgen/massgen_logs")
+    if not logs_base.exists():
+        return None
+
+    # Search through log directories for matching session_id
+    for log_dir in sorted(logs_base.iterdir(), reverse=True):  # Most recent first
+        if not log_dir.is_dir() or not log_dir.name.startswith("log_"):
+            continue
+
+        turn_dir = log_dir / f"turn_{turn_number}"
+        if not turn_dir.exists():
+            continue
+
+        metadata_file = turn_dir / "execution_metadata.yaml"
+        if metadata_file.exists():
+            try:
+                metadata = yaml.safe_load(metadata_file.read_text())
+                cli_args = metadata.get("cli_args", {})
+                if cli_args.get("session_id") == session_id:
+                    return turn_dir
+            except Exception:
+                continue
+
+    return None
+
+
+def _show_turn_inspection(
+    session_id: str,
+    turn_number: int,
+    agents: Dict[str, Any],
+) -> None:
+    """Show inspection menu for a specific turn's outputs.
+
+    Uses data from both session storage and log directories to provide
+    full inspection capabilities including agent outputs, system status,
+    and coordination events.
+    """
+    console = Console()
+    session_dir = Path(SESSION_STORAGE) / session_id
+    turn_dir = session_dir / f"turn_{turn_number}"
+
+    if not turn_dir.exists():
+        print(f"{BRIGHT_YELLOW}No data for turn {turn_number}.{RESET}", flush=True)
+        return
+
+    # Find the corresponding log directory for richer data
+    log_turn_dir = _find_log_dir_for_session(session_id, turn_number)
+
+    # Load metadata from session
+    metadata_file = turn_dir / "metadata.json"
+    metadata = {}
+    if metadata_file.exists():
+        metadata = json.loads(metadata_file.read_text())
+
+    # Load answer from session
+    answer_file = turn_dir / "answer.txt"
+    answer_content = ""
+    if answer_file.exists():
+        answer_content = answer_file.read_text()
+
+    # Check workspace from session
+    workspace_dir = turn_dir / "workspace"
+    workspace_files = []
+    if workspace_dir.exists():
+        workspace_files = list(workspace_dir.rglob("*"))
+        workspace_files = [f for f in workspace_files if f.is_file()]
+
+    # Check for log data
+    agent_outputs_dir = log_turn_dir / "agent_outputs" if log_turn_dir else None
+    system_status_file = agent_outputs_dir / "system_status.txt" if agent_outputs_dir else None
+    log_turn_dir / "coordination_events.json" if log_turn_dir else None
+    coordination_table_file = log_turn_dir / "coordination_table.txt" if log_turn_dir else None
+
+    # Get available agent output files
+    agent_files = {}
+    if agent_outputs_dir and agent_outputs_dir.exists():
+        for f in agent_outputs_dir.glob("*.txt"):
+            if f.name.startswith("agent_") and not f.name.startswith("final_presentation"):
+                agent_id = f.stem.replace("agent_", "")
+                agent_files[agent_id] = f
+
+    # Get winning agent for display
+    winning_agent = metadata.get("winning_agent", "winner")
+
+    # Interactive menu - matches style of RichTerminalDisplay.show_agent_selector()
+    while True:
+        # Build menu content inside a panel like the original agent selector
+        menu_lines = []
+
+        # Intro description (matches original agent selector style)
+        menu_lines.append(
+            "This is a system inspection interface for diving into the multi-agent collaboration "
+            "behind the scenes in MassGen. It lets you examine each agent's original output and "
+            "compare it to the final MassGen answer in terms of quality. You can explore the "
+            "detailed communication, collaboration, voting, and decision-making process.",
+        )
+        menu_lines.append("")
+
+        # Turn metadata inline
+        task_preview = metadata.get("task", "N/A")
+        if len(task_preview) > 60:
+            task_preview = task_preview[:57] + "..."
+        menu_lines.append(f"[dim]Turn {turn_number} | Task: {task_preview} | Winner: {winning_agent}[/dim]")
+        menu_lines.append("")
+
+        menu_lines.append("[bold green]🎮 Select an option to inspect:[/bold green]")
+
+        # Agent outputs (from logs) - numbered options first
+        if agent_files:
+            for i, agent_id in enumerate(sorted(agent_files.keys()), 1):
+                menu_lines.append(f"  [yellow]{i}:[/yellow] Inspect the original answer and working log of agent {agent_id}")
+
+        # System status (s) - orchestrator log
+        if system_status_file and system_status_file.exists():
+            menu_lines.append("  [yellow]s:[/yellow] Inspect the orchestrator working log including the voting process")
+
+        # Coordination table (r)
+        if coordination_table_file and coordination_table_file.exists():
+            menu_lines.append("  [yellow]r:[/yellow] Display coordination table to see the full history of agent interactions and decisions")
+
+        # Final answer (f) - with winning agent info if available
+        menu_lines.append(f"  [yellow]f:[/yellow] Show final presentation from Selected Agent ({winning_agent})")
+
+        # Workspace files (w/o)
+        if workspace_files:
+            menu_lines.append(f"  [yellow]w:[/yellow] List workspace files ({len(workspace_files)} files)")
+            menu_lines.append("  [yellow]o:[/yellow] Open workspace in file browser")
+
+        # Quit (q)
+        menu_lines.append("  [yellow]q:[/yellow] Quit Inspection")
+        menu_lines.append("")
+
+        # Display in a panel matching the original agent selector style
+        console.print(
+            Panel(
+                "\n".join(menu_lines),
+                title="[bold]Agent Selector[/bold]",
+                border_style="cyan",
+            ),
+        )
+
+        try:
+            choice = input("Enter your choice: ").strip().lower()
+
+            # Check for agent number selection
+            if choice.isdigit():
+                idx = int(choice)
+                agent_ids = sorted(agent_files.keys())
+                if 1 <= idx <= len(agent_ids):
+                    agent_id = agent_ids[idx - 1]
+                    agent_file = agent_files[agent_id]
+                    content = agent_file.read_text()
+                    # Escape Rich markup in content
+                    if "[" in content:
+                        content = content.replace("[", r"\[")
+                    console.print("\n" + "=" * 80)
+                    console.print(
+                        Panel(
+                            content,
+                            title=f"[bold]{agent_id} Output[/bold]",
+                            border_style="cyan",
+                        ),
+                    )
+                    input("\nPress Enter to continue...")
+                    console.print("=" * 80 + "\n")
+                else:
+                    console.print("[red]Invalid agent number.[/red]")
+                continue
+
+            if choice == "f":
+                if answer_content:
+                    console.print("\n" + "=" * 80)
+                    # Escape Rich markup
+                    display_content = answer_content
+                    if "[" in display_content:
+                        display_content = display_content.replace("[", r"\[")
+                    console.print(
+                        Panel(
+                            display_content,
+                            title=f"[bold]Final Answer (Turn {turn_number})[/bold]",
+                            border_style="green",
+                        ),
+                    )
+                    input("\nPress Enter to continue...")
+                    console.print("=" * 80 + "\n")
+                else:
+                    console.print("[yellow]No answer content available.[/yellow]")
+
+            elif choice == "s" and system_status_file and system_status_file.exists():
+                content = system_status_file.read_text()
+                if "[" in content:
+                    content = content.replace("[", r"\[")
+                console.print("\n" + "=" * 80)
+                console.print(
+                    Panel(
+                        content,
+                        title="[bold]System Status Log[/bold]",
+                        border_style="magenta",
+                    ),
+                )
+                input("\nPress Enter to continue...")
+                console.print("=" * 80 + "\n")
+
+            elif choice == "r" and coordination_table_file and coordination_table_file.exists():
+                content = coordination_table_file.read_text()
+                if "[" in content:
+                    content = content.replace("[", r"\[")
+                console.print("\n" + "=" * 80)
+                console.print(
+                    Panel(
+                        content,
+                        title="[bold]Coordination Table[/bold]",
+                        border_style="yellow",
+                    ),
+                )
+                input("\nPress Enter to continue...")
+                console.print("=" * 80 + "\n")
+
+            elif choice == "w" and workspace_files:
+                console.print("\n[bold]Workspace Files:[/bold]")
+                for f in workspace_files[:20]:  # Limit to 20 files
+                    rel_path = f.relative_to(workspace_dir)
+                    console.print(f"  {rel_path}")
+                if len(workspace_files) > 20:
+                    console.print(f"  ... and {len(workspace_files) - 20} more files")
+                console.print(f"\n[dim]Workspace path: {workspace_dir}[/dim]")
+                input("\nPress Enter to continue...")
+
+            elif choice == "o" and workspace_files:
+                import platform
+                import subprocess
+
+                try:
+                    system = platform.system()
+                    if system == "Darwin":  # macOS
+                        subprocess.run(["open", str(workspace_dir)])
+                    elif system == "Windows":
+                        subprocess.run(["explorer", str(workspace_dir)])
+                    else:  # Linux
+                        subprocess.run(["xdg-open", str(workspace_dir)])
+                    console.print(f"[green]Opened workspace: {workspace_dir}[/green]")
+                except Exception as e:
+                    console.print(f"[red]Error opening workspace: {e}[/red]")
+
+            elif choice == "q":
+                break
+
+            else:
+                console.print("[red]Invalid choice. Please try again.[/red]")
+
+        except KeyboardInterrupt:
+            break
+
+    console.print()
+
+
 def print_help_messages():
     """Display help messages using Rich for better formatting."""
     rich_console = Console()
 
     help_content = """[dim]💬  Type your questions below
-💡  Use slash commands: [cyan]/help[/cyan], [cyan]/quit[/cyan], [cyan]/reset[/cyan], [cyan]/status[/cyan], [cyan]/config[/cyan]
+💡  Use slash commands: [cyan]/help[/cyan], [cyan]/quit[/cyan], [cyan]/reset[/cyan], [cyan]/status[/cyan], [cyan]/config[/cyan], [cyan]/context[/cyan], [cyan]/inspect[/cyan]
 📝  For multi-line input: start with [cyan]\"\"\"[/cyan] or [cyan]\'\'\'[/cyan]
 ⌨️   Press [cyan]Ctrl+C[/cyan] to exit[/dim]"""
 
@@ -3328,24 +3628,11 @@ async def run_interactive_mode(
     rich_console.print(config_panel)
     print()
 
-    # Prompt for context paths if filesystem is enabled
-    if original_config and orchestrator_cfg:
-        config_modified = prompt_for_context_paths(original_config, orchestrator_cfg)
-        if config_modified:
-            # Recreate agents with updated context paths (use same session)
-            enable_rate_limit = kwargs.get("enable_rate_limit", False)
-            agents = create_agents_from_config(
-                original_config,
-                orchestrator_cfg,
-                debug=debug,
-                enable_rate_limit=enable_rate_limit,
-                config_path=config_path,
-                memory_session_id=memory_session_id,
-            )
-            print(f"   {BRIGHT_GREEN}✓ Agents reloaded with updated context paths{RESET}", flush=True)
-            print()
-
     print_help_messages()
+
+    # In multi-turn mode, skip the automatic agent selector menu after each turn.
+    # Users can view outputs on demand via /inspect command.
+    ui_config["skip_agent_selector"] = True
 
     # Session management for multi-turn filesystem support
     # Use memory_session_id (unified with memory system) if provided, otherwise create later
@@ -3557,6 +3844,11 @@ async def run_interactive_mode(
                         )
                         print("   /status              - Show current status", flush=True)
                         print("   /config              - Open config file in editor", flush=True)
+                        print("   /context             - Add/modify context paths for file access", flush=True)
+                        print("   /inspect, /i         - View agent outputs", flush=True)
+                        print("     /inspect           - Current turn outputs", flush=True)
+                        print("     /inspect <N>       - View turn N outputs", flush=True)
+                        print("     /inspect all       - List all session turns", flush=True)
                         print(f"\n{BRIGHT_CYAN}💡 Multi-line Input:{RESET}", flush=True)
                         print("   Start with \"\"\" or ''' and end with the same delimiter", flush=True)
                         print('   Example: """', flush=True)
@@ -3602,6 +3894,53 @@ async def run_interactive_mode(
                                 print(f"   Config location: {config_path}", flush=True)
                         else:
                             print("\n❌ No config file available (using CLI arguments)", flush=True)
+                        continue
+                    elif command == "/inspect" or command.startswith("/inspect ") or command == "/i":
+                        # Parse: /inspect, /inspect <N>, /inspect all
+                        parts = question.split()
+
+                        if len(parts) == 1:
+                            # /inspect or /i - show current turn
+                            target_turn = current_turn
+                        elif parts[1].lower() == "all":
+                            # /inspect all - list all turns
+                            _list_all_turns(session_id, current_turn, rich_console)
+                            continue
+                        else:
+                            # /inspect <N> - specific turn
+                            try:
+                                target_turn = int(parts[1])
+                                if target_turn < 1 or target_turn > current_turn:
+                                    print(f"{BRIGHT_RED}Turn {target_turn} not found. Available: 1-{current_turn}{RESET}", flush=True)
+                                    continue
+                            except ValueError:
+                                print(f"{BRIGHT_RED}Invalid turn number. Usage: /inspect [turn_number|all]{RESET}", flush=True)
+                                continue
+
+                        # Show inspection for target turn
+                        if target_turn == 0:
+                            print(f"{BRIGHT_YELLOW}No turns completed yet. Complete a turn first.{RESET}", flush=True)
+                        else:
+                            _show_turn_inspection(session_id, target_turn, agents)
+                        continue
+                    elif command == "/context":
+                        # Add/modify context paths interactively
+                        if original_config and orchestrator_cfg:
+                            config_modified = prompt_for_context_paths(original_config, orchestrator_cfg)
+                            if config_modified:
+                                # Recreate agents with updated context paths
+                                enable_rate_limit = kwargs.get("enable_rate_limit", False)
+                                agents = create_agents_from_config(
+                                    original_config,
+                                    orchestrator_cfg,
+                                    debug=debug,
+                                    enable_rate_limit=enable_rate_limit,
+                                    config_path=config_path,
+                                    memory_session_id=session_id,
+                                )
+                                print(f"   {BRIGHT_GREEN}✓ Agents reloaded with updated context paths{RESET}", flush=True)
+                        else:
+                            print(f"{BRIGHT_YELLOW}Context paths require a config file with orchestrator settings.{RESET}", flush=True)
                         continue
                     else:
                         print(f"❓ Unknown command: {command}", flush=True)
@@ -3673,12 +4012,22 @@ async def run_interactive_mode(
                     # Add to conversation history
                     conversation_history.append({"role": "user", "content": question})
                     conversation_history.append({"role": "assistant", "content": response})
-                    print(f"\n{BRIGHT_GREEN}✅ Complete!{RESET}", flush=True)
-                    print(
-                        f"{BRIGHT_CYAN}💭 History: {len(conversation_history)//2} exchanges{RESET}",
-                        flush=True,
+
+                    # Display the final answer in chat style
+                    rich_console.print()
+                    rich_console.print(
+                        Panel(
+                            response,
+                            title="[bold green]🤖 MassGen[/bold green]",
+                            border_style="green",
+                            padding=(1, 2),
+                        ),
                     )
-                    print_help_messages()
+
+                    rich_console.print(
+                        f"\n[green]✅ Complete![/green] [cyan]💭 History: {len(conversation_history)//2} exchanges[/cyan]",
+                    )
+                    rich_console.print("[dim]Tip: Use /inspect to view agent outputs[/dim]")
 
                 elif was_cancelled:
                     # Turn was cancelled by user - message already printed
@@ -4055,9 +4404,6 @@ async def main(args):
                     restore_session_if_exists=restore_existing_session,
                     **kwargs,
                 )
-                # if response:
-                #     print(f"\n{BRIGHT_GREEN}Final Response:{RESET}", flush=True)
-                #     print(f"{response}", flush=True)
             else:
                 # Pass the config path and session_id to interactive mode
                 config_file_path = str(resolved_path) if args.config and resolved_path else None
