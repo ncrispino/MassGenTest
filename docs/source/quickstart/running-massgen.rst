@@ -298,6 +298,14 @@ By default, MassGen shows a rich terminal UI. Control the display:
    # Enable debug logging
    uv run massgen --debug --config config.yaml "Question"
 
+After execution completes, an interactive Agent Selector menu appears, allowing you to:
+
+* View each agent's original output and reasoning
+* See the orchestrator's system status and voting process
+* Display the coordination table with full agent interaction history
+* Browse workspace files created during execution
+* Press ``q`` to exit
+
 Next Steps
 ----------
 

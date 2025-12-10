@@ -75,6 +75,8 @@ CLI Parameters
      - Host address for the WebUI server (default: ``127.0.0.1``). Use ``0.0.0.0`` to allow external connections
    * - ``--web-port PORT``
      - Port for the WebUI server (default: ``8000``)
+   * - ``--no-browser``
+     - Don't auto-open browser when using ``--web`` with a question. Useful for automation or when running on servers
    * - ``"<your question>"``
      - Optional single-question input. If omitted, MassGen enters interactive chat mode
 

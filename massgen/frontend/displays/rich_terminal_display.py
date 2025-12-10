@@ -199,6 +199,7 @@ class RichTerminalDisplay(TerminalDisplay):
         self._input_thread = None
         self._stop_input_thread = False
         self._user_quit_requested = False  # Flag to signal user wants to quit
+        self._system_status_message = None  # System status message (e.g., "Cancelling turn...")
         self._original_settings = None
         self._agent_selector_active = False  # Flag to prevent duplicate agent selector calls
         self._human_input_in_progress = False  # Flag to prevent display auto-restart during human input
@@ -1379,12 +1380,14 @@ class RichTerminalDisplay(TerminalDisplay):
         elif key == "f":
             self._open_final_presentation_in_default_text_editor()
         elif key == "q":
-            # Quit the application - restore terminal and stop
+            # Quit the application - set flag for coordination loop to detect
             self._stop_input_thread = True
             self._user_quit_requested = True
-            self._restore_terminal_settings()
-            # Print quit message
-            self.console.print("\n[yellow]Exiting coordination...[/yellow]")
+            # Update system status in display (will be visible until display stops)
+            if hasattr(self, "update_system_status"):
+                self.update_system_status("⏸️ Cancelling turn...")
+            # DON'T print to console here - the Rich Live display would overwrite it
+            # The message will be printed by cli.py AFTER the display is stopped
 
     def _open_agent_in_default_text_editor(self, agent_id: str) -> None:
         """Open agent's txt file in default text editor."""
@@ -1755,6 +1758,21 @@ class RichTerminalDisplay(TerminalDisplay):
                         style=self.colors["success"],
                     )
 
+                # Add workspace options if workspace exists
+                workspace_path = self._get_workspace_path()
+                if workspace_path and Path(workspace_path).exists():
+                    workspace_files = list(Path(workspace_path).rglob("*"))
+                    workspace_files = [f for f in workspace_files if f.is_file()]
+                    if workspace_files:
+                        options_text.append(
+                            f"  w: List workspace files ({len(workspace_files)} files)\n",
+                            style=self.colors["warning"],
+                        )
+                        options_text.append(
+                            "  o: Open workspace in file browser\n",
+                            style=self.colors["warning"],
+                        )
+
                 options_text.append(
                     "  q: Quit Inspection\n",
                     style=self.colors["info"],
@@ -1781,6 +1799,12 @@ class RichTerminalDisplay(TerminalDisplay):
                     elif choice == "f" and self._stored_final_presentation:
                         # Display the final presentation in the terminal
                         self._redisplay_final_presentation()
+                    elif choice == "w" and workspace_path:
+                        # List workspace files
+                        self._list_workspace_files(workspace_path)
+                    elif choice == "o" and workspace_path:
+                        # Open workspace in file browser
+                        self._open_workspace(workspace_path)
                     elif choice == "q":
                         break
                     else:
@@ -1792,7 +1816,7 @@ class RichTerminalDisplay(TerminalDisplay):
                     break
         finally:
             # Always reset the flag when exiting
-            self._agent_selector_active = True
+            self._agent_selector_active = False
 
     def _redisplay_final_presentation(self) -> None:
         """Redisplay the stored final presentation."""
@@ -1816,6 +1840,60 @@ class RichTerminalDisplay(TerminalDisplay):
 
         # Add separator
         self.console.print("\n" + "=" * 80 + "\n")
+
+    def _get_workspace_path(self) -> Optional[str]:
+        """Get the workspace path from the orchestrator if available."""
+        if not hasattr(self, "orchestrator") or not self.orchestrator:
+            return None
+
+        try:
+            final_result = self.orchestrator.get_final_result()
+            if final_result:
+                return final_result.get("workspace_path")
+        except Exception:
+            pass
+
+        return None
+
+    def _list_workspace_files(self, workspace_path: str) -> None:
+        """List files in the workspace directory."""
+        workspace_dir = Path(workspace_path)
+        if not workspace_dir.exists():
+            self.console.print(f"[{self.colors['error']}]Workspace not found.[/{self.colors['error']}]")
+            return
+
+        workspace_files = list(workspace_dir.rglob("*"))
+        workspace_files = [f for f in workspace_files if f.is_file()]
+
+        self.console.print("\n[bold]Workspace Files:[/bold]")
+        for f in workspace_files[:20]:  # Limit to 20 files
+            rel_path = f.relative_to(workspace_dir)
+            self.console.print(f"  {rel_path}")
+        if len(workspace_files) > 20:
+            self.console.print(f"  ... and {len(workspace_files) - 20} more files")
+        self.console.print(f"\n[dim]Workspace path: {workspace_dir}[/dim]")
+        input("\nPress Enter to continue...")
+
+    def _open_workspace(self, workspace_path: str) -> None:
+        """Open the workspace directory in the system file browser."""
+        import platform
+
+        workspace_dir = Path(workspace_path)
+        if not workspace_dir.exists():
+            self.console.print(f"[{self.colors['error']}]Workspace not found.[/{self.colors['error']}]")
+            return
+
+        try:
+            system = platform.system()
+            if system == "Darwin":  # macOS
+                subprocess.run(["open", str(workspace_dir)])
+            elif system == "Windows":
+                subprocess.run(["explorer", str(workspace_dir)])
+            else:  # Linux
+                subprocess.run(["xdg-open", str(workspace_dir)])
+            self.console.print(f"[{self.colors['success']}]Opened workspace: {workspace_dir}[/{self.colors['success']}]")
+        except Exception as e:
+            self.console.print(f"[{self.colors['error']}]Error opening workspace: {e}[/{self.colors['error']}]")
 
     def _show_coordination_rounds_table(self) -> None:
         """Display the coordination rounds table with rich formatting."""
@@ -2395,6 +2473,13 @@ class RichTerminalDisplay(TerminalDisplay):
         """Create the footer panel with status and events."""
         footer_content = Text()
 
+        # System status message (shown prominently if set)
+        if self._system_status_message:
+            footer_content.append(
+                f"{self._system_status_message}\n",
+                style="bold yellow",
+            )
+
         # Agent status summary
         footer_content.append(
             "📊 Agent Status: ",
@@ -2734,6 +2819,19 @@ class RichTerminalDisplay(TerminalDisplay):
             elif old_status != status:
                 # Update the internal status but don't refresh display if already tracked
                 super().update_agent_status(agent_id, status)
+
+    def update_system_status(self, message: str | None) -> None:
+        """Update the system status message displayed in the footer.
+
+        Args:
+            message: Status message to display, or None to clear
+        """
+        with self._lock:
+            self._system_status_message = message
+            # Force footer update
+            self._footer_cache = None
+            self._pending_updates.add("footer")
+            self._schedule_async_update(force_update=True)
 
     def add_orchestrator_event(self, event: str) -> None:
         """Add an orchestrator coordination event with timestamp."""
@@ -3787,35 +3885,19 @@ class RichTerminalDisplay(TerminalDisplay):
                     except Exception:
                         raise
 
-                # Run the async function
-                import nest_asyncio
-
-                nest_asyncio.apply()
+                # Run the async function using safe async helper
+                from massgen.utils import run_async_safely
 
                 try:
-                    # Create new event loop if needed
-                    try:
-                        loop = asyncio.get_running_loop()
-                    except RuntimeError:
-                        loop = asyncio.new_event_loop()
-                        asyncio.set_event_loop(loop)
-
-                    # Run the coroutine and ensure it completes
-                    loop.run_until_complete(_get_and_display_presentation())
+                    run_async_safely(_get_and_display_presentation())
                     # Add explicit wait to ensure presentation is fully displayed
                     time.sleep(0.5)
                 except Exception:
-                    # If all else fails, try asyncio.run
-                    try:
-                        asyncio.run(_get_and_display_presentation())
-                        # Add explicit wait to ensure presentation is fully displayed
-                        time.sleep(0.5)
-                    except Exception:
-                        # Last resort: show stored content
-                        self._display_final_presentation_content(
-                            selected_agent,
-                            "Unable to retrieve live presentation.",
-                        )
+                    # Fallback: show stored content
+                    self._display_final_presentation_content(
+                        selected_agent,
+                        "Unable to retrieve live presentation.",
+                    )
             else:
                 # Fallback: try to get stored presentation content
                 status = self.orchestrator.get_status()
@@ -3873,6 +3955,14 @@ class RichTerminalDisplay(TerminalDisplay):
                 if buffer_content:
                     self.agent_outputs[agent_id].append(buffer_content)
                 self._text_buffers[agent_id] = ""
+
+    def reset_quit_request(self) -> None:
+        """Reset the quit request flag for a new turn.
+
+        Called at the start of each turn to allow the 'q' key to be used
+        for cancelling the new turn.
+        """
+        self._user_quit_requested = False
 
     def cleanup(self) -> None:
         """Clean up display resources."""
