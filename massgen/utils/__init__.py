@@ -3,6 +3,7 @@
 
 from enum import Enum
 
+from .async_helpers import run_async_safely
 from .model_matcher import get_all_models_for_provider
 
 # ===== Enums from original utils.py =====
@@ -134,6 +135,8 @@ def get_backend_type_from_model(model: str) -> str:
 
 
 __all__ = [
+    # Async utilities
+    "run_async_safely",
     # Model fetching
     "get_all_models_for_provider",
     # Enums
