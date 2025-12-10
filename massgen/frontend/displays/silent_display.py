@@ -7,7 +7,6 @@ Provides only essential information while detailed progress is available via sta
 """
 
 import time
-from pathlib import Path
 from typing import Optional
 
 from .base_display import BaseDisplay
@@ -44,9 +43,9 @@ class SilentDisplay(BaseDisplay):
         """Initialize the display with essential information only.
 
         Prints:
-        - LOG_DIR: Full path to log directory
-        - STATUS: Path to status.json file for real-time monitoring
         - QUESTION: The question being answered
+
+        Note: LOG_DIR and STATUS paths are printed by cli.py for automation mode.
 
         Args:
             question: The user's question
@@ -54,10 +53,12 @@ class SilentDisplay(BaseDisplay):
         """
         self.start_time = time.time()
 
-        if log_filename:
-            self.log_dir = Path(log_filename).parent
-            print(f"LOG_DIR: {self.log_dir}")
-            print(f"STATUS: {self.log_dir / 'status.json'}")
+        # Store log dir for internal use (paths already printed by cli.py)
+        from massgen.logger_config import get_log_session_dir
+
+        log_session_dir = get_log_session_dir()
+        if log_session_dir:
+            self.log_dir = log_session_dir
 
         print(f"QUESTION: {question}")
         print("[Coordination in progress - monitor status.json for real-time updates]")

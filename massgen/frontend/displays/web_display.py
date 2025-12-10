@@ -176,6 +176,19 @@ class WebDisplay(BaseDisplay):
             log_filename: Optional log file path
         """
         self.question = question  # Store for snapshot restoration
+
+        # Print status.json location to terminal for automation monitoring
+        # Use get_log_session_dir() to get the actual path with turn/attempt subdirectories
+        try:
+            from massgen.logger_config import get_log_session_dir
+
+            log_session_dir = get_log_session_dir()
+            if log_session_dir:
+                print(f"[WebUI] LOG_DIR: {log_session_dir}")
+                print(f"[WebUI] STATUS: {log_session_dir / 'status.json'}")
+        except Exception:
+            pass  # Silently ignore if logger not configured
+
         self._emit(
             "init",
             {

@@ -3930,16 +3930,18 @@ async def main(args):
 
             # Register new session immediately (before first turn runs)
             # Get log directory for session metadata
-            from massgen.logger_config import get_log_session_root
+            from massgen.logger_config import get_log_session_dir, get_log_session_root
             from massgen.session import SessionRegistry
 
             log_dir = get_log_session_root()
             log_dir_name = log_dir.name
 
             # Print LOG_DIR for automation mode (LLM agents need this to monitor progress)
+            # LOG_DIR is the main session directory, STATUS includes turn/attempt subdirectory
             if args.automation:
+                full_log_dir = get_log_session_dir()
                 print(f"LOG_DIR: {log_dir}")
-                print(f"STATUS: {log_dir / 'status.json'}")
+                print(f"STATUS: {full_log_dir / 'status.json'}")
 
             registry = SessionRegistry()
             registry.register_session(
@@ -4539,8 +4541,11 @@ Environment Variables:
                     auto_url += f"&config={config_encoded}"
                 print(f"{BRIGHT_GREEN}   Auto-launch URL: {auto_url}{RESET}")
 
-            if automation_mode and not question:
-                print(f"{BRIGHT_YELLOW}   Automation mode enabled (no question provided){RESET}")
+            if automation_mode:
+                print(f"{BRIGHT_YELLOW}   Automation mode enabled - progress visible in web UI{RESET}")
+                print(f"{BRIGHT_CYAN}   Status files: .massgen/massgen_logs/log_<timestamp>/turn_N/attempt_N/status.json{RESET}")
+                if not question:
+                    print(f"{BRIGHT_YELLOW}   (no question provided - use web UI to start coordination){RESET}")
 
             print(f"{BRIGHT_YELLOW}   Press Ctrl+C to stop{RESET}\n")
 
