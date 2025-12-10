@@ -227,7 +227,62 @@ Most configurations use environment variables for API keys:so
 
 ## Release History & Examples
 
-### v0.1.21 - Latest
+### v0.1.23 - Latest
+**New Features:** Turn History Inspection, Web UI Automation Mode, Docker Container Persistence, Async Execution Consistency
+
+**Key Features:**
+- **Turn History Inspection**: Review any turn's agent outputs and coordination data with `/inspect` commands
+- **Web UI Automation Mode**: Streamlined interface with `AutomationView` component for programmatic monitoring workflows
+- **Docker Container Persistence**: `SessionMountManager` pre-mounts session directories, eliminating container recreation between turns
+- **Improved Cancellation Handling**: Flag-based cancellation with terminal state restoration via `_restore_terminal_for_input()`
+- **Async Safety Utilities**: `run_async_safely()` handles nested event loops with ThreadPoolExecutor pattern
+
+**Documentation:**
+- `docs/source/user_guide/sessions/multi_turn_mode.rst` - Turn history inspection documentation
+
+**Try It:**
+```bash
+# Install or upgrade
+pip install --upgrade massgen
+
+# Multi-turn session with turn inspection
+massgen --config @examples/basic/multi/three_agents_default
+# After completing turns, use /inspect to review history:
+#   /inspect all  - List all turns with summaries
+#   /inspect 1    - View Turn 1 details with interactive menu
+
+# Web UI automation mode for programmatic monitoring
+massgen --automation --web --config @examples/basic/multi/three_agents_default \
+  "Analyze multi-agent AI coordination patterns"
+# Outputs LOG_DIR and STATUS path for external monitoring
+```
+
+### v0.1.22
+**New Features:** Shadow Agent Architecture, Full Context Broadcast Responses
+
+**Key Features:**
+- **Shadow Agent Architecture**: Lightweight agent clones spawned in parallel to respond to broadcasts without interrupting parent agents
+- **Full Context Inheritance**: Shadow agents copy parent's complete conversation history and current turn streaming content
+- **Non-Blocking Responses**: Parent agents continue working uninterrupted while shadows handle broadcast responses
+- **Automatic Response Collection**: Shadow agent responses collected via `asyncio.gather()` for maximum parallelism
+- **Parent Agent Awareness**: Informational messages injected into parent agents after shadow responds
+
+**Documentation:**
+- `docs/source/user_guide/advanced/agent_communication.rst` - Shadow agent architecture documentation
+
+**Try It:**
+```bash
+# Install or upgrade
+pip install --upgrade massgen
+
+# Run a multi-agent session with agent-to-agent communication enabled
+# Enable with: orchestrator.coordination.broadcast: "agents"
+massgen --config @examples/broadcast/test_broadcast_agents \
+  "Design a collaborative architecture for a microservices system"
+# Agents ask each other questions via ask_others() - shadow agents respond in parallel
+```
+
+### v0.1.21
 **New Features:** Graceful Cancellation System, Session Restoration for Incomplete Turns
 
 **Key Features:**

@@ -9,16 +9,84 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Recent Releases
 
+**v0.1.23 (December 10, 2025)** - Async Consistency & Web UI Automation Mode
+Enhanced multi-turn experience with persistent Docker containers, improved cancellation handling, turn history inspection commands, and Web UI automation mode for programmatic workflows.
+
+**v0.1.22 (December 8, 2025)** - Shadow Agent Architecture for Broadcast Responses
+Shadow agents now handle broadcast responses in parallel without interrupting parent agents. Each shadow inherits full conversation history and current turn context for context-aware responses.
+
 **v0.1.21 (December 5, 2025)** - Graceful Cancellation for Multi-Turn Sessions
 Ctrl+C now saves partial progress mid-coordination, preserving agent answers and workspaces. Sessions can resume with `--continue` without losing any work.
 
-**v0.1.20 (December 3, 2025)** - Web UI & Auto Docker Setup
-Browser-based real-time visualization with React frontend, WebSocket streaming, timeline views, and workspace browsing. Automatic Docker container setup for computer use agents.
-
-**v0.1.19 (December 2, 2025)** - LiteLLM Provider & Claude Strict Tool Use
-LiteLLM custom provider integration with programmatic API (`run()`, `build_config()`), Claude strict tool use with structured outputs support, and Gemini exponential backoff for rate limit resilience.
-
 ---
+
+## [0.1.23] - 2025-12-10
+
+### Added
+- **Turn History Inspection System**: New `/inspect` command for reviewing agent outputs and coordination data from any turn
+  - `/inspect` or `/inspect <N>` to view specific turn details with interactive menu
+  - `/inspect all` to list all turns in the session with task summaries and winning agents
+  - Menu options for viewing individual agent outputs, final answers, system logs, and coordination tables
+
+- **Web UI Automation Mode**: Streamlined interface for programmatic and monitoring workflows
+  - New `AutomationView` component with phase/elapsed time status header and session polling
+  - `--automation` flag enables timeline-focused view with `LOG_DIR` and `STATUS` path output
+  - Session persistence API (`mark_session_completed`) preserves completed sessions in session list
+
+### Changed
+- **Docker Container Persistence for Multi-Turn**: Containers now persist across turns for faster transitions
+  - New `SessionMountManager` class pre-mounts session directory to Docker containers
+  - Eliminates container recreation between turns (sub-second vs 2-5 second transitions)
+  - Automatic visibility of new turn workspace directories without remounting
+
+- **Multi-Turn Cancellation Handling**: Improved Ctrl+C behavior in multi-turn mode
+  - Flag-based cancellation instead of raising exceptions from signal handlers
+  - Coordination loop detects cancellation flag and stops Rich display before printing messages
+  - Terminal state restoration via `_restore_terminal_for_input()` after display cancellation
+  - Cancelled turns now build proper history entries with partial results
+
+- **Async Execution Consistency**: New utilities for safe async-from-sync execution
+  - New `run_async_safely()` helper for nested event loop handling
+  - ThreadPoolExecutor pattern prevents `async generator ignored GeneratorExit` errors
+  - Fixed mem0 adapter async lifecycle issues
+
+### Documentations, Configurations and Resources
+
+- **Multi-Turn Mode Documentation**: Updated `docs/source/user_guide/sessions/multi_turn_mode.rst` with `/inspect` command documentation, turn history inspection examples, and updated slash command reference
+
+### Technical Details
+- **Major Focus**: Async consistency, Web UI automation mode, Docker persistence for multi-turn, turn history inspection
+- **Contributors**: @ncrispino and the MassGen team
+
+## [0.1.22] - 2025-12-08
+
+### Added
+- **Shadow Agent System**: Lightweight agent clones that respond to broadcast questions without interrupting parent agents
+  - New `massgen/shadow_agent.py` with `ShadowAgentSpawner` class (482 lines)
+  - Shadow agents share parent's backend (stateless) and copy full conversation history
+  - Includes parent's current turn context: text content, tool calls, MCP calls, and reasoning
+  - Uses simplified system prompt (preserves identity, removes workflow tools)
+  - Generates tool-free text responses with debug file saving support (`--debug` flag)
+
+### Changed
+- **Broadcast Channel Architecture**: Replaced inject-then-continue pattern with parallel shadow agent spawning
+  - New `_spawn_shadow_agents()` method using `asyncio.gather()` for true parallelization
+  - Parent agents continue working uninterrupted while shadows respond
+  - Informational messages injected to parent agents after shadow responds ("FYI, you were asked X...")
+  - Deprecated `respond_to_broadcast` tool (responses now automatic)
+
+- **Agent Context Tracking**: Enhanced `SingleAgent` to track current turn state for shadow agent access
+  - New attributes: `_current_turn_content`, `_current_turn_tool_calls`, `_current_turn_reasoning`, `_current_turn_mcp_calls`
+  - Context cleared at start of each turn and populated during stream processing
+  - Enables shadow agents to see parent's work-in-progress
+
+### Documentations, Configurations and Resources
+
+- **Agent Communication Documentation**: Updated `docs/source/user_guide/advanced/agent_communication.rst` with shadow agent architecture details, full context responses explanation, and deprecated `respond_to_broadcast` notice
+
+### Technical Details
+- **Major Focus**: Shadow agent architecture for non-blocking, context-aware broadcast responses
+- **Contributors**: @ncrispino and the MassGen team
 
 ## [0.1.21] - 2025-12-05
 

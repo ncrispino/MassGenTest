@@ -175,6 +175,24 @@ Keyboard Shortcuts
 .. tip::
    Shortcuts are disabled when typing in input fields.
 
+Automation Mode
+---------------
+
+Combine ``--web`` with ``--automation`` for a streamlined automation view:
+
+.. code-block:: bash
+
+   uv run massgen --web --automation --config config.yaml "Your question"
+
+The automation view provides:
+
+* Minimal status header with phase, elapsed time, and status.json path
+* Timeline visualization of agent progress
+* Auto-polls for active sessions when no coordination is running
+* Designed for LLM agents monitoring MassGen executions
+
+Use ``--no-browser`` to prevent auto-opening the browser (useful for servers).
+
 CLI Options
 -----------
 
@@ -190,6 +208,8 @@ CLI Options
      - Server port (default: 8000)
    * - ``--web-host HOST``
      - Server host (default: 127.0.0.1)
+   * - ``--no-browser``
+     - Don't auto-open browser when using ``--web`` with a question
 
 **Examples:**
 
