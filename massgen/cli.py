@@ -3333,7 +3333,8 @@ def _find_log_dir_for_session(session_id: str, turn_number: int) -> Optional[Pat
     """Find the log directory for a given session and turn.
 
     Searches through log directories to find one that matches the session_id
-    by checking execution_metadata.yaml files.
+    by checking execution_metadata.yaml files. Returns the attempt directory
+    which contains the actual log data (agent_outputs, coordination_table, etc.).
     """
     logs_base = Path(".massgen/massgen_logs")
     if not logs_base.exists():
@@ -3348,15 +3349,21 @@ def _find_log_dir_for_session(session_id: str, turn_number: int) -> Optional[Pat
         if not turn_dir.exists():
             continue
 
-        metadata_file = turn_dir / "execution_metadata.yaml"
-        if metadata_file.exists():
-            try:
-                metadata = yaml.safe_load(metadata_file.read_text())
-                cli_args = metadata.get("cli_args", {})
-                if cli_args.get("session_id") == session_id:
-                    return turn_dir
-            except Exception:
+        # Look for attempt directories (e.g., attempt_1, attempt_2)
+        # The actual log data is stored inside attempt directories
+        for attempt_dir in sorted(turn_dir.iterdir(), reverse=True):
+            if not attempt_dir.is_dir() or not attempt_dir.name.startswith("attempt_"):
                 continue
+
+            metadata_file = attempt_dir / "execution_metadata.yaml"
+            if metadata_file.exists():
+                try:
+                    metadata = yaml.safe_load(metadata_file.read_text())
+                    cli_args = metadata.get("cli_args", {})
+                    if cli_args.get("session_id") == session_id:
+                        return attempt_dir
+                except Exception:
+                    continue
 
     return None
 
