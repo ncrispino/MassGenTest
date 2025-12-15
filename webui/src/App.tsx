@@ -8,7 +8,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Send, Wifi, WifiOff, AlertCircle, XCircle, ArrowLeft, Loader2, Trophy, X, FileCode } from 'lucide-react';
 import { useWebSocket, ConnectionStatus } from './hooks/useWebSocket';
-import { useAgentStore, selectQuestion, selectIsComplete, selectAnswers, selectViewMode, selectSelectedAgent, selectAgents, selectFinalAnswer, selectSelectingWinner, selectVoteDistribution, selectAutomationMode } from './stores/agentStore';
+import { useAgentStore, selectQuestion, selectIsComplete, selectAnswers, selectViewMode, selectSelectedAgent, selectAgents, selectFinalAnswer, selectSelectingWinner, selectVoteDistribution, selectAutomationMode, selectInitStatus } from './stores/agentStore';
 import { useThemeStore } from './stores/themeStore';
 import { AgentCarousel } from './components/AgentCarousel';
 import { AgentCard } from './components/AgentCard';
@@ -67,6 +67,7 @@ export function App() {
   const selectingWinner = useAgentStore(selectSelectingWinner);
   const voteDistribution = useAgentStore(selectVoteDistribution);
   const automationMode = useAgentStore(selectAutomationMode);
+  const initStatus = useAgentStore(selectInitStatus);
   const reset = useAgentStore((s) => s.reset);
   const backToCoordination = useAgentStore((s) => s.backToCoordination);
   const setViewMode = useAgentStore((s) => s.setViewMode);
@@ -391,8 +392,39 @@ export function App() {
             </motion.div>
           )}
 
+          {/* Initialization Status (shown during config loading, agent setup, etc.) */}
+          {initStatus && (
+            <motion.div
+              initial={{ opacity: 0, y: -10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0 }}
+              className="bg-blue-900/30 border border-blue-700 rounded-lg p-6"
+            >
+              <div className="flex items-center gap-4 mb-4">
+                <Loader2 className="w-6 h-6 text-blue-400 animate-spin" />
+                <span className="text-blue-100 text-lg font-medium">{initStatus.message}</span>
+              </div>
+              {/* Progress bar */}
+              <div className="w-full bg-gray-700 rounded-full h-2.5">
+                <motion.div
+                  className="bg-blue-500 h-2.5 rounded-full"
+                  initial={{ width: 0 }}
+                  animate={{ width: `${initStatus.progress}%` }}
+                  transition={{ duration: 0.3, ease: 'easeOut' }}
+                />
+              </div>
+              <div className="mt-2 text-xs text-gray-400">
+                {initStatus.step === 'config' && 'Loading and validating configuration...'}
+                {initStatus.step === 'agents' && 'Setting up agent containers and connections...'}
+                {initStatus.step === 'agents_ready' && 'Agents initialized successfully'}
+                {initStatus.step === 'orchestrator' && 'Preparing coordination engine...'}
+                {initStatus.step === 'starting' && 'Ready to begin coordination'}
+              </div>
+            </motion.div>
+          )}
+
           {/* No Config Warning */}
-          {!selectedConfig && !question && (
+          {!selectedConfig && !question && !initStatus && (
             <motion.div
               initial={{ opacity: 0, y: -10 }}
               animate={{ opacity: 1, y: 0 }}
@@ -408,8 +440,8 @@ export function App() {
           {/* View Mode Routing - flex-1 for full height in finalStreaming */}
           <div className="flex-1 min-h-0">
           <AnimatePresence mode="sync">
-            {/* Coordination View - All Agents */}
-            {viewMode === 'coordination' && (
+            {/* Coordination View - All Agents (hide when showing init status) */}
+            {viewMode === 'coordination' && !initStatus && (
               <motion.section
                 key="coordination"
                 initial={{ opacity: 0 }}

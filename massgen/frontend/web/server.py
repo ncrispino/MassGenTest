@@ -1669,6 +1669,19 @@ async def run_coordination(
     """
     import traceback
 
+    async def send_init_status(message: str, step: str, progress: int = 0) -> None:
+        """Send initialization status to WebSocket clients."""
+        await manager.broadcast(
+            session_id,
+            {
+                "type": "init_status",
+                "message": message,
+                "step": step,
+                "progress": progress,
+                "session_id": session_id,
+            },
+        )
+
     try:
         # Import here to avoid circular imports
         from massgen.agent_config import AgentConfig, CoordinationConfig
@@ -1679,6 +1692,9 @@ async def run_coordination(
         )
         from massgen.frontend.coordination_ui import CoordinationUI
         from massgen.orchestrator import Orchestrator
+
+        # Send initial status
+        await send_init_status("Loading configuration...", "config", 10)
 
         # Load config from YAML file
         if not config_path:
@@ -1693,6 +1709,11 @@ async def run_coordination(
 
         # Extract orchestrator config dict from YAML
         orchestrator_cfg = config.get("orchestrator", {})
+
+        # Send agent setup status (this is the slow part - Docker containers, etc.)
+        agent_configs = config.get("agents", [])
+        num_agents = len(agent_configs)
+        await send_init_status(f"Setting up {num_agents} agents...", "agents", 30)
 
         # Create agents from config
         agents = create_agents_from_config(
@@ -1716,8 +1737,12 @@ async def run_coordination(
             if model_name:
                 agent_models[agent_id] = model_name
 
+        await send_init_status(f"Agents ready: {', '.join(agent_ids)}", "agents_ready", 60)
+
         # Create web display with agent_models
         display = manager.create_display(session_id, agent_ids, agent_models)
+
+        await send_init_status("Initializing orchestrator...", "orchestrator", 80)
 
         # Build AgentConfig object for orchestrator (required by Orchestrator)
         orchestrator_config = AgentConfig()
@@ -1789,6 +1814,8 @@ async def run_coordination(
             display=display,
             display_type="web",
         )
+
+        await send_init_status("Starting coordination...", "starting", 100)
 
         # Run coordination
         await ui.coordinate(orchestrator, question)

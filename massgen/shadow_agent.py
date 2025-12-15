@@ -187,18 +187,26 @@ You are responding to a question from another agent in your team.
 **Response Depth: {response_depth.upper()}**
 {depth_instruction}
 
-**Your Task:**
-1. Read the question carefully
-2. Consider your current work context and knowledge
-3. Provide a helpful, relevant answer
+**What You Know:**
+- Your own work context and conversation history (what YOU have been doing)
+- Your general knowledge and expertise
+- The question text from the asking agent
 
-**Important:**
+**What You Do NOT Know:**
+- The asking agent's workspace, files, or current work
+- What the asking agent has discovered or built
 - You do NOT have access to any tools in this mode
+
+**Your Task:**
+1. Read the question carefully - the question text is your ONLY window into their work
+2. Draw on your own context and expertise to provide helpful guidance
+3. If the question lacks necessary context, provide general guidance and note what additional info would help
+4. Do NOT assume details about their project unless explicitly stated in the question
+
+**Format:**
 - Simply provide your answer as text
 - Your response will be sent back to the asking agent
-- After responding, this session ends (single-turn)
-
-Focus on being helpful to your teammate.""",
+- After responding, this session ends (single-turn)""",
         )
 
         return "\n".join(prompt_parts)

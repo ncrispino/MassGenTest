@@ -1741,6 +1741,13 @@ Your answer:"""
                 yield chunk
             return
 
+        # Emit startup status update for UI
+        yield StreamChunk(
+            type="system_status",
+            content="Initializing coordination...",
+            source=self.orchestrator_id,
+        )
+
         log_stream_chunk(
             "orchestrator",
             "content",
@@ -1750,6 +1757,13 @@ Your answer:"""
         yield StreamChunk(
             type="content",
             content="🚀 Starting multi-agent coordination...\n\n",
+            source=self.orchestrator_id,
+        )
+
+        # Emit status update: preparing agent environments
+        yield StreamChunk(
+            type="system_status",
+            content=f"Preparing {len(self.agents)} agent environments...",
             source=self.orchestrator_id,
         )
 
@@ -1763,6 +1777,15 @@ Your answer:"""
             self.agent_states[agent_id].has_voted = False
             self.agent_states[agent_id].restart_pending = True
 
+        # Emit status update: checking MCP/tool availability
+        has_mcp_agents = any(hasattr(agent, "backend") and hasattr(agent.backend, "config") and agent.backend.config.get("mcp_servers") for agent in self.agents.values())
+        if has_mcp_agents:
+            yield StreamChunk(
+                type="system_status",
+                content="Connecting to MCP servers...",
+                source=self.orchestrator_id,
+            )
+
         log_stream_chunk(
             "orchestrator",
             "content",
@@ -1772,6 +1795,13 @@ Your answer:"""
         yield StreamChunk(
             type="content",
             content="## 📋 Agents Coordinating\n",
+            source=self.orchestrator_id,
+        )
+
+        # Emit status update: coordination started
+        yield StreamChunk(
+            type="system_status",
+            content="Agents working on task...",
             source=self.orchestrator_id,
         )
 
@@ -3685,16 +3715,21 @@ Your answer:"""
                             yield ("done", None)
                             return
                         elif tool_name in ("ask_others", "check_broadcast_status", "get_broadcast_responses"):
-                            # Broadcast tools are now handled as custom tools by the backend
-                            # Backend will execute them recursively, no orchestrator handling needed
-                            pass
+                            # Broadcast tools are handled as custom tools by the backend
+                            # Mark as workflow tool found to avoid retry enforcement
+                            # The agent will continue and provide new_answer or vote after receiving broadcast response
+                            workflow_tool_found = True
+                            # Don't return - let the loop continue so agent can process broadcast result
+                            # and provide a proper workflow response (new_answer or vote)
                         elif tool_name.startswith("mcp") or "__" in tool_name:
                             # MCP tools (with or without mcp__ prefix) and custom tools are handled by the backend
                             # Tool results are streamed separately via StreamChunks
-                            pass
+                            # Mark as workflow progress to avoid retry enforcement while agent is doing work
+                            workflow_tool_found = True
                         elif tool_name.startswith("custom_tool"):
                             # Custom tools are handled by the backend and their results are streamed separately
-                            pass
+                            # Mark as workflow progress to avoid retry enforcement while agent is doing work
+                            workflow_tool_found = True
                         else:
                             # Non-workflow tools not yet implemented
                             yield (

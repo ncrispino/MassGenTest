@@ -8,6 +8,7 @@ export type AgentStatus = 'waiting' | 'working' | 'voting' | 'completed' | 'fail
 // WebSocket event types (match Python WebDisplay events)
 export type WSEventType =
   | 'init'
+  | 'init_status'
   | 'agent_content'
   | 'agent_status'
   | 'orchestrator_event'
@@ -51,6 +52,20 @@ export interface InitEvent extends WSMessage {
   agents: string[];
   agent_models?: Record<string, string>;  // Map of agent_id -> model name
   theme: string;
+}
+
+// Initialization status (shown during config loading, agent setup, etc.)
+export interface InitStatus {
+  message: string;
+  step: string;  // 'config' | 'agents' | 'agents_ready' | 'orchestrator' | 'starting'
+  progress: number;  // 0-100
+}
+
+export interface InitStatusEvent extends WSMessage {
+  type: 'init_status';
+  message: string;
+  step: string;
+  progress: number;
 }
 
 export interface AgentContentEvent extends WSMessage {
@@ -266,11 +281,14 @@ export interface SessionState {
   automationMode: boolean;
   // Log directory path for status.json monitoring
   logDir?: string;
+  // Initialization status (shown during config loading, agent setup, etc.)
+  initStatus?: InitStatus;
 }
 
 // Union type for all WebSocket events
 export type WSEvent =
   | InitEvent
+  | InitStatusEvent
   | AgentContentEvent
   | AgentStatusEvent
   | OrchestratorEvent

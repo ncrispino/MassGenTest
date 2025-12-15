@@ -5125,16 +5125,17 @@ Environment Variables:
             else:
                 print(f"{BRIGHT_YELLOW}   No config specified - use --config or select in UI{RESET}")
 
-            # Build auto-launch URL if question is provided
-            auto_url = None
-            if question:
-                import urllib.parse
+            # Build auto-launch URL with question and/or config if provided
+            import urllib.parse
 
-                prompt_encoded = urllib.parse.quote(question)
-                auto_url = f"http://{args.web_host}:{args.web_port}/?prompt={prompt_encoded}"
-                if config_path:
-                    config_encoded = urllib.parse.quote(config_path)
-                    auto_url += f"&config={config_encoded}"
+            base_url = f"http://{args.web_host}:{args.web_port}/"
+            url_params = []
+            if question:
+                url_params.append(f"prompt={urllib.parse.quote(question)}")
+            if config_path:
+                url_params.append(f"config={urllib.parse.quote(config_path)}")
+            auto_url = f"{base_url}?{'&'.join(url_params)}" if url_params else base_url
+            if url_params:
                 print(f"{BRIGHT_GREEN}   Auto-launch URL: {auto_url}{RESET}")
 
             if automation_mode:
@@ -5145,9 +5146,9 @@ Environment Variables:
 
             print(f"{BRIGHT_YELLOW}   Press Ctrl+C to stop{RESET}\n")
 
-            # Auto-open browser if question+config provided (unless --no-browser or automation mode)
+            # Auto-open browser (unless --no-browser or automation mode)
             no_browser = getattr(args, "no_browser", False)
-            if auto_url and config_path and not no_browser and not automation_mode:
+            if not no_browser and not automation_mode:
                 import threading
                 import webbrowser
 

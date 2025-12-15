@@ -8,6 +8,8 @@ agents:
       cwd: workspace1
       enable_mcp_command_line: true
       command_line_execution_mode: docker
+      command_line_docker_network_mode: "bridge"
+      command_line_docker_enable_sudo: true
 
   - id: agent_b
     backend:
@@ -16,6 +18,8 @@ agents:
       cwd: workspace2
       enable_mcp_command_line: true
       command_line_execution_mode: docker
+      command_line_docker_network_mode: "bridge"
+      command_line_docker_enable_sudo: true
 
 orchestrator:
   # Workspace configuration
@@ -26,7 +30,7 @@ orchestrator:
   coordination:
     broadcast: "agents"  # Options: false | "agents" | "human"
     broadcast_sensitivity: "high"  # Options: "low" | "medium" | "high" (how frequently agents use ask_others)
-    response_depth: "medium"  # Options: "low" | "medium" | "high" (test-time compute scaling for shadow agents)
+    response_depth: "high"  # Options: "low" | "medium" | "high" (test-time compute scaling for shadow agents)
     broadcast_timeout: 300
     broadcast_wait_by_default: true  # Blocking mode by default
     max_broadcasts_per_agent: 10
