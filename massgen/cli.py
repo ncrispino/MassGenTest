@@ -3220,7 +3220,6 @@ CMD ["/start.sh"]
             print("  Browsers: Firefox, Chromium")
             print(f"\n{BRIGHT_CYAN}You can now run computer use examples:{RESET}")
             print('  massgen --config @examples/tools/computer_use_docker_example.yaml "Open Firefox"')
-            print('  massgen --config massgen/configs/tools/custom_tools/qwen_computer_use_docker_example.yaml "..."')
             print('  massgen --config massgen/configs/tools/custom_tools/ui_tars_docker_example.yaml "..."\n')
             return True
         else:
