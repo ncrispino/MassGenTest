@@ -651,20 +651,43 @@ Monitoring and Debugging
 Context Window Logs
 ~~~~~~~~~~~~~~~~~~~
 
+MassGen uses **buffer-based context tracking** to accurately monitor token usage. The conversation buffer captures ALL content including tool calls, tool results, injections, and reasoning—not just turn-level messages.
+
+**Token Tracking Priority**:
+
+1. **Official API counts** (at stream end): Most accurate for cost/pricing
+2. **Buffer estimation** (fallback): Captures all content when API counts unavailable
+
 Monitor context usage in real-time:
 
 .. code-block:: text
 
-   📊 Context Window (Turn 5): 45,000 / 128,000 tokens (35%)
+   # Using official API token counts (most accurate)
+   📊 Context Window (Turn 5): 45,000 / 128,000 tokens (35%) [API actual]
+
+   # Using buffer estimation (fallback)
+   📊 Context Buffer (Turn 5): 45,000 / 128,000 tokens (35%) [buffer]
 
 When compression triggers:
 
 .. code-block:: text
 
-   ⚠️  Context Window (Turn 11): 96,000 / 128,000 tokens (75%) - Approaching limit!
+   ⚠️  Context Buffer (Turn 11): 96,000 / 128,000 tokens (75%) [buffer] - Approaching limit!
    🔄 Attempting compression (96,000 → 51,200 tokens)
    📦 Context compressed: Removed 15 messages (44,800 tokens).
       Kept 8 recent messages (51,200 tokens).
+
+**Why Buffer-Based Tracking?**
+
+The conversation buffer is the true source of context sent to agents. Unlike message-based tracking, it includes:
+
+- Tool calls and their arguments
+- Tool results (can be very large)
+- Injections from other agents
+- Pending content not yet flushed
+- Reasoning/thinking content
+
+This provides accurate context usage even mid-stream, before official API counts are available.
 
 Memory Operations
 ~~~~~~~~~~~~~~~~~
@@ -1216,6 +1239,15 @@ For programmatic usage, see the memory module docstrings:
 - ``massgen.memory.ConversationMemory`` - Conversation memory API
 - ``massgen.memory._context_monitor`` - Context monitoring utilities
 
+  - ``log_context_usage_from_buffer(buffer, turn_number)`` - Buffer-based tracking (recommended)
+  - ``log_context_usage_from_tokens(tokens, turn_number)`` - Official API token counts
+  - ``log_context_usage(messages, turn_number)`` - Legacy message-based tracking
+
+- ``massgen.conversation_buffer.AgentConversationBuffer`` - Conversation buffer
+
+  - ``estimate_tokens(calculator)`` - Get total token count including pending content
+  - ``get_token_stats(calculator)`` - Get breakdown by entry type (user, assistant, tool_call, etc.)
+
 Examples
 --------
 
@@ -1233,25 +1265,26 @@ Future Improvements
 Planned Features
 ~~~~~~~~~~~~~~~~
 
-**1. Chunk-Level Token Tracking**
+**1. Proactive Streaming Interruption** *(Partially Implemented)*
 
-**Current**: Token counting happens after complete response (message-level)
+**Implemented (v0.1.25+)**: Buffer-based token tracking captures ALL content during streaming:
 
 .. code-block:: text
 
    [Agent streaming response...]
-   → [Response complete]
-   → [Count tokens on full message]
+   → [Buffer tracks: tool calls, results, reasoning, content]
+   → [Pre-processing: 📊 Context Buffer: 45K / 128K tokens [buffer]]
+   → [Post-processing: 📊 Context Window: 45K / 128K tokens [API actual]]
    → [Compress if needed]
 
-**Issue**: Can't stop mid-stream if response exceeds budget
+**Remaining**: Proactive interruption when approaching budget
 
-**Planned**: Track tokens during streaming, warn agent when approaching limit
+**Planned**: Inject warning to agent mid-stream when approaching limit
 
 .. code-block:: text
 
    [Agent streaming...]
-   → [Token counter: 45K / 50K budget]
+   → [Buffer counter: 95K / 128K budget]
    → [Agent sees: "⚠️ Approaching token limit, wrap up"]
    → [Agent concludes early]
 
@@ -1306,13 +1339,15 @@ Planned Features
 Known Limitations
 ~~~~~~~~~~~~~~~~~
 
-**Token Counting During Streaming**
+**Token Counting During Streaming** *(Improved in v0.1.25+)*
 
-Context is counted **after** response completes, not during streaming chunks. This means:
+Buffer-based tracking now provides context estimates during streaming:
 
-- ✅ Accurate final count
-- ❌ Can't stop mid-response if too large
-- ❌ No proactive budget warnings
+- ✅ **Before processing**: Buffer estimation shows current context size
+- ✅ **After response**: Official API counts used when available
+- ✅ **Accurate tracking**: Includes tool calls, results, injections, reasoning
+- ❌ Can't stop mid-response if too large (proactive interruption planned)
+- ❌ No real-time budget warnings to agent yet
 
 **Workaround**: Set conservative compression thresholds (50-60%) to leave headroom.
 

@@ -142,10 +142,11 @@ This only affects ConversationMemory - PersistentMemory is preserved across rese
 
 #### Chat Flags
 
-The `chat()` method supports flags for memory control:
+The `chat()` method supports flags for memory and state control:
 
 - **`clear_history=True`**: Clears conversation memory before processing new messages
-- **`reset_chat=True`**: Resets the conversation memory state
+- **`reset_chat=True`**: Resets conversation history to provided messages (but preserves buffer by default)
+- **`clear_buffer=True`**: Clears the conversation buffer (only use on genuine new answer restarts)
 
 ```python
 # Start a new conversation, clearing previous history
@@ -153,11 +154,31 @@ async for chunk in agent.chat(messages, clear_history=True):
     # Process chunks
     pass
 
-# Reset chat state
+# Reset chat state (preserves buffer for tool tracking)
 async for chunk in agent.chat(messages, reset_chat=True):
     # Process chunks
     pass
+
+# Full reset: new conversation AND clear all tracking (first attempt only)
+async for chunk in agent.chat(messages, reset_chat=True, clear_buffer=True):
+    # Process chunks
+    pass
 ```
+
+#### Understanding reset_chat vs clear_buffer
+
+These parameters control different aspects of agent state:
+
+| Parameter | Controls | When to Use |
+|-----------|----------|-------------|
+| `reset_chat` | Conversation history (what LLM sees) | Phase transitions (presentation, post-eval) |
+| `clear_buffer` | Buffer tracking (tool calls, metrics) | Only on genuine new answer restarts |
+
+**Why separate?** The buffer serves two purposes:
+1. Building messages for LLM via `to_messages()`
+2. Tracking tool calls, tokens, and debugging info
+
+During phase transitions (e.g., initial answer → presentation), we want to reset the conversation (new system prompt) but preserve tool call tracking for metrics. Only when starting a completely new answer attempt should both be cleared.
 
 ## Error Handling
 
@@ -326,10 +347,13 @@ User Message
 │         Agent.chat() Called                │
 └───────────────────────────────────────────┘
     │
-    ├─── Check clear_history/reset_chat flags
+    ├─── Check clear_history/reset_chat/clear_buffer flags
     │         │
     │         ├─── If clear_history: Clear ConversationMemory
-    │         └─── If reset_chat: Reset ConversationMemory
+    │         ├─── If reset_chat: Reset conversation_history to provided messages
+    │         │         └─── If clear_buffer: Also clear AgentConversationBuffer
+    │         │         └─── Else: Preserve buffer, add phase boundary
+    │         └─── If clear_buffer only: Clear buffer tracking
     │
     ├─── Retrieve from PersistentMemory
     │         │
@@ -337,9 +361,14 @@ User Message
     │
     ├─── Process messages with LLM backend
     │         │
+    │         ├─── Stream content → buffer.add_content()
+    │         ├─── Tool calls → buffer.add_tool_call()
     │         └─── Generate response
     │
     └─── Record to Memories
+              │
+              ├─── Flush buffer → buffer.flush_turn()
+              │         └─── Commits pending content to entries
               │
               ├─── Add to ConversationMemory
               │         └─── Store user + assistant messages

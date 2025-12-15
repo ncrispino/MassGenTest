@@ -1000,6 +1000,14 @@ class Orchestrator(ChatAgent):
                 logger.warning(f"[Orchestrator] Agent {agent_id} has no workspace path, skipping compression setup")
                 continue
 
+            # Create conversation_memory if agent doesn't have one
+            # This is required for context_compressor to work
+            if not agent.conversation_memory:
+                from .memory import ConversationMemory
+
+                agent.conversation_memory = ConversationMemory()
+                logger.info(f"[Orchestrator] Created conversation_memory for {agent_id} (required for compression)")
+
             # Create context monitor if agent doesn't have one
             # This is required for compression to work - tracks token usage
             if not agent.context_monitor:
@@ -3631,6 +3639,7 @@ Your answer:"""
                         conversation_messages,
                         self.workflow_tools,
                         reset_chat=True,
+                        clear_buffer=True,  # First attempt: fresh start, clear buffer
                         current_stage=CoordinationStage.INITIAL_ANSWER,
                         orchestrator_turn=self._current_turn + 1,  # Next turn number
                         previous_winners=self._winning_agents_history.copy(),
@@ -3647,6 +3656,7 @@ Your answer:"""
                             buffer_messages,
                             self.workflow_tools,
                             reset_chat=True,  # Reset to buffer state (includes injection)
+                            # clear_buffer=False: preserve buffer for tool call tracking
                             current_stage=CoordinationStage.INITIAL_ANSWER,
                             orchestrator_turn=self._current_turn + 1,
                             previous_winners=self._winning_agents_history.copy(),
@@ -3658,6 +3668,7 @@ Your answer:"""
                             conversation_messages,
                             self.workflow_tools,
                             reset_chat=True,
+                            # clear_buffer=False: preserve buffer for tool call tracking
                             current_stage=CoordinationStage.INITIAL_ANSWER,
                             orchestrator_turn=self._current_turn + 1,
                             previous_winners=self._winning_agents_history.copy(),
@@ -4536,6 +4547,8 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
             )
 
         # Use agent's chat method with proper system message (reset chat for clean presentation)
+        # Note: reset_chat=True but clear_buffer=False (default) to preserve tool call history
+        # Buffer is only cleared on first attempt of a new answer, not on presentation phase
         presentation_content = ""
         final_snapshot_saved = False  # Track whether snapshot was saved during stream
         was_cancelled = False  # Track if we broke out due to cancellation
@@ -4544,7 +4557,8 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
             # Track final round iterations (each chunk is like an iteration)
             async for chunk in agent.chat(
                 presentation_messages,
-                reset_chat=True,
+                reset_chat=True,  # Reset conversation history for clean presentation
+                # clear_buffer=False (default): preserve buffer for complete tool call tracking
                 current_stage=CoordinationStage.PRESENTATION,
                 orchestrator_turn=self._current_turn,
                 previous_winners=self._winning_agents_history.copy(),
@@ -4798,6 +4812,8 @@ Then call either submit(confirmed=True) if the answer is satisfactory, or restar
             )
 
         # Stream evaluation with tools (with timeout protection)
+        # Note: reset_chat=True but clear_buffer=False (default) to preserve tool call history
+        # Buffer is only cleared on first attempt of a new answer, not on post-evaluation phase
         evaluation_complete = False
         tool_call_detected = False
 
@@ -4807,7 +4823,8 @@ Then call either submit(confirmed=True) if the answer is satisfactory, or restar
                 async for chunk in agent.chat(
                     messages=evaluation_messages,
                     tools=post_eval_tools,
-                    reset_chat=True,
+                    reset_chat=True,  # Reset conversation history for clean evaluation
+                    # clear_buffer=False (default): preserve buffer for complete tool call tracking
                     current_stage=CoordinationStage.POST_EVALUATION,
                     orchestrator_turn=self._current_turn,
                     previous_winners=self._winning_agents_history.copy(),

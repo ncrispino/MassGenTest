@@ -15,7 +15,10 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from .token_manager.token_manager import TokenCostCalculator
 
 
 class EntryType(Enum):
@@ -28,6 +31,9 @@ class EntryType(Enum):
     TOOL_RESULT = "tool_result"  # Tool execution result
     INJECTION = "injection"  # Injected updates from other agents
     REASONING = "reasoning"  # Agent thinking/reasoning content
+    MEMORY_CONTEXT = "memory_context"  # Retrieved memories from persistent storage
+    COMPRESSION_REQUEST = "compression_request"  # Request to compress context
+    ENFORCEMENT = "enforcement"  # Orchestrator enforcement messages
 
 
 @dataclass
@@ -244,15 +250,73 @@ class AgentConversationBuffer:
                         call["result"] = result
                         return
 
-        # No matching call found, add standalone result entry
-        self._pending_tool_calls.append(
-            {
-                "name": tool_name,
-                "call_id": call_id,
-                "arguments": {},
-                "result": result,
-                "timestamp": time.time(),
-            },
+        # No matching pending call found - add result directly to entries
+        # This happens when tool results come in after flush (e.g., orchestrator tool execution)
+        self.entries.append(
+            ConversationEntry(
+                timestamp=time.time(),
+                entry_type=EntryType.TOOL_RESULT,
+                content=result,
+                metadata={
+                    **self._base_metadata(),
+                    "tool_name": tool_name,
+                    "call_id": call_id,
+                },
+            ),
+        )
+
+    def add_memory_context(self, content: str, source: str = "persistent") -> None:
+        """
+        Add retrieved memory context to buffer.
+
+        Args:
+            content: The memory context content
+            source: Source of memory ("persistent", "shared", "conversation")
+        """
+        self.entries.append(
+            ConversationEntry(
+                timestamp=time.time(),
+                entry_type=EntryType.MEMORY_CONTEXT,
+                content=content,
+                metadata={**self._base_metadata(), "source": source},
+            ),
+        )
+
+    def add_compression_request(self, content: str, usage_info: Optional[Dict[str, Any]] = None) -> None:
+        """
+        Add compression request message to buffer.
+
+        Args:
+            content: The compression request content
+            usage_info: Optional token usage info that triggered compression
+        """
+        metadata = self._base_metadata()
+        if usage_info:
+            metadata["usage_info"] = usage_info
+        self.entries.append(
+            ConversationEntry(
+                timestamp=time.time(),
+                entry_type=EntryType.COMPRESSION_REQUEST,
+                content=content,
+                metadata=metadata,
+            ),
+        )
+
+    def add_enforcement(self, content: str, reason: str = "") -> None:
+        """
+        Add orchestrator enforcement message to buffer.
+
+        Args:
+            content: The enforcement message content
+            reason: Why enforcement was needed (e.g., "no_workflow_tool", "invalid_vote")
+        """
+        self.entries.append(
+            ConversationEntry(
+                timestamp=time.time(),
+                entry_type=EntryType.ENFORCEMENT,
+                content=content,
+                metadata={**self._base_metadata(), "reason": reason},
+            ),
         )
 
     def flush_turn(self) -> None:
@@ -278,12 +342,21 @@ class AgentConversationBuffer:
 
         # Add tool calls and results
         for call in self._pending_tool_calls:
+            # Get arguments - may be dict or already JSON string
+            args = call.get("arguments", {})
+            if isinstance(args, str):
+                # Already a JSON string, use as-is
+                args_str = args
+            else:
+                # Convert dict to JSON string
+                args_str = json.dumps(args, default=str)
+
             # Add tool call entry
             self.entries.append(
                 ConversationEntry(
                     timestamp=call["timestamp"],
                     entry_type=EntryType.TOOL_CALL,
-                    content=json.dumps(call.get("arguments", {}), default=str),
+                    content=args_str,
                     metadata={
                         **base_meta,
                         "tool_name": call["name"],
@@ -431,9 +504,10 @@ class AgentConversationBuffer:
         include_tool_details: bool = True,
     ) -> List[Dict[str, Any]]:
         """
-        Convert buffer to LLM message format.
+        Convert buffer to generic LLM message format.
 
         This produces the message list that gets sent to the LLM API.
+        For backend-specific formats, use to_openai_messages() or to_anthropic_messages().
 
         Args:
             include_reasoning: If True, include reasoning entries
@@ -443,8 +517,12 @@ class AgentConversationBuffer:
             List of message dicts in LLM format
         """
         messages = []
+        i = 0
+        entries = self.entries
 
-        for entry in self.entries:
+        while i < len(entries):
+            entry = entries[i]
+
             if entry.entry_type == EntryType.SYSTEM:
                 messages.append({"role": "system", "content": entry.content})
 
@@ -465,23 +543,32 @@ class AgentConversationBuffer:
 
             elif entry.entry_type == EntryType.TOOL_CALL:
                 if include_tool_details:
-                    tool_name = entry.metadata.get("tool_name", "unknown")
+                    # Batch consecutive TOOL_CALL entries into a single assistant message
+                    # OpenAI format requires all tool calls from one turn in one message
+                    tool_calls = []
+                    while i < len(entries) and entries[i].entry_type == EntryType.TOOL_CALL:
+                        tc_entry = entries[i]
+                        tool_name = tc_entry.metadata.get("tool_name", "unknown")
+                        call_id = tc_entry.metadata.get("call_id", "")
+                        tool_calls.append(
+                            {
+                                "id": call_id,
+                                "type": "function",
+                                "function": {
+                                    "name": tool_name,
+                                    "arguments": tc_entry.content,
+                                },
+                            },
+                        )
+                        i += 1
                     messages.append(
                         {
                             "role": "assistant",
-                            "content": f"[Tool Call: {tool_name}]\n{entry.content}",
-                            "tool_calls": [
-                                {
-                                    "id": entry.metadata.get("call_id", ""),
-                                    "type": "function",
-                                    "function": {
-                                        "name": tool_name,
-                                        "arguments": entry.content,
-                                    },
-                                },
-                            ],
+                            "content": None,
+                            "tool_calls": tool_calls,
                         },
                     )
+                    continue  # Skip the i += 1 at the end since we already advanced
 
             elif entry.entry_type == EntryType.TOOL_RESULT:
                 if include_tool_details:
@@ -497,7 +584,269 @@ class AgentConversationBuffer:
                 # Injection appears as user message from orchestrator
                 messages.append({"role": "user", "content": entry.content})
 
+            elif entry.entry_type == EntryType.MEMORY_CONTEXT:
+                # Memory context injected as system message
+                messages.append({"role": "system", "content": entry.content})
+
+            elif entry.entry_type == EntryType.COMPRESSION_REQUEST:
+                # Compression request as user message
+                messages.append({"role": "user", "content": entry.content})
+
+            elif entry.entry_type == EntryType.ENFORCEMENT:
+                # Enforcement as user message from orchestrator
+                messages.append({"role": "user", "content": entry.content})
+
+            i += 1
+
         return messages
+
+    def to_openai_messages(self, include_reasoning: bool = False) -> List[Dict[str, Any]]:
+        """
+        Convert buffer to OpenAI-compatible message format.
+
+        Handles tool calls properly:
+        - Assistant messages with tool_calls can also have content
+        - Consecutive tool calls from same turn are batched
+        - Tool results use role="tool" with tool_call_id
+
+        Args:
+            include_reasoning: If True, include reasoning entries
+
+        Returns:
+            List of message dicts in OpenAI format
+        """
+        messages = []
+
+        # Buffer for accumulating assistant turn content
+        pending_content = None
+        pending_tool_calls = []
+
+        def flush_assistant_turn():
+            """Flush accumulated assistant content + tool calls as one message."""
+            nonlocal pending_content, pending_tool_calls
+            if pending_content is not None or pending_tool_calls:
+                msg = {"role": "assistant"}
+                if pending_content:
+                    msg["content"] = pending_content
+                else:
+                    msg["content"] = None
+                if pending_tool_calls:
+                    msg["tool_calls"] = pending_tool_calls
+                messages.append(msg)
+                pending_content = None
+                pending_tool_calls = []
+
+        for entry in self.entries:
+            # These entry types end an assistant turn
+            if entry.entry_type in (
+                EntryType.SYSTEM,
+                EntryType.USER,
+                EntryType.TOOL_RESULT,
+                EntryType.INJECTION,
+                EntryType.MEMORY_CONTEXT,
+                EntryType.COMPRESSION_REQUEST,
+                EntryType.ENFORCEMENT,
+            ):
+                flush_assistant_turn()
+
+            if entry.entry_type == EntryType.SYSTEM:
+                messages.append({"role": "system", "content": entry.content})
+
+            elif entry.entry_type == EntryType.USER:
+                messages.append({"role": "user", "content": entry.content})
+
+            elif entry.entry_type == EntryType.ASSISTANT:
+                # Accumulate content for this turn
+                if pending_content is None:
+                    pending_content = entry.content
+                else:
+                    pending_content += "\n" + entry.content
+
+            elif entry.entry_type == EntryType.REASONING:
+                if include_reasoning:
+                    # Accumulate reasoning as content
+                    reasoning_text = f"[Reasoning]\n{entry.content}"
+                    if pending_content is None:
+                        pending_content = reasoning_text
+                    else:
+                        pending_content += "\n" + reasoning_text
+
+            elif entry.entry_type == EntryType.TOOL_CALL:
+                tool_name = entry.metadata.get("tool_name", "unknown")
+                call_id = entry.metadata.get("call_id", f"call_{len(pending_tool_calls)}")
+                pending_tool_calls.append(
+                    {
+                        "id": call_id,
+                        "type": "function",
+                        "function": {
+                            "name": tool_name,
+                            "arguments": entry.content,
+                        },
+                    },
+                )
+
+            elif entry.entry_type == EntryType.TOOL_RESULT:
+                messages.append(
+                    {
+                        "role": "tool",
+                        "content": entry.content,
+                        "tool_call_id": entry.metadata.get("call_id", ""),
+                    },
+                )
+
+            elif entry.entry_type == EntryType.INJECTION:
+                messages.append({"role": "user", "content": entry.content})
+
+            elif entry.entry_type == EntryType.MEMORY_CONTEXT:
+                messages.append({"role": "system", "content": entry.content})
+
+            elif entry.entry_type == EntryType.COMPRESSION_REQUEST:
+                messages.append({"role": "user", "content": entry.content})
+
+            elif entry.entry_type == EntryType.ENFORCEMENT:
+                messages.append({"role": "user", "content": entry.content})
+
+        # Flush any remaining assistant content/tool calls
+        flush_assistant_turn()
+
+        return messages
+
+    def to_anthropic_messages(self, include_reasoning: bool = False) -> List[Dict[str, Any]]:
+        """
+        Convert buffer to Anthropic Claude-compatible message format.
+
+        Handles tool calls properly:
+        - Tool calls use content blocks with type="tool_use"
+        - Tool results use content blocks with type="tool_result"
+        - System messages should be extracted separately by caller
+
+        Args:
+            include_reasoning: If True, include reasoning/thinking entries
+
+        Returns:
+            List of message dicts in Anthropic format
+        """
+        messages = []
+        pending_content_blocks = []  # Accumulate content blocks for assistant turn
+
+        def flush_assistant_turn():
+            """Flush accumulated content blocks as one assistant message."""
+            nonlocal pending_content_blocks
+            if pending_content_blocks:
+                messages.append(
+                    {
+                        "role": "assistant",
+                        "content": pending_content_blocks,
+                    },
+                )
+                pending_content_blocks = []
+
+        for entry in self.entries:
+            # These entry types end an assistant turn
+            if entry.entry_type in (
+                EntryType.SYSTEM,
+                EntryType.USER,
+                EntryType.TOOL_RESULT,
+                EntryType.INJECTION,
+                EntryType.MEMORY_CONTEXT,
+                EntryType.COMPRESSION_REQUEST,
+                EntryType.ENFORCEMENT,
+            ):
+                flush_assistant_turn()
+
+            if entry.entry_type == EntryType.SYSTEM:
+                # Anthropic handles system separately via system parameter
+                # Include as user message with prefix for compatibility
+                messages.append({"role": "user", "content": f"[System]: {entry.content}"})
+
+            elif entry.entry_type == EntryType.USER:
+                messages.append({"role": "user", "content": entry.content})
+
+            elif entry.entry_type == EntryType.ASSISTANT:
+                pending_content_blocks.append(
+                    {
+                        "type": "text",
+                        "text": entry.content,
+                    },
+                )
+
+            elif entry.entry_type == EntryType.REASONING:
+                if include_reasoning:
+                    pending_content_blocks.append(
+                        {
+                            "type": "thinking",
+                            "thinking": entry.content,
+                        },
+                    )
+
+            elif entry.entry_type == EntryType.TOOL_CALL:
+                tool_name = entry.metadata.get("tool_name", "unknown")
+                call_id = entry.metadata.get("call_id", f"toolu_{len(pending_content_blocks)}")
+                # Parse arguments from JSON string
+                try:
+                    args = json.loads(entry.content) if entry.content else {}
+                except json.JSONDecodeError:
+                    args = {"raw": entry.content}
+                pending_content_blocks.append(
+                    {
+                        "type": "tool_use",
+                        "id": call_id,
+                        "name": tool_name,
+                        "input": args,
+                    },
+                )
+
+            elif entry.entry_type == EntryType.TOOL_RESULT:
+                # Tool result as user message with tool_result block
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": entry.metadata.get("call_id", ""),
+                                "content": entry.content,
+                            },
+                        ],
+                    },
+                )
+
+            elif entry.entry_type == EntryType.INJECTION:
+                messages.append({"role": "user", "content": entry.content})
+
+            elif entry.entry_type == EntryType.MEMORY_CONTEXT:
+                messages.append({"role": "user", "content": f"[Memory Context]: {entry.content}"})
+
+            elif entry.entry_type == EntryType.COMPRESSION_REQUEST:
+                messages.append({"role": "user", "content": entry.content})
+
+            elif entry.entry_type == EntryType.ENFORCEMENT:
+                messages.append({"role": "user", "content": entry.content})
+
+        # Flush any remaining content blocks
+        flush_assistant_turn()
+
+        return messages
+
+    def to_messages_for_backend(self, provider: str) -> List[Dict[str, Any]]:
+        """
+        Convert buffer to messages for a specific backend provider.
+
+        Args:
+            provider: Provider name (e.g., "openai", "anthropic", "google")
+
+        Returns:
+            List of message dicts in provider-specific format
+        """
+        provider_lower = provider.lower() if provider else ""
+
+        if provider_lower in ("anthropic", "claude", "claude_code"):
+            return self.to_anthropic_messages()
+        elif provider_lower in ("openai", "azure", "azure openai"):
+            return self.to_openai_messages()
+        else:
+            # Generic format works for most providers
+            return self.to_messages()
 
     def to_simple_messages(self) -> List[Dict[str, str]]:
         """
@@ -511,9 +860,14 @@ class AgentConversationBuffer:
         messages = []
 
         for entry in self.entries:
-            if entry.entry_type in (EntryType.SYSTEM, EntryType.USER, EntryType.INJECTION):
-                role = "system" if entry.entry_type == EntryType.SYSTEM else "user"
-                messages.append({"role": role, "content": entry.content})
+            if entry.entry_type == EntryType.SYSTEM:
+                messages.append({"role": "system", "content": entry.content})
+
+            elif entry.entry_type in (EntryType.USER, EntryType.INJECTION, EntryType.ENFORCEMENT, EntryType.COMPRESSION_REQUEST):
+                messages.append({"role": "user", "content": entry.content})
+
+            elif entry.entry_type == EntryType.MEMORY_CONTEXT:
+                messages.append({"role": "system", "content": entry.content})
 
             elif entry.entry_type in (EntryType.ASSISTANT, EntryType.REASONING):
                 messages.append({"role": "assistant", "content": entry.content})
@@ -568,6 +922,118 @@ class AgentConversationBuffer:
         return bool(
             self._pending_content.strip() or self._pending_reasoning.strip() or self._pending_tool_calls,
         )
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Token counting
+    # ─────────────────────────────────────────────────────────────────────
+
+    def estimate_tokens(self, calculator: Optional["TokenCostCalculator"] = None) -> int:
+        """
+        Estimate total tokens in buffer including pending content.
+
+        This provides an accurate view of context usage by counting ALL content
+        in the buffer: entries, pending content, pending reasoning, and pending
+        tool calls.
+
+        Args:
+            calculator: Optional TokenCostCalculator instance. If not provided,
+                       creates a new one (slightly slower).
+
+        Returns:
+            Estimated total token count
+        """
+        if calculator is None:
+            from .token_manager.token_manager import TokenCostCalculator
+
+            calculator = TokenCostCalculator()
+
+        # Build complete content from all entries
+        all_content = []
+
+        # Committed entries
+        for entry in self.entries:
+            all_content.append(entry.content)
+            # Include tool metadata in token count
+            if entry.entry_type in (EntryType.TOOL_CALL, EntryType.TOOL_RESULT):
+                tool_name = entry.metadata.get("tool_name", "")
+                if tool_name:
+                    all_content.append(tool_name)
+
+        # Pending content (not yet flushed)
+        if self._pending_content.strip():
+            all_content.append(self._pending_content)
+
+        if self._pending_reasoning.strip():
+            all_content.append(self._pending_reasoning)
+
+        for call in self._pending_tool_calls:
+            all_content.append(call.get("name", ""))
+            all_content.append(json.dumps(call.get("arguments", {}), default=str))
+            if call.get("result"):
+                all_content.append(str(call["result"]))
+
+        # Join and estimate
+        combined = "\n".join(all_content)
+        return calculator.estimate_tokens(combined)
+
+    def get_token_stats(self, calculator: Optional["TokenCostCalculator"] = None) -> Dict[str, int]:
+        """
+        Get detailed token breakdown by entry type.
+
+        Args:
+            calculator: Optional TokenCostCalculator instance.
+
+        Returns:
+            Dict with token counts per entry type and totals
+        """
+        if calculator is None:
+            from .token_manager.token_manager import TokenCostCalculator
+
+            calculator = TokenCostCalculator()
+
+        stats: Dict[str, int] = {
+            "user": 0,
+            "assistant": 0,
+            "system": 0,
+            "tool_call": 0,
+            "tool_result": 0,
+            "injection": 0,
+            "reasoning": 0,
+            "memory_context": 0,
+            "compression_request": 0,
+            "enforcement": 0,
+            "pending": 0,
+            "total": 0,
+        }
+
+        # Count committed entries by type
+        for entry in self.entries:
+            content = entry.content
+            if entry.entry_type in (EntryType.TOOL_CALL, EntryType.TOOL_RESULT):
+                tool_name = entry.metadata.get("tool_name", "")
+                if tool_name:
+                    content = f"{tool_name}\n{content}"
+
+            tokens = calculator.estimate_tokens(content)
+            stats[entry.entry_type.value] += tokens
+            stats["total"] += tokens
+
+        # Count pending content
+        pending_tokens = 0
+        if self._pending_content.strip():
+            pending_tokens += calculator.estimate_tokens(self._pending_content)
+        if self._pending_reasoning.strip():
+            pending_tokens += calculator.estimate_tokens(self._pending_reasoning)
+        for call in self._pending_tool_calls:
+            pending_tokens += calculator.estimate_tokens(call.get("name", ""))
+            pending_tokens += calculator.estimate_tokens(json.dumps(call.get("arguments", {}), default=str))
+            if call.get("result"):
+                pending_tokens += calculator.estimate_tokens(str(call["result"]))
+
+        stats["pending"] = pending_tokens
+        stats["total"] += pending_tokens
+
+        return stats
 
     # ─────────────────────────────────────────────────────────────────────
     # Persistence
@@ -637,6 +1103,22 @@ class AgentConversationBuffer:
         self._injection_timestamps = []
         self.current_attempt = 0
         self.current_round = 0
+
+    def clear_system_entries(self) -> int:
+        """
+        Clear all SYSTEM type entries from the buffer.
+
+        This is used during phase transitions where system messages change
+        (e.g., initial answer -> presentation -> post-evaluation).
+        Each phase has its own system prompt, so old ones should be removed.
+
+        Returns:
+            Number of system entries removed
+        """
+        original_count = len(self.entries)
+        self.entries = [e for e in self.entries if e.entry_type != EntryType.SYSTEM]
+        removed = original_count - len(self.entries)
+        return removed
 
     def save_to_text_file(self, path: Path) -> None:
         """
