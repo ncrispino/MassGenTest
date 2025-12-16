@@ -101,9 +101,9 @@ class ClaudeCodeBackend(LLMBackend):
         """Initialize ClaudeCodeBackend.
 
         Args:
-            api_key: Anthropic API key (falls back to ANTHROPIC_API_KEY env
-                    var). If None, will attempt to use Claude subscription
-                    authentication
+            api_key: Anthropic API key (falls back to CLAUDE_CODE_API_KEY,
+                    then ANTHROPIC_API_KEY env vars). If None, will attempt
+                    to use Claude subscription authentication
             **kwargs: Additional configuration options including:
                 - model: Claude model name
                 - system_prompt: Base system prompt
@@ -118,7 +118,7 @@ class ClaudeCodeBackend(LLMBackend):
         """
         super().__init__(api_key, **kwargs)
 
-        self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY")
+        self.api_key = api_key or os.getenv("CLAUDE_CODE_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
         self.use_subscription_auth = not bool(self.api_key)
 
         # Set API key in environment for SDK if provided

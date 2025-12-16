@@ -473,6 +473,7 @@ class ConfigBuilder:
                 # Main backends (high priority)
                 ("openai", "OpenAI", "OPENAI_API_KEY"),
                 ("anthropic", "Anthropic (Claude)", "ANTHROPIC_API_KEY"),
+                ("claude_code", "Claude Code (optional)", "CLAUDE_CODE_API_KEY"),
                 ("gemini", "Google Gemini", "GOOGLE_API_KEY"),
                 ("grok", "xAI (Grok)", "XAI_API_KEY"),
                 # Azure
@@ -532,6 +533,11 @@ class ConfigBuilder:
                 # Prompt for API key (with password-style input)
                 console.print(f"[bold cyan]{name}[/bold cyan]")
                 console.print(f"[dim]Environment variable: {env_var}[/dim]")
+
+                # Add context for Claude Code
+                if provider_id == "claude_code":
+                    console.print("[dim]Note: Only needed if you want a separate key for claude_code backend.[/dim]")
+                    console.print("[dim]      Leave empty to use ANTHROPIC_API_KEY or Claude subscription.[/dim]")
 
                 api_key = Prompt.ask(
                     f"Enter your {name} API key",
