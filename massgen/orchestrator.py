@@ -2333,6 +2333,8 @@ Your answer:"""
                             agent.backend.end_round_tracking("error")
                         # Error ends the agent's current stream
                         completed_agent_ids.add(agent_id)
+                        # Mark agent as killed to prevent respawning in the while loop
+                        self.agent_states[agent_id].is_killed = True
                         log_stream_chunk("orchestrator", "error", chunk_data, agent_id)
                         yield StreamChunk(type="content", content=f"❌ {chunk_data}", source=agent_id)
                         log_stream_chunk("orchestrator", "agent_status", "completed", agent_id)
@@ -2378,6 +2380,8 @@ Your answer:"""
                     if agent and hasattr(agent.backend, "end_round_tracking"):
                         agent.backend.end_round_tracking("error")
                     completed_agent_ids.add(agent_id)
+                    # Mark agent as killed to prevent respawning in the while loop
+                    self.agent_states[agent_id].is_killed = True
                     log_stream_chunk("orchestrator", "error", f"❌ Stream error - {e}", agent_id)
                     yield StreamChunk(
                         type="content",
