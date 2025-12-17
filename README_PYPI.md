@@ -68,7 +68,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🆕 Latest Features</h3></summary>
 
-- [v0.1.23 Features](#-latest-features-v0123)
+- [v0.1.25 Features](#-latest-features-v0125)
 </details>
 
 <details open>
@@ -122,15 +122,15 @@ This project started with the "threads of thought" and "iterative refinement" id
 <summary><h3>🗺️ Roadmap</h3></summary>
 
 - Recent Achievements
-  - [v0.1.23](#recent-achievements-v0123)
-  - [v0.0.3 - v0.1.22](#previous-achievements-v003---v0122)
+  - [v0.1.25](#recent-achievements-v0125)
+  - [v0.0.3 - v0.1.24](#previous-achievements-v003---v0124)
 - [Key Future Enhancements](#key-future-enhancements)
   - Bug Fixes & Backend Improvements
   - Advanced Agent Collaboration
   - Expanded Model, Tool & Agent Integrations
   - Improved Performance & Scalability
   - Enhanced Developer Experience
-- [v0.1.24 Roadmap](#v0124-roadmap)
+- [v0.1.26 Roadmap](#v0126-roadmap)
 </details>
 
 <details open>
@@ -155,38 +155,36 @@ This project started with the "threads of thought" and "iterative refinement" id
 
 ---
 
-## 🆕 Latest Features (v0.1.23)
+## 🆕 Latest Features (v0.1.25)
 
-**🎉 Released: December 10, 2025**
+**🎉 Released: December 15, 2025**
 
-**What's New in v0.1.23:**
-- **🔍 Turn History Inspection** - Review any turn's agent outputs, coordination data, and logs with `/inspect` commands
-- **🖥️ Web UI Automation Mode** - Streamlined interface for programmatic workflows with `--automation` flag
-- **🐳 Faster Multi-Turn Docker** - Containers persist across turns
+**What's New in v0.1.25:**
+- **🤖 UI-TARS Custom Tool** - New custom tool for ByteDance's UI-TARS-1.5-7B model for GUI automation with vision and reasoning
+- **🧠 GPT-5.2 Support** - OpenAI's latest GPT-5.2 model added as the new default
+- **📝 Evolving Skills** - Create reusable workflow plans that improve through iteration
+- **🎨 Enhanced Textual Terminal** - Improved adaptive layouts and dark/light themes
 
 **Key Improvements:**
-- Improved Ctrl+C handling in multi-turn mode with proper terminal restoration
-- New `run_async_safely()` utility prevents async event loop conflicts
-- Cancelled turns now preserve partial results in session history
+- OpenRouter Gemini reasoning details now preserved in streaming responses
+- LiteLLM provider context path fixes for better integration
 
-**Try v0.1.23 Features:**
+**Try v0.1.25 Features:**
 ```bash
-# Install or upgrade from PyPI
+# Install or upgrade
 pip install --upgrade massgen
 
-# Or with uv (faster)
-uv pip install massgen
+# Try UI-TARS computer use (requires UI_TARS_API_KEY and UI_TARS_ENDPOINT)
+massgen --config @examples/tools/custom_tools/ui_tars_browser_example \
+  "Search for 'Python asyncio' on Google and summarize the first result"
 
-# Multi-turn session with turn inspection
-massgen --config @examples/basic/multi/three_agents_default
-# After completing turns, use /inspect to review history:
-#   /inspect all  - List all turns with summaries
-#   /inspect 1    - View Turn 1 details with interactive menu
+# Use the new Textual terminal display
+massgen --config @examples/basic/single_agent_textual \
+  "What is the transformers in deep learning?"
 
-# Web UI automation mode for programmatic monitoring
-massgen --automation --web --config @examples/basic/multi/three_agents_default \
-  "Analyze multi-agent AI coordination patterns"
-# Outputs LOG_DIR and STATUS path for external monitoring
+# Create evolving skills with previous session discovery
+massgen --config @examples/skills/skills_with_previous_sessions \
+  "Create a web scraping workflow that extracts article titles from news sites"
 ```
 
 → [See full release history and examples](massgen/configs/README.md#release-history--examples)
@@ -1125,28 +1123,32 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 ⚠️ **Early Stage Notice:** As MassGen is in active development, please expect upcoming breaking architecture changes as we continue to refine and improve the system.
 
-### Recent Achievements (v0.1.23)
+### Recent Achievements (v0.1.25)
 
-**🎉 Released: December 10, 2025**
+**🎉 Released: December 15, 2025**
 
-#### Turn History Inspection
-- **Interactive Inspection Commands**: `/inspect` and `/inspect <N>` for reviewing turn details with menu-driven navigation
-- **Session Overview**: `/inspect all` lists all turns with task summaries and winning agents
-- **Comprehensive Access**: View agent outputs, final answers, system logs, and coordination tables
+#### New Tools & Models
+- **UI-TARS Custom Tool**: ByteDance's UI-TARS-1.5-7B model for GUI automation via HuggingFace Inference Endpoints with Docker and browser automation examples
+- **GPT-5.2 Model**: Added to OpenAI backend as new default with release date metadata
 
-#### Web UI Automation Mode & Multi-Turn Improvements
-- **Automation View**: New `AutomationView` component with phase/elapsed status and session polling for monitoring workflows
-- **Docker Container Persistence**: `SessionMountManager` pre-mounts session directories, eliminating container recreation between turns
-- **Cancellation Handling**: Flag-based approach with terminal state restoration via `_restore_terminal_for_input()`
+#### Evolving Skills System
+- **Workflow Plans**: Framework for creating reusable workflow plans that capture steps, scripts, and learnings
+- **Session Persistence**: Load skills from previous sessions via `skills_with_previous_sessions.yaml`
+- **Skill Discovery**: Enhanced system prompts for skill evolution guidance
 
-#### Async Execution Consistency
-- **Safe Async Utilities**: `run_async_safely()` handles nested event loops with ThreadPoolExecutor pattern
-- **Cancelled Turn History**: Partial results preserved in session history for cancelled turns
+#### Terminal & Display
+- **Textual Terminal Enhancement**: Adaptive layouts for different terminal sizes with improved modal and panel components
+- **Theme Improvements**: Enhanced dark/light themes with styled containers for agent coordination visualization
 
-#### Documentations, Configurations and Resources
-- `docs/source/user_guide/sessions/multi_turn_mode.rst` - Turn history inspection documentation
+#### Bug Fixes
+- **OpenRouter Gemini**: Reasoning details now preserved in streaming responses
+- **LiteLLM Provider**: Fixed context path resolution for configuration and documentation references
 
-### Previous Achievements (v0.0.3 - v0.1.22)
+### Previous Achievements (v0.0.3 - v0.1.24)
+
+✅ **Multi-Backend Cost Tracking (v0.1.24)**: Real-time token counting for OpenRouter, xAI/Grok, Gemini, and Claude Code backends with `/inspect c` cost breakdown showing per-agent token usage, aggregated session cost totals with improved display formatting
+
+✅ **Turn History Inspection & Web UI Automation (v0.1.23)**: Interactive `/inspect` commands for reviewing turn details with menu navigation, `AutomationView` component for programmatic monitoring, `SessionMountManager` for Docker container persistence across turns, flag-based cancellation with terminal restoration, `run_async_safely()` for nested event loop handling
 
 ✅ **Shadow Agent Architecture (v0.1.22)**: Lightweight shadow agents respond to broadcasts in parallel without interrupting parent work, inheriting full conversation history and current turn context via `asyncio.gather()` parallelization
 
@@ -1336,21 +1338,21 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 We welcome community contributions to achieve these goals.
 
-### v0.1.24 Roadmap
+### v0.1.26 Roadmap
 
-Version 0.1.24 focuses on RL integration and Smithery MCP tools:
+Version 0.1.26 focuses on system reminders and improved agent broadcasting:
 
 #### Planned Features
-- **Integrate RL into MassGen** (@qidanrui, @praneeth999): RL-based learning framework for adaptive agent behavior and coordination optimization
-- **Smithery MCP Tools Support** (@ncrispino): Integration with Smithery MCP server registry for automatic tool discovery and management
+- **Add system reminders** (@ncrispino): Framework for injecting system reminders mid-run during LLM streaming
+- **Improve agent broadcasting** (@ncrispino): Enable scaling of agent broadcast responses based on configurable sensitivity levels
 
 Key technical approach:
-- **RL Integration**: Reward signals from coordination outcomes, policy learning for agent strategies, multi-agent coordination optimization
-- **Smithery Integration**: Registry client for server metadata, automatic tool loading, MCP server lifecycle management
+- **System Reminders**: Mid-run injection during LLM streaming, support for context awareness, human feedback, safety, and memory reminders
+- **Agent Broadcasting**: Three-tier sensitivity configuration, dynamic response complexity scaling, targeted questioning
 
-**Target Release**: December 12, 2025 (Friday @ 9am PT)
+**Target Release**: December 17, 2025 (Wednesday @ 9am PT)
 
-For detailed milestones and technical specifications, see the [full v0.1.24 roadmap](ROADMAP_v0.1.25.md).
+For detailed milestones and technical specifications, see the [full v0.1.26 roadmap](ROADMAP_v0.1.26.md).
 
 ---
 

@@ -527,6 +527,10 @@ class CoordinationUI:
 
         self.display.initialize(question, log_filename)
 
+        # Emit status that display is ready (for web UI)
+        if hasattr(self.display, "_emit"):
+            self.display._emit("preparation_status", {"status": "Display initialized...", "detail": "Starting orchestrator"})
+
         # Reset quit flag for new turn (allows 'q' to cancel this turn)
         if hasattr(self.display, "reset_quit_request"):
             self.display.reset_quit_request()
@@ -599,6 +603,10 @@ class CoordinationUI:
             full_response = ""
             final_answer = ""
 
+            # Emit status that we're about to start the orchestrator
+            if hasattr(self.display, "_emit"):
+                self.display._emit("preparation_status", {"status": "Connecting to agents...", "detail": "Initializing streams"})
+
             async for chunk in orchestrator.chat_simple(question):
                 # Check if user requested quit (pressed 'q' in Rich display)
                 if self.display and hasattr(self.display, "_user_quit_requested") and self.display._user_quit_requested:
@@ -629,6 +637,15 @@ class CoordinationUI:
                 elif chunk_type == "system_status":
                     if self.display and hasattr(self.display, "update_system_status"):
                         self.display.update_system_status(content)
+                    continue
+
+                # Handle preparation status updates (for web UI progress)
+                elif chunk_type == "preparation_status":
+                    status = getattr(chunk, "status", None)
+                    detail = getattr(chunk, "detail", "")
+                    if status and hasattr(self.display, "_emit"):
+                        # WebDisplay has _emit method for WebSocket broadcasts
+                        self.display._emit("preparation_status", {"status": status, "detail": detail})
                     continue
 
                 # Filter out debug chunks from display
@@ -1032,6 +1049,15 @@ class CoordinationUI:
                 elif chunk_type == "system_status":
                     if self.display and hasattr(self.display, "update_system_status"):
                         self.display.update_system_status(content)
+                    continue
+
+                # Handle preparation status updates (for web UI progress)
+                elif chunk_type == "preparation_status":
+                    status = getattr(chunk, "status", None)
+                    detail = getattr(chunk, "detail", "")
+                    if status and hasattr(self.display, "_emit"):
+                        # WebDisplay has _emit method for WebSocket broadcasts
+                        self.display._emit("preparation_status", {"status": status, "detail": detail})
                     continue
 
                 # Filter out debug chunks from display

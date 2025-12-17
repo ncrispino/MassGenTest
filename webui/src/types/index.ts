@@ -28,6 +28,7 @@ export type WSEventType =
   | 'state_snapshot'
   | 'coordination_started'
   | 'coordination_complete'
+  | 'preparation_status'
   | 'keepalive';
 
 // Base WebSocket message
@@ -158,6 +159,12 @@ export interface ErrorEvent extends WSMessage {
   agent_id?: string;
 }
 
+export interface PreparationStatusEvent extends WSMessage {
+  type: 'preparation_status';
+  status: string;
+  detail?: string;
+}
+
 // Vote results structure
 export interface VoteResults {
   vote_counts?: Record<string, number>;
@@ -283,6 +290,9 @@ export interface SessionState {
   logDir?: string;
   // Initialization status (shown during config loading, agent setup, etc.)
   initStatus?: InitStatus;
+  // Preparation status during initialization (before agents start)
+  preparationStatus?: string;
+  preparationDetail?: string;
 }
 
 // Union type for all WebSocket events
@@ -302,6 +312,7 @@ export type WSEvent =
   | ToolResultEvent
   | RestartEvent
   | ErrorEvent
+  | PreparationStatusEvent
   | WSMessage;
 
 // Config file info from API
