@@ -3305,6 +3305,32 @@ class ConfigBuilder:
                 yaml.dump(config, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
 
             console.print(f"\n[bold green]✅ Config saved to: {filepath}[/bold green]")
+
+            # Step 6: Ask about interface preference
+            console.print("\n[bold cyan]Interface[/bold cyan]")
+            console.print("[dim]Terminal: Rich text-based UI in your terminal[/dim]")
+            console.print("[dim]Web: Browser-based UI with visual coordination timeline[/dim]\n")
+
+            interface_choice = questionary.select(
+                "Launch MassGen with:",
+                choices=[
+                    questionary.Choice("Terminal (rich display)", value="terminal"),
+                    questionary.Choice("Web UI (browser)", value="web"),
+                ],
+                default="terminal",
+                style=questionary.Style(
+                    [
+                        ("selected", "fg:cyan bold"),
+                        ("pointer", "fg:cyan bold"),
+                        ("highlighted", "fg:cyan"),
+                    ],
+                ),
+                use_arrow_keys=True,
+            ).ask()
+
+            if interface_choice is None:
+                raise KeyboardInterrupt
+
             console.print("[dim]Launching MassGen...[/dim]\n")
 
             # Offer example prompts to help users get started
@@ -3314,10 +3340,10 @@ class ConfigBuilder:
 
             if example_prompt:
                 # Return with the selected example prompt as initial question
-                return (str(filepath), example_prompt)
+                return (str(filepath), example_prompt, interface_choice)
             else:
                 # Auto-launch into interactive mode (return empty string to signal interactive mode)
-                return (str(filepath), "")
+                return (str(filepath), "", interface_choice)
 
         except (KeyboardInterrupt, EOFError):
             console.print("\n\n[yellow]Quickstart cancelled[/yellow]\n")
@@ -3326,12 +3352,20 @@ class ConfigBuilder:
             console.print(f"\n[error]❌ Error: {e}[/error]")
             return None
 
-    def _generate_quickstart_config(self, agents_config: List[Dict], context_path: Optional[str] = None, use_docker: bool = True) -> Dict:
+    def _generate_quickstart_config(
+        self,
+        agents_config: List[Dict],
+        context_path: Optional[str] = None,
+        context_paths: Optional[List[Dict]] = None,
+        use_docker: bool = True,
+    ) -> Dict:
         """Generate a full-featured config from the quickstart agent specifications.
 
         Args:
             agents_config: List of dicts with 'id', 'type', 'model' for each agent
-            context_path: Optional path to add as context path (avoids runtime prompt)
+            context_path: Deprecated. Optional path to add as context path (avoids runtime prompt)
+            context_paths: List of context path dicts with 'path' and 'permission' keys.
+                          Each entry: {"path": "/path", "permission": "read" or "write"}
             use_docker: Whether to use Docker for code execution (True) or local mode (False)
 
         Returns:
@@ -3438,8 +3472,12 @@ class ConfigBuilder:
             }
 
         # Always set context_paths to avoid runtime prompt
-        # If user said yes, add their path; if no, set empty list
-        if context_path:
+        # Priority: context_paths (new) > context_path (deprecated) > empty list
+        if context_paths:
+            # Use the provided context_paths list directly (already normalized)
+            orchestrator_config["context_paths"] = context_paths
+        elif context_path:
+            # Backward compatibility: single context_path with write permission
             orchestrator_config["context_paths"] = [
                 {"path": context_path, "permission": "write"},
             ]
