@@ -7,7 +7,7 @@
 
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, FileText, User, Clock, ChevronDown, Trophy, Folder, File, ChevronRight, RefreshCw, History, Vote, ArrowRight, Eye, GitBranch } from 'lucide-react';
+import { X, FileText, User, Clock, ChevronDown, Trophy, Folder, File, ChevronRight, RefreshCw, History, Vote, ArrowRight, Eye, GitBranch, ExternalLink } from 'lucide-react';
 import { useAgentStore, selectAnswers, selectAgents, selectAgentOrder, selectSelectedAgent, selectFinalAnswer, selectVoteDistribution, resolveAnswerContent } from '../stores/agentStore';
 import type { Answer, AnswerWorkspace, TimelineNode as TimelineNodeType } from '../types';
 import { FileViewerModal } from './FileViewerModal';
@@ -346,6 +346,23 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
       }
     } catch (err) {
       console.error('Failed to fetch answer workspaces:', err);
+    }
+  }, []);
+
+  // Open workspace in native file browser
+  const openWorkspaceInFinder = useCallback(async (workspacePath: string) => {
+    try {
+      const response = await fetch('/api/workspace/open', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: workspacePath }),
+      });
+      if (!response.ok) {
+        const data = await response.json();
+        setWorkspaceError(data.error || 'Failed to open workspace');
+      }
+    } catch (err) {
+      setWorkspaceError(err instanceof Error ? err.message : 'Failed to open workspace');
     }
   }, []);
 
@@ -898,11 +915,23 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                     </div>
                   )}
 
+                  {/* Open in Finder Button */}
+                  {activeWorkspace && (
+                    <button
+                      onClick={() => openWorkspaceInFinder(activeWorkspace.path)}
+                      className="ml-auto flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 rounded-lg transition-colors text-white text-sm"
+                      title="Open workspace in file browser"
+                    >
+                      <ExternalLink className="w-4 h-4" />
+                      <span>Open in Finder</span>
+                    </button>
+                  )}
+
                   {/* Refresh Button */}
                   <button
                     onClick={() => { fetchWorkspaces(); fetchAnswerWorkspaces(); }}
                     disabled={isLoadingWorkspaces}
-                    className="ml-auto p-2 hover:bg-gray-700 rounded-lg transition-colors text-gray-400 hover:text-gray-200"
+                    className={`${!activeWorkspace ? 'ml-auto' : ''} p-2 hover:bg-gray-700 rounded-lg transition-colors text-gray-400 hover:text-gray-200`}
                     title="Refresh workspaces"
                   >
                     <RefreshCw className={`w-4 h-4 ${isLoadingWorkspaces ? 'animate-spin' : ''}`} />

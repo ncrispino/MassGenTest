@@ -61,6 +61,7 @@ class FilesystemManager:
         enable_audio_generation: bool = False,
         enable_file_generation: bool = False,
         exclude_file_operation_mcps: bool = False,
+        use_mcpwrapped_for_tool_filtering: bool = False,
         enable_code_based_tools: bool = False,
         custom_tools_path: Optional[str] = None,
         auto_discover_custom_tools: bool = False,
@@ -93,6 +94,10 @@ class FilesystemManager:
             command_line_docker_packages: Package management configuration dict
             exclude_file_operation_mcps: If True, exclude file operation MCP tools (filesystem and workspace_tools file ops).
                                          Agents use command-line tools instead. Keeps command execution, media generation, and planning MCPs.
+            use_mcpwrapped_for_tool_filtering: If True, use mcpwrapped to filter MCP tools at protocol level.
+                                              Required for Claude Code backend which doesn't support allowed_tools for MCP tools.
+                                              See: https://github.com/anthropics/claude-code/issues/7328
+                                              Requires: npm i -g mcpwrapped (https://github.com/VitoLin/mcpwrapped)
             enable_code_based_tools: If True, generate Python wrapper code for MCP tools in servers/ directory.
                                      Agents discover and call tools via filesystem (CodeAct paradigm).
             custom_tools_path: Optional path to custom tools directory to copy into workspace
@@ -112,6 +117,7 @@ class FilesystemManager:
         self.enable_image_generation = enable_image_generation
         self.enable_mcp_command_line = enable_mcp_command_line
         self.exclude_file_operation_mcps = exclude_file_operation_mcps
+        self.use_mcpwrapped_for_tool_filtering = use_mcpwrapped_for_tool_filtering
         self.enable_code_based_tools = enable_code_based_tools
         self.exclude_custom_tools = exclude_custom_tools if exclude_custom_tools else []
 
@@ -1028,7 +1034,11 @@ class FilesystemManager:
 
         return workspace
 
-    def get_mcp_filesystem_config(self, include_only_write_tools: bool = False) -> Dict[str, Any]:
+    def get_mcp_filesystem_config(
+        self,
+        include_only_write_tools: bool = False,
+        use_mcpwrapped: bool = False,
+    ) -> Dict[str, Any]:
         """
         Generate MCP filesystem server configuration.
 
@@ -1037,6 +1047,11 @@ class FilesystemManager:
                                      Used with code-based tools to provide clean file creation
                                      without shell escaping issues, while using command-line
                                      for other file operations.
+            use_mcpwrapped: If True, wrap the server with mcpwrapped to filter tools at the
+                           MCP protocol level. This hides tools from Claude's context entirely.
+                           Required for Claude Code backend since it doesn't support allowed_tools
+                           for MCP tools. See: https://github.com/anthropics/claude-code/issues/7328
+                           Uses: https://github.com/VitoLin/mcpwrapped
 
         Returns:
             Dictionary with MCP server configuration for filesystem access
@@ -1050,39 +1065,49 @@ class FilesystemManager:
 
         use_global = shutil.which("mcp-server-filesystem") is not None
 
-        # Build MCP server configuration with all managed paths
+        # Build base MCP server configuration
         if use_global:
-            # Use globally installed package (Docker with fixed zod version)
-            config = {
-                "name": "filesystem",
-                "type": "stdio",
-                "command": "mcp-server-filesystem",
-                "args": paths,
-                "cwd": str(self.cwd),
-            }
+            base_command = "mcp-server-filesystem"
+            base_args = paths
         else:
-            # Use npx for local development
+            base_command = "npx"
+            base_args = ["-y", "@modelcontextprotocol/server-filesystem"] + paths
+
+        # When filtering tools and using mcpwrapped, wrap the command
+        if include_only_write_tools and use_mcpwrapped:
+            # Use mcpwrapped to filter tools at the MCP protocol level
+            # This prevents filtered tools from appearing in Claude's context
+            # See: https://github.com/VitoLin/mcpwrapped
+            # We use npx to auto-download if not installed (like we do for server-filesystem)
+            visible_tools = "write_file,edit_file"
             config = {
                 "name": "filesystem",
                 "type": "stdio",
                 "command": "npx",
-                "args": [
-                    "-y",
-                    "@modelcontextprotocol/server-filesystem",
-                ]
-                + paths,
-                "cwd": str(self.cwd),  # Set working directory for filesystem server (important for relative paths)
+                "args": ["-y", "mcpwrapped@1.0.4", f"--visible_tools={visible_tools}", base_command] + base_args,
+                "cwd": str(self.cwd),
+            }
+            logger.info(
+                f"[FilesystemManager] Using mcpwrapped (via npx) to filter filesystem tools to: {visible_tools}",
+            )
+        else:
+            # Standard configuration without mcpwrapped
+            config = {
+                "name": "filesystem",
+                "type": "stdio",
+                "command": base_command,
+                "args": base_args,
+                "cwd": str(self.cwd),
             }
 
-        if include_only_write_tools:
-            # Code-based tools mode: Only include write_file and edit_file
-            # This avoids shell escaping nightmares when creating Python scripts
-            # Other file operations use command-line tools (more efficient for CodeAct)
-            config["allowed_tools"] = ["write_file", "edit_file"]
-        else:
-            # Normal mode: Exclude read_media_file since we have our own implementation
-            # Note: Tool names here are unprefixed (before server name is added)
-            config["exclude_tools"] = ["read_media_file"]
+            if include_only_write_tools:
+                # Code-based tools mode: Only include write_file and edit_file
+                # Note: This sets allowed_tools in config, but Claude Code SDK doesn't respect it
+                # for MCP tools. Use use_mcpwrapped=True for Claude Code backend.
+                config["allowed_tools"] = ["write_file", "edit_file"]
+            else:
+                # Normal mode: Exclude read_media_file since we have our own implementation
+                config["exclude_tools"] = ["read_media_file"]
 
         return config
 
@@ -1260,10 +1285,12 @@ class FilesystemManager:
                 mcp_servers.append(
                     self.get_mcp_filesystem_config(
                         include_only_write_tools=self.exclude_file_operation_mcps,
+                        use_mcpwrapped=self.use_mcpwrapped_for_tool_filtering,
                     ),
                 )
                 if self.exclude_file_operation_mcps:
-                    logger.info("[FilesystemManager.inject_filesystem_mcp] Added filesystem MCP with write_file and edit_file only (exclude_file_operation_mcps=True)")
+                    wrapper_note = " (using mcpwrapped)" if self.use_mcpwrapped_for_tool_filtering else ""
+                    logger.info(f"[FilesystemManager.inject_filesystem_mcp] Added filesystem MCP with write_file and edit_file only{wrapper_note}")
             else:
                 logger.warning("[FilesystemManager.inject_filesystem_mcp] Custom filesystem MCP server already present")
 

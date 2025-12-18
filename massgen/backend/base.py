@@ -135,6 +135,7 @@ class LLMBackend(ABC):
                     "command_line_docker_packages": kwargs.get("command_line_docker_packages"),
                     "enable_audio_generation": kwargs.get("enable_audio_generation", False),
                     "exclude_file_operation_mcps": kwargs.get("exclude_file_operation_mcps", False),
+                    "use_mcpwrapped_for_tool_filtering": kwargs.get("use_mcpwrapped_for_tool_filtering", False),
                     "enable_code_based_tools": kwargs.get("enable_code_based_tools", False),
                     "custom_tools_path": kwargs.get("custom_tools_path"),
                     "auto_discover_custom_tools": kwargs.get("auto_discover_custom_tools", False),

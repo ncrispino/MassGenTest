@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Set
 
 try:
-    from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+    from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import FileResponse, JSONResponse
     from fastapi.staticfiles import StaticFiles
@@ -1591,6 +1591,77 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
         except Exception as e:
             return JSONResponse(
                 {"error": f"Failed to read file: {str(e)}"},
+                status_code=500,
+            )
+
+    @app.post("/api/workspace/open")
+    async def open_workspace_in_finder(request: Request):
+        """Open a workspace folder in the native file browser.
+
+        Args:
+            request body: { "path": str }  # Absolute path to workspace directory
+
+        Returns:
+            { "success": bool, "message": str }
+        """
+        import platform
+        import subprocess
+
+        try:
+            data = await request.json()
+            workspace_path = data.get("path")
+
+            if not workspace_path:
+                return JSONResponse(
+                    {"error": "Path is required"},
+                    status_code=400,
+                )
+
+            path = Path(workspace_path).resolve()
+
+            if not path.exists():
+                return JSONResponse(
+                    {"error": f"Path does not exist: {workspace_path}"},
+                    status_code=404,
+                )
+
+            if not path.is_dir():
+                return JSONResponse(
+                    {"error": "Path is not a directory"},
+                    status_code=400,
+                )
+
+            # Open in native file browser based on platform
+            system = platform.system()
+
+            if system == "Darwin":  # macOS
+                subprocess.Popen(["open", str(path)])
+            elif system == "Windows":
+                subprocess.Popen(["explorer", str(path)])
+            elif system == "Linux":
+                # Try common Linux file managers
+                for cmd in ["xdg-open", "nautilus", "dolphin", "thunar", "pcmanfm"]:
+                    try:
+                        subprocess.Popen([cmd, str(path)])
+                        break
+                    except FileNotFoundError:
+                        continue
+                else:
+                    return JSONResponse(
+                        {"error": "No supported file browser found on Linux"},
+                        status_code=500,
+                    )
+            else:
+                return JSONResponse(
+                    {"error": f"Unsupported platform: {system}"},
+                    status_code=500,
+                )
+
+            return {"success": True, "message": f"Opened {path}"}
+
+        except Exception as e:
+            return JSONResponse(
+                {"error": f"Failed to open workspace: {str(e)}"},
                 status_code=500,
             )
 

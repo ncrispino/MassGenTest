@@ -7,7 +7,7 @@
 
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowLeft, FileText, Folder, Trophy, ChevronDown, ChevronRight, File, RefreshCw, History, Copy, Check, Loader2, Send, Plus } from 'lucide-react';
+import { ArrowLeft, FileText, Folder, Trophy, ChevronDown, ChevronRight, File, RefreshCw, History, Copy, Check, Loader2, Send, Plus, ExternalLink } from 'lucide-react';
 import { useAgentStore, selectSelectedAgent, selectAgents, selectResolvedFinalAnswer, selectAgentOrder } from '../stores/agentStore';
 import type { AnswerWorkspace } from '../types';
 import { FileViewerModal } from './FileViewerModal';
@@ -275,6 +275,23 @@ export function FinalAnswerView({ onBackToAgents, onFollowUp, onNewSession, isCo
     }
   }, []);
 
+  // Open workspace in native file browser
+  const openWorkspaceInFinder = useCallback(async (workspacePath: string) => {
+    try {
+      const response = await fetch('/api/workspace/open', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: workspacePath }),
+      });
+      if (!response.ok) {
+        const data = await response.json();
+        setWorkspaceError(data.error || 'Failed to open workspace');
+      }
+    } catch (err) {
+      setWorkspaceError(err instanceof Error ? err.message : 'Failed to open workspace');
+    }
+  }, []);
+
   // Map workspaces to winner agent
   const winnerWorkspace = useMemo(() => {
     if (!selectedAgent) return null;
@@ -492,12 +509,25 @@ export function FinalAnswerView({ onBackToAgents, onFollowUp, onNewSession, isCo
                   </div>
                 </div>
 
+                {/* Open in Finder button */}
+                {winnerWorkspace && (
+                  <button
+                    onClick={() => openWorkspaceInFinder(winnerWorkspace.path)}
+                    className="ml-auto flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500
+                               rounded-lg transition-colors text-white text-sm"
+                    title="Open workspace in file browser"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                    <span>Open in Finder</span>
+                  </button>
+                )}
+
                 {/* Refresh button */}
                 <button
                   onClick={() => { fetchWorkspaces(); fetchAnswerWorkspaces(); }}
                   disabled={isLoadingWorkspaces}
-                  className="ml-auto p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors
-                             text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+                  className={`${!winnerWorkspace ? 'ml-auto' : ''} p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors
+                             text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200`}
                   title="Refresh workspaces"
                 >
                   <RefreshCw className={`w-4 h-4 ${isLoadingWorkspaces ? 'animate-spin' : ''}`} />

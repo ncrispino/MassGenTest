@@ -330,6 +330,12 @@ class WebDisplay(BaseDisplay):
             selected_agent: The agent selected as winner
         """
         self._final_answer = answer
+
+        # Check if consensus_reached was already emitted by stream_final_answer_chunk
+        # IMPORTANT: Check BEFORE assigning self._selected_agent, otherwise the condition
+        # always fails since we'd be checking "selected_agent and not selected_agent"
+        should_emit_consensus = selected_agent and not self._selected_agent
+
         self._selected_agent = selected_agent
 
         # Extract vote distribution for visualization
@@ -347,7 +353,7 @@ class WebDisplay(BaseDisplay):
 
         # Only emit consensus_reached here if it wasn't already emitted by stream_final_answer_chunk
         # This handles the case where streaming didn't happen (e.g., cached answer)
-        if selected_agent and not self._selected_agent:
+        if should_emit_consensus:
             self._emit(
                 "consensus_reached",
                 {
