@@ -951,6 +951,221 @@ class ConfigBuilder:
             console.print(f"[error]❌ Error configuring custom MCP: {e}[/error]")
             return None
 
+    def select_curated_mcp_server(self) -> Optional[Dict]:
+        """Interactive selection of MCP server from curated registry.
+
+        Shows available servers grouped by category with status indicators:
+        - [Ready] - No API key needed or key is configured
+        - [Setup needed] - Requires API key that isn't configured
+
+        Returns:
+            MCP server configuration dict ready for use, or None if cancelled
+        """
+        from massgen.mcp_tools.server_registry import (
+            MCP_SERVER_REGISTRY,
+            get_category_display_name,
+            get_free_tier_info,
+            get_server_config,
+            get_servers_by_category,
+            is_api_key_available,
+        )
+
+        try:
+            console.print("\n[bold cyan]Select Curated MCP Server[/bold cyan]\n")
+
+            # Build choices grouped by category
+            choices = []
+            servers_by_cat = get_servers_by_category()
+
+            # Sort categories to show in consistent order
+            category_order = ["development", "search", "finance", "media", "productivity"]
+            sorted_categories = [c for c in category_order if c in servers_by_cat]
+            # Add any remaining categories
+            for cat in servers_by_cat:
+                if cat not in sorted_categories:
+                    sorted_categories.append(cat)
+
+            for category in sorted_categories:
+                server_names = servers_by_cat[category]
+                cat_display = get_category_display_name(category)
+
+                # Add category header as disabled separator
+                choices.append(questionary.Separator(f"── {cat_display} ──"))
+
+                for server_name in server_names:
+                    config = MCP_SERVER_REGISTRY.get(server_name, {})
+                    requires_key = config.get("requires_api_key", False)
+                    api_key_var = config.get("api_key_env_var")
+                    has_key = not requires_key or (api_key_var and is_api_key_available(api_key_var))
+
+                    # Build display label
+                    desc = config.get("description", "")[:45]
+                    if len(config.get("description", "")) > 45:
+                        desc += "..."
+
+                    if has_key:
+                        status = "[Ready]"
+                    else:
+                        free_info = get_free_tier_info(server_name)
+                        status = f"[Setup needed - {free_info}]" if free_info else "[Setup needed]"
+
+                    label = f"  {server_name} - {desc} {status}"
+                    choices.append(questionary.Choice(label, value=server_name))
+
+            # Add separator and custom option
+            choices.append(questionary.Separator("─" * 40))
+            choices.append(questionary.Choice("  Configure custom server...", value="_custom"))
+
+            selected = questionary.select(
+                "Select MCP server:",
+                choices=choices,
+                style=questionary.Style(
+                    [
+                        ("selected", "fg:cyan bold"),
+                        ("pointer", "fg:cyan bold"),
+                        ("highlighted", "fg:cyan"),
+                        ("separator", "fg:ansigray"),
+                    ],
+                ),
+                use_arrow_keys=True,
+            ).ask()
+
+            if not selected:
+                return None
+
+            if selected == "_custom":
+                return self.add_custom_mcp_server()
+
+            # Get server config
+            server_config = MCP_SERVER_REGISTRY.get(selected, {})
+            requires_key = server_config.get("requires_api_key", False)
+            api_key_var = server_config.get("api_key_env_var")
+
+            # Check if API key setup is needed
+            if requires_key and api_key_var and not is_api_key_available(api_key_var):
+                if not self._prompt_api_key_setup(server_config):
+                    console.print("[info]Server not configured (API key required)[/info]")
+                    return None
+
+            # Get the runtime config (with API key logic applied)
+            config = get_server_config(selected, apply_api_key_logic=True)
+
+            if config:
+                # Strip metadata fields not needed in YAML config
+                metadata_fields = [
+                    "description",
+                    "requires_api_key",
+                    "api_key_env_var",
+                    "optional_api_key_env_var",
+                    "notes",
+                    "rate_limit_warning",
+                    "category",
+                    "signup_url",
+                    "free_tier_info",
+                ]
+                for key in metadata_fields:
+                    config.pop(key, None)
+
+                console.print(f"\n✅ Selected curated MCP server: {selected}\n")
+                return config
+
+            return None
+
+        except (KeyboardInterrupt, EOFError):
+            console.print("\n[info]Cancelled MCP server selection[/info]")
+            return None
+        except Exception as e:
+            console.print(f"[error]❌ Error selecting MCP server: {e}[/error]")
+            return None
+
+    def _prompt_api_key_setup(self, server_config: Dict) -> bool:
+        """Guide user through API key setup for an MCP server.
+
+        Shows signup URL, prompts for key, and saves to .env file.
+
+        Args:
+            server_config: Server configuration dict with api_key_env_var, signup_url, etc.
+
+        Returns:
+            True if key was successfully configured, False otherwise
+        """
+        from massgen.mcp_tools.server_registry import get_free_tier_info, get_signup_url
+
+        try:
+            server_name = server_config.get("name", "unknown")
+            api_key_var = server_config.get("api_key_env_var")
+            signup_url = server_config.get("signup_url") or get_signup_url(server_name)
+            free_tier = server_config.get("free_tier_info") or get_free_tier_info(server_name)
+
+            console.print()
+            console.print(f"[bold yellow]{server_name} requires an API key.[/bold yellow]")
+            console.print()
+
+            if signup_url:
+                console.print("Get your free API key at:")
+                console.print(f"[cyan]{signup_url}[/cyan]")
+                console.print()
+
+            if free_tier:
+                console.print(f"[dim]Free tier: {free_tier}[/dim]")
+                console.print()
+
+            # Ask if user wants to set up now
+            if not questionary.confirm("Set up API key now?", default=True).ask():
+                return False
+
+            # Prompt for the API key
+            api_key = questionary.password(
+                f"Enter {api_key_var}:",
+            ).ask()
+
+            if not api_key or not api_key.strip():
+                console.print("[info]No API key provided[/info]")
+                return False
+
+            api_key = api_key.strip()
+
+            # Save to .env file
+            env_file = Path(".env")
+            env_content = ""
+
+            if env_file.exists():
+                env_content = env_file.read_text()
+                # Check if key already exists
+                if f"{api_key_var}=" in env_content:
+                    # Update existing key
+                    lines = env_content.split("\n")
+                    updated_lines = []
+                    for line in lines:
+                        if line.startswith(f"{api_key_var}="):
+                            updated_lines.append(f"{api_key_var}={api_key}")
+                        else:
+                            updated_lines.append(line)
+                    env_content = "\n".join(updated_lines)
+                else:
+                    # Append new key
+                    if env_content and not env_content.endswith("\n"):
+                        env_content += "\n"
+                    env_content += f"{api_key_var}={api_key}\n"
+            else:
+                env_content = f"{api_key_var}={api_key}\n"
+
+            env_file.write_text(env_content)
+
+            # Set in current environment so it's immediately available
+            os.environ[api_key_var] = api_key
+
+            console.print("\n✅ API key saved to .env")
+            console.print(f"✅ {server_name} is now ready!\n")
+            return True
+
+        except (KeyboardInterrupt, EOFError):
+            console.print("\n[info]Cancelled API key setup[/info]")
+            return False
+        except Exception as e:
+            console.print(f"[error]❌ Error setting up API key: {e}[/error]")
+            return False
+
     def batch_create_agents(self, count: int, provider_id: str, start_index: int = 0) -> List[Dict]:
         """Create multiple agents with the same provider.
 
@@ -1691,24 +1906,51 @@ class ConfigBuilder:
 
                     console.print(f"✅ Added {len(selected_mm_tools)} custom multimodal tool(s)")
 
-            # MCP servers (custom only)
+            # MCP servers (curated or custom)
             # Note: Filesystem is handled internally above, NOT as external MCP
             if "mcp" in provider_info.get("supports", []):
                 console.print()
-                console.print("[dim]MCP servers are external integrations. Filesystem is handled internally (configured above).[/dim]")
+                console.print("[dim]MCP servers extend agents with external integrations (e.g., finance data, web search).[/dim]")
 
-                if questionary.confirm("Add custom MCP servers?", default=False).ask():
+                if questionary.confirm("Add MCP servers?", default=False).ask():
                     mcp_servers = []
                     while True:
-                        custom_server = self.add_custom_mcp_server()
-                        if custom_server:
-                            mcp_servers.append(custom_server)
+                        # Offer choice: curated or custom
+                        add_method = questionary.select(
+                            "How would you like to add an MCP server?",
+                            choices=[
+                                questionary.Choice("Browse curated servers", value="curated"),
+                                questionary.Choice("Configure custom server", value="custom"),
+                            ],
+                            style=questionary.Style(
+                                [
+                                    ("selected", "fg:cyan bold"),
+                                    ("pointer", "fg:cyan bold"),
+                                    ("highlighted", "fg:cyan"),
+                                ],
+                            ),
+                            use_arrow_keys=True,
+                        ).ask()
+
+                        if add_method == "curated":
+                            server = self.select_curated_mcp_server()
+                        elif add_method == "custom":
+                            server = self.add_custom_mcp_server()
+                        else:
+                            server = None
+
+                        if server:
+                            mcp_servers.append(server)
 
                             # Ask if they want to add another
-                            if not questionary.confirm("Add another custom MCP server?", default=False).ask():
+                            if not questionary.confirm("Add another MCP server?", default=False).ask():
                                 break
                         else:
-                            break
+                            # User cancelled or failed - ask if they want to try again
+                            if mcp_servers:  # Already have some servers
+                                break
+                            if not questionary.confirm("Try adding a different server?", default=True).ask():
+                                break
 
                     # Add to agent config if any MCPs were configured
                     if mcp_servers:
