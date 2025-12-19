@@ -4788,6 +4788,70 @@ def cli_main():
         logs_args = logs_parser.parse_args(sys.argv[2:])
         sys.exit(logs_command(logs_args))
 
+    # Handle 'export' subcommand specially before main argument parsing
+    if len(sys.argv) >= 2 and sys.argv[1] == "export":
+        from .session_exporter import export_command
+
+        export_parser = argparse.ArgumentParser(
+            prog="massgen export",
+            description="Export MassGen session to shareable HTML or URL",
+        )
+        export_parser.add_argument(
+            "log_dir",
+            nargs="?",
+            help="Log directory to export (default: latest). Can be full path or log name.",
+        )
+        export_parser.add_argument(
+            "-o",
+            "--output",
+            type=str,
+            help="Output HTML file path (default: massgen_<log_name>.html)",
+        )
+        export_parser.add_argument(
+            "--open",
+            action="store_true",
+            help="Open the HTML file in browser after export",
+        )
+        export_parser.add_argument(
+            "-s",
+            "--share",
+            action="store_true",
+            help="Upload to GitHub Gist and get shareable URL (requires gh CLI)",
+        )
+
+        export_args = export_parser.parse_args(sys.argv[2:])
+        sys.exit(export_command(export_args))
+
+    # Handle 'shares' subcommand for managing shared sessions
+    if len(sys.argv) >= 2 and sys.argv[1] == "shares":
+        from rich.console import Console
+
+        from .share import delete_share, list_shares
+
+        shares_parser = argparse.ArgumentParser(
+            prog="massgen shares",
+            description="Manage shared MassGen sessions",
+        )
+        shares_subparsers = shares_parser.add_subparsers(dest="shares_command")
+
+        # massgen shares list
+        shares_subparsers.add_parser("list", help="List your shared sessions")
+
+        # massgen shares delete <gist_id>
+        delete_parser = shares_subparsers.add_parser("delete", help="Delete a shared session")
+        delete_parser.add_argument("gist_id", help="Gist ID to delete")
+
+        shares_args = shares_parser.parse_args(sys.argv[2:])
+        console = Console()
+
+        if shares_args.shares_command == "list":
+            sys.exit(list_shares(console))
+        elif shares_args.shares_command == "delete":
+            sys.exit(delete_share(shares_args.gist_id, console))
+        else:
+            shares_parser.print_help()
+            sys.exit(1)
+
     parser = argparse.ArgumentParser(
         description="MassGen - Multi-Agent Coordination CLI",
         formatter_class=argparse.RawDescriptionHelpFormatter,

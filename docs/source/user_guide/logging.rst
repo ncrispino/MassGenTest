@@ -616,6 +616,128 @@ MassGen exits with status 0 on success, non-zero on failure.
 
    uv run python -m massgen.cli --config config.yaml "Question" && echo "Success"
 
+Sharing Sessions
+----------------
+
+MassGen allows you to share session logs via GitHub Gist for easy collaboration and review.
+
+Prerequisites
+~~~~~~~~~~~~~
+
+Sharing requires the **GitHub CLI (gh)** to be installed and authenticated:
+
+1. **Install GitHub CLI**:
+
+   - macOS: ``brew install gh``
+   - Windows: ``winget install --id GitHub.cli``
+   - Linux: See https://cli.github.com/
+
+2. **Authenticate with GitHub**:
+
+   .. code-block:: bash
+
+      gh auth login
+
+   Follow the prompts to authenticate. This is required for creating gists.
+
+Sharing a Session
+~~~~~~~~~~~~~~~~~
+
+Use the ``--share`` flag with the export command:
+
+.. code-block:: bash
+
+   # Share the most recent session
+   massgen export --share
+
+   # Share a specific session
+   massgen export --share log_20251218_134125_867383
+
+**Output:**
+
+.. code-block:: text
+
+   Collecting files...
+   Uploading 45 files (1,234,567 bytes)...
+
+   Share URL: https://massgen.github.io/MassGen-Viewer/?gist=abc123def456
+
+   Anyone with this link can view the session (no login required).
+
+The share URL opens the **MassGen Viewer**, a web-based session viewer that displays:
+
+- Session summary (question, winner, cost, duration)
+- Agent activity and coordination timeline
+- Answers and votes with full content
+- Tool usage breakdown
+- Configuration used
+
+**What gets uploaded:**
+
+- Metrics and status files
+- Coordination events and votes
+- Agent answers (intermediate and final)
+- Execution metadata (with API keys redacted)
+- Small workspace files (code, text, configs)
+
+**What is excluded:**
+
+- Large files (>10MB)
+- Debug logs (``massgen.log``)
+- Binary files and caches
+- Sensitive data (API keys are automatically redacted)
+
+Managing Shared Sessions
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+**List your shared sessions:**
+
+.. code-block:: bash
+
+   massgen shares list
+
+**Delete a shared session:**
+
+.. code-block:: bash
+
+   massgen shares delete <gist_id>
+
+Authentication Errors
+~~~~~~~~~~~~~~~~~~~~~
+
+If you see authentication errors when sharing:
+
+.. code-block:: text
+
+   Error: Not authenticated with GitHub.
+   Run 'gh auth login' to enable sharing.
+
+**Solution:** Run ``gh auth login`` and complete the authentication flow.
+
+If the GitHub CLI is not installed:
+
+.. code-block:: text
+
+   Error: GitHub CLI (gh) not found.
+   Install it from https://cli.github.com/
+
+**Solution:** Install the GitHub CLI for your platform.
+
+Local HTML Export
+~~~~~~~~~~~~~~~~~
+
+For offline viewing or when you don't want to upload to GitHub:
+
+.. code-block:: bash
+
+   # Export to HTML file (no upload)
+   massgen export -o session.html
+
+   # Export and open in browser
+   massgen export -o session.html --open
+
+This creates a self-contained HTML file with all session data embedded.
+
 See Also
 --------
 

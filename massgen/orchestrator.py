@@ -2612,10 +2612,36 @@ Your answer:"""
                     # Get current state for context
                     current_answers = {aid: state.answer for aid, state in self.agent_states.items() if state.answer}
 
-                    # Create anonymous agent mapping
+                    # Create anonymous agent mapping (agent1, agent2, etc.)
                     agent_mapping = {}
                     for i, real_id in enumerate(sorted(self.agents.keys()), 1):
                         agent_mapping[f"agent{i}"] = real_id
+
+                    # Get answer labels from coordination tracker (e.g., "agent1.2", "agent2.1")
+                    # Use the voter's context labels (what they were shown) to avoid race conditions
+                    # in parallel execution where new answers may arrive while voting
+                    available_answer_labels = []
+                    answer_label_to_agent = {}  # Maps "agent1.2" -> "agent_a"
+                    voted_for_label = None
+                    voted_for_agent = vote_data.get("agent_id", "unknown")
+
+                    if self.coordination_tracker:
+                        # Get labels from voter's context (what they actually saw)
+                        voter_context = self.coordination_tracker.get_agent_context_labels(agent_id)
+                        for label in voter_context:
+                            available_answer_labels.append(label)
+                            # Extract agent number from label (e.g., "agent1.2" -> 1)
+                            # and map back to agent ID
+                            for aid in current_answers.keys():
+                                aid_label = self.coordination_tracker.get_voted_for_label(agent_id, aid)
+                                if aid_label == label:
+                                    answer_label_to_agent[label] = aid
+
+                        # Get the specific label for the voted-for agent
+                        voted_for_label = self.coordination_tracker.get_voted_for_label(
+                            agent_id,
+                            voted_for_agent,
+                        )
 
                     # Build comprehensive vote data
                     comprehensive_vote_data = {
@@ -2624,9 +2650,10 @@ Your answer:"""
                             (anon for anon, real in agent_mapping.items() if real == agent_id),
                             agent_id,
                         ),
-                        "voted_for": vote_data.get("agent_id", "unknown"),
+                        "voted_for": voted_for_agent,
+                        "voted_for_label": voted_for_label,  # e.g., "agent1.2"
                         "voted_for_anon": next(
-                            (anon for anon, real in agent_mapping.items() if real == vote_data.get("agent_id")),
+                            (anon for anon, real in agent_mapping.items() if real == voted_for_agent),
                             "unknown",
                         ),
                         "reason": vote_data.get("reason", ""),
@@ -2634,7 +2661,9 @@ Your answer:"""
                         "unix_timestamp": time.time(),
                         "iteration": self.coordination_tracker.current_iteration if self.coordination_tracker else None,
                         "coordination_round": self.coordination_tracker.max_round if self.coordination_tracker else None,
-                        "available_options": list(current_answers.keys()),
+                        "available_options": list(current_answers.keys()),  # agent IDs for backwards compatibility
+                        "available_options_labels": available_answer_labels,  # e.g., ["agent1.2", "agent2.1"]
+                        "answer_label_to_agent": answer_label_to_agent,  # Maps label -> agent_id
                         "available_options_anon": [
                             next(
                                 (anon for anon, real in agent_mapping.items() if real == aid),
@@ -2895,6 +2924,13 @@ Your answer:"""
             agent_id,
             ActionType.UPDATE_INJECTED,
             f"Received update with {len(new_answers)} NEW answer(s) from: {answer_providers}",
+        )
+
+        # Update the agent's context labels to include the new answers
+        # This ensures vote label resolution uses the correct labels
+        self.coordination_tracker.update_agent_context_with_new_answers(
+            agent_id,
+            list(new_answers.keys()),
         )
 
         # Clear the coordination tracker's pending restart flag (injection satisfies the need for update)

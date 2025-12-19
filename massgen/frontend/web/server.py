@@ -2042,6 +2042,127 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
             status_code=404,
         )
 
+    @app.get("/api/sessions/{session_id}/export")
+    async def export_session_html(session_id: str):
+        """Export the session to self-contained HTML.
+
+        Returns the generated HTML as a downloadable file.
+        """
+        from massgen.session_exporter import SessionExporter
+
+        # Get the log session dir from the display
+        display = manager.get_display(session_id)
+        log_session_dir = getattr(display, "log_session_dir", None) if display else None
+
+        # Fallback to global log session dir
+        if not log_session_dir:
+            from massgen.logger_config import get_log_session_dir
+
+            log_session_dir = get_log_session_dir()
+
+        if not log_session_dir or not log_session_dir.exists():
+            return JSONResponse(
+                {"error": "Log directory not found. Session may not have started yet."},
+                status_code=404,
+            )
+
+        try:
+            # Create exporter and generate HTML
+            exporter = SessionExporter(log_session_dir)
+            exporter.load_session_data()
+
+            # Generate HTML to a temporary file
+            import tempfile
+
+            with tempfile.NamedTemporaryFile(mode="w", suffix=".html", delete=False) as f:
+                output_path = Path(f.name)
+
+            exporter.generate_html(output_path)
+
+            # Read the generated HTML
+            html_content = output_path.read_text(encoding="utf-8")
+
+            # Clean up temp file
+            output_path.unlink()
+
+            # Get a reasonable filename
+            question = exporter.data.get("status", {}).get("meta", {}).get("question", "session")
+            short_question = question[:30].replace(" ", "_") if question else "session"
+            # Remove non-alphanumeric chars
+            import re
+
+            safe_name = re.sub(r"[^a-zA-Z0-9_]", "", short_question)
+            filename = f"massgen_{safe_name}_{session_id[:8]}.html"
+
+            from fastapi.responses import HTMLResponse
+
+            return HTMLResponse(
+                content=html_content,
+                headers={
+                    "Content-Disposition": f'attachment; filename="{filename}"',
+                },
+            )
+
+        except Exception as e:
+            import traceback
+
+            traceback.print_exc()
+            return JSONResponse(
+                {"error": f"Failed to export session: {str(e)}"},
+                status_code=500,
+            )
+
+    @app.post("/api/sessions/{session_id}/share")
+    async def share_session_gist(session_id: str):
+        """Upload session to GitHub Gist and return viewer URL.
+
+        Requires GitHub CLI (gh) to be installed and authenticated.
+        Returns the viewer URL for the shared session.
+        """
+        from massgen.share import ShareError, share_session
+
+        # Get the log session dir from the display
+        display = manager.get_display(session_id)
+        log_session_dir = getattr(display, "log_session_dir", None) if display else None
+
+        # Fallback to global log session dir
+        if not log_session_dir:
+            from massgen.logger_config import get_log_session_dir
+
+            log_session_dir = get_log_session_dir()
+
+        if not log_session_dir or not log_session_dir.exists():
+            return JSONResponse(
+                {"error": "Log directory not found. Session may not have started yet."},
+                status_code=404,
+            )
+
+        try:
+            # Share the session (creates gist and returns viewer URL)
+            viewer_url = share_session(log_session_dir, console=None)
+
+            return JSONResponse(
+                {
+                    "success": True,
+                    "viewer_url": viewer_url,
+                    "message": "Session shared successfully!",
+                },
+            )
+
+        except ShareError as e:
+            return JSONResponse(
+                {"error": str(e)},
+                status_code=400,
+            )
+        except Exception as e:
+            import traceback
+
+            traceback.print_exc()
+            return JSONResponse(
+                {"error": f"Failed to share session: {str(e)}"},
+                status_code=500,
+            )
+
     @app.post("/api/sessions/{session_id}/start")
     async def start_coordination(session_id: str, request: dict):
         """Start coordination for a session."""
@@ -2430,6 +2551,7 @@ async def run_coordination_with_history(
         from massgen.frontend.coordination_ui import CoordinationUI
         from massgen.logger_config import (
             get_log_session_dir,
+            save_execution_metadata,
             set_log_base_session_dir,
             set_log_turn,
         )
@@ -2598,6 +2720,14 @@ async def run_coordination_with_history(
         # Store the log session directory in the display
         display.log_session_dir = get_log_session_dir()
         print(f"[WebUI] run_coordination_with_history: turn={turn_number}, log_dir={display.log_session_dir}")
+
+        # Save execution metadata for session export/sharing (same as CLI)
+        if display.log_session_dir:
+            save_execution_metadata(
+                query=question,
+                config_path=str(resolved_path),
+                config_content=config,
+            )
 
         # Create coordination UI with web display
         ui = CoordinationUI(
@@ -2849,7 +2979,7 @@ async def run_coordination(
 
         # Store the log session directory in the display BEFORE coordination
         # This ensures the API can find it when coordination_complete is sent
-        from massgen.logger_config import get_log_session_dir
+        from massgen.logger_config import get_log_session_dir, save_execution_metadata
 
         display.log_session_dir = get_log_session_dir()
         print(f"[DEBUG] run_coordination: Set display.log_session_dir = {display.log_session_dir}")
@@ -2858,6 +2988,13 @@ async def run_coordination(
         if display.log_session_dir:
             print(f"LOG_DIR: {display.log_session_dir}")
             print(f"STATUS: {display.log_session_dir / 'status.json'}")
+
+            # Save execution metadata for session export/sharing (same as CLI)
+            save_execution_metadata(
+                query=question,
+                config_path=str(resolved_path),
+                config_content=config,
+            )
 
         # Create coordination UI with web display
         ui = CoordinationUI(
