@@ -5,6 +5,7 @@ Provides utility classes for message formatting and conversion.
 """
 from ._chat_completions_api_params_handler import ChatCompletionsAPIParamsHandler
 from ._claude_api_params_handler import ClaudeAPIParamsHandler
+from ._gemini_interactions_api_params_handler import GeminiInteractionsAPIParamsHandler
 from ._openai_operator_api_params_handler import OpenAIOperatorAPIParamsHandler
 from ._response_api_params_handler import ResponseAPIParamsHandler
 
@@ -13,4 +14,5 @@ __all__ = [
     "ResponseAPIParamsHandler",
     "ClaudeAPIParamsHandler",
     "OpenAIOperatorAPIParamsHandler",
+    "GeminiInteractionsAPIParamsHandler",
 ]
