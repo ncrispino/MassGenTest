@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Recent Releases
 
 **v0.1.27 (December 19, 2025)** - Log Analysis & Config Builder Enhancements
-New `massgen logs` CLI command for run log analysis with export options, Gemini 3 Flash model support, enhanced config builder with context paths wizard, and Web UI improvements with "Open in Browser" button.
+New `massgen logs` CLI command for run log analysis with export options (JSON/CSV). Gemini 3 Flash model support. CLI config builder with per-agent web search, system messages, and coordination settings. Web UI context paths wizard and "Open in Browser" button. Fixed web search call message preservation, Claude Code tool permissions, and orchestrator timeout handling.
 
 **v0.1.26 (December 17, 2025)** - Web UI Setup & Shadow Agent Depth Scaling
 New Web UI setup wizard for guided first-run configuration, Docker diagnostics module with platform-specific resolution, and shadow agent response depth for test-time compute scaling.
@@ -23,58 +23,55 @@ Added UI-TARS custom tool for GUI automation, GPT-5.2 model support, and evolvin
 ## [0.1.27] - 2025-12-19
 
 ### Added
-- **`massgen logs` CLI Command**: New command for viewing and analyzing run logs
-  - New `massgen/logs_analyzer.py` module for log parsing and analysis
-  - Filtering by date range, status, and agent name
-  - Detailed run inspection with step-by-step execution breakdown
-  - Export options: JSON and CSV formats for external analysis
-  - Enhanced `massgen/cli.py` with `logs` subcommand integration
+- **Log Analysis CLI Command**: New `massgen logs` command for analyzing run logs with metrics visualization, tool breakdown, and export to JSON/CSV formats
+  - New `massgen/logs_analyzer.py` with `LogAnalyzer` class (433 lines)
+  - Enhanced `massgen/cli.py` with logs subcommand integration (+41 lines)
 
-- **Gemini 3 Flash Model Support**: Added Google's Gemini 3 Flash model to the provider registry
-  - Updated `massgen/backend/capabilities.py` with `gemini-3-flash` model entry
-  - New `massgen/configs/providers/gemini/gemini_3_flash.yaml` configuration example
+- **Gemini 3 Flash Model Support**: Added `gemini-3-flash-preview` model
+  - Enhanced `massgen/backend/capabilities.py` with new models and release dates
+  - New default model set to `gemini-3-flash-preview`
+
+- **Web UI Context Paths Wizard**: New `ContextPathsStep` component in quickstart wizard for configuring file context paths
+
+- **Web UI "Open in Browser" Button**: Added button to open workspaces directly in browser from answer views
+  - Enhanced `massgen/frontend/web/server.py` with browser open endpoint (+73 lines)
 
 ### Changed
-- **Config Builder Context Paths Wizard**: New wizard step for configuring workspace directories during interactive setup
-  - Enhanced `massgen/config_builder.py` with context paths configuration step
-  - Improved prompts and validation for workspace directory selection
-  - Better user guidance for read/write permission settings
+- **CLI Config Builder Enhancements**: Per-agent web search toggles, system message configuration, and improved default model selection
+  - Enhanced `massgen/config_builder.py` with `_get_provider_capabilities()` helper (+234 lines)
+  - Added per-agent `enable_web_search` toggle and system message prompts during quickstart
 
-- **Web UI "Open in Browser" Button**: Added quick-access button to web UI components for opening results in browser
-
-- **Web Search Call Message Preservation**: Web search call messages now preserved in response formatting
-  - Enhanced `massgen/backend/response.py` to treat `web_search_call` messages like `reasoning` messages
-  - Ensures complete response chains with web search context preserved
-
-- **MCP Skills Installer Utility**: New utility for automated MCP server setup
-  - Enhanced `massgen/cli.py` with MCP skills installation helpers
-  - Streamlined MCP server configuration workflow
+- **Logging System Improvements**: Enhanced logger configuration with better formatting and file output (`logger_config.py`)
 
 ### Fixed
-- **Claude Code Tool Permissions**: Fixed tool permissions handling in Claude Code backend
-  - Fixed `massgen/backend/claude_code.py` tool allow list handling
+- **Web Search Call Message Preservation**: Fixed response formatter to preserve `web_search_call` messages like reasoning messages (`_response_formatter.py`)
 
-- **Orchestrator Error Agent Respawn**: Fixed infinite respawn loop when agents encounter errors
-  - Enhanced `massgen/orchestrator.py` to mark errored agents as killed, preventing respawn cycles
+- **Claude Code Tool Permissions**: Fixed tool allow issue for Claude Code backend
+  - Fixed `massgen/backend/claude_code.py` (+8 lines)
+  - Fixed `massgen/filesystem_manager/_filesystem_manager.py`
 
-- **Web Search Workflow Restart**: Fixed workflow error where web search would run first then trigger repeated workflow restarts
+- **Orchestrator Workflow Timeout**: Fixed timeout handling in orchestrator error respawn logic (`massgen/orchestrator.py`)
+
+- **Workflow Restart Loop**: Fixed issue where workflow would search first then keep running into workflow restarted errors (`massgen/backend/response.py`)
 
 ### Documentations, Configurations and Resources
 
-- **Configuration Examples**:
-  - `massgen/configs/debug/error_respawn_test.yaml`: Test configuration for error recovery and agent respawn validation
-  - `massgen/configs/providers/gemini/gemini_3_flash.yaml`: Gemini 3 Flash model configuration example
+- **Log Analysis Documentation**:
+  - New `docs/source/user_guide/logging.rst`: `massgen logs` command guide
 
-- **Documentation Updates**:
-  - Updated `docs/source/user_guide/logging.rst`: Documentation for the new `massgen logs` command
+- **Configuration Examples**:
+  - `massgen/configs/providers/gemini/gemini_3_flash.yaml`: Gemini 3 Flash configuration
+  - `massgen/configs/debug/error_respawn_test.yaml`: Orchestrator error respawn testing
 
 - **Web UI Components**:
-  - `webui/src/components/wizard/ContextPathsStep.tsx`: New wizard step for context paths configuration
-  - Updated `webui/src/components/AnswerBrowserModal.tsx`, `FinalAnswerView.tsx`, `InlineAnswerBrowser.tsx`: "Open in Browser" button
-  - Rebuilt frontend assets in `massgen/frontend/web/static/assets/`
+  - New `webui/src/components/wizard/ContextPathsStep.tsx` (234 lines): Context paths wizard step
+  - Enhanced `webui/src/stores/wizardStore.ts` (+39 lines): Context path state management
+  - Enhanced `webui/src/components/AnswerBrowserModal.tsx` (+33 lines): Open in browser button
+  - Enhanced `webui/src/components/FinalAnswerView.tsx` (+36 lines): Open in browser button
+  - Enhanced `webui/src/components/InlineAnswerBrowser.tsx` (+33 lines): Open in browser button
 
 ### Technical Details
-- **Major Focus**: Log analysis tooling, config builder enhancements, Web UI improvements, response handling fixes
+- **Major Focus**: Log analysis tooling, CLI config builder UX, Web UI enhancements
 - **Contributors**: @ncrispino @praneeth999 and the MassGen team
 
 ## [0.1.26] - 2025-12-17

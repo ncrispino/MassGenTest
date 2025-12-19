@@ -160,15 +160,16 @@ This project started with the "threads of thought" and "iterative refinement" id
 **🎉 Released: December 19, 2025**
 
 **What's New in v0.1.27:**
-- **📊 `massgen logs` Command** - New CLI for viewing, filtering, and exporting run logs (JSON/CSV)
-- **🌐 Gemini 3 Flash Support** - Added Google's Gemini 3 Flash model to the provider registry
-- **🔧 Config Builder Context Paths** - New wizard step for configuring workspace directories
-- **🖥️ Web UI "Open in Browser"** - Quick-access button for opening results in browser
+- **📊 Log Analysis CLI** - New `massgen logs` command for viewing, filtering, and exporting run logs to JSON/CSV
+- **🌐 Gemini 3 Flash** - Google's Gemini 3 Flash model now available in the provider registry
+- **⚙️ Config Builder** - Per-agent web search, system messages, and coordination settings (voting sensitivity, answer novelty)
+- **🖥️ Web UI** - Context paths wizard for workspace setup, "Open in Browser" button for quick access
 
-**Key Improvements:**
+**Bug Fixes:**
+- Fixed Claude Code tool permissions handling
+- Fixed orchestrator error recovery with proper timeout handling
+- Fixed web search workflow restart issues
 - Web search call messages now preserved in response formatting
-- Claude Code tool permissions handling fixed
-- Orchestrator timeout handling for error recovery
 
 **Try v0.1.27 Features:**
 ```bash
@@ -178,20 +179,20 @@ pip install --upgrade massgen
 # Or with uv (faster)
 uv pip install massgen
 
-# Try Gemini 3 Flash model
-massgen --config @examples/providers/gemini/gemini_3_flash \
-  "Explain the difference between async and sync programming"
+# Analyze your run logs
+massgen logs --list                       # List all runs
+massgen logs --run <run_id> --export csv  # Export a run to CSV
 
-# Test error recovery and agent respawn behavior
-massgen --config @examples/debug/error_respawn_test \
-  "Run a multi-step task to validate error handling"
-
-# Use the new logs analyzer command
-massgen logs --list                    # List all runs
-massgen logs --run <run_id> --export csv  # Export run to CSV
-
-# Launch Web UI with "Open in Browser" button
+# Launch Web UI
 massgen --web
+
+# Try Gemini 3 Flash (requires Docker for code execution)
+uv run massgen --config massgen/configs/providers/gemini/gemini_3_flash.yaml \
+  "Create a simple Python script that demonstrates async programming"
+
+# Test error recovery (debug config - validates agent respawn fix)
+uv run massgen --config massgen/configs/debug/error_respawn_test.yaml \
+  "What is machine learning?"
 ```
 
 → [See full release history and examples](massgen/configs/README.md#release-history--examples)
@@ -1134,22 +1135,19 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 **🎉 Released: December 19, 2025**
 
-#### Log Analysis & CLI
-- **`massgen logs` Command**: New CLI for viewing and analyzing run logs with filtering by date/status, detailed run inspection, and export options (JSON/CSV)
-- **MCP Skills Installer**: New utility for automated MCP server setup and configuration
-
-#### Model & Config Enhancements
-- **Gemini 3 Flash Support**: Added Google's Gemini 3 Flash model to the provider registry
-- **Config Builder Context Paths Wizard**: New wizard step for configuring workspace directories with improved prompts and validation
-
-#### Web UI & Response Handling
-- **"Open in Browser" Button**: Quick-access button added to web UI components for opening results in browser
-- **Web Search Call Preservation**: Web search call messages now preserved in response formatting like reasoning messages
+#### New Features
+- **`massgen logs` CLI Command**: View and analyze run logs with filtering by date/status/agent, detailed run inspection, and export to JSON/CSV formats
+- **Gemini 3 Flash Model**: Google's Gemini 3 Flash model added to the provider registry
+- **CLI Config Builder**: Per-agent web search toggle, system messages, cloud code execution, coordination settings (voting sensitivity, answer novelty)
+- **Web UI Context Paths Wizard**: New `ContextPathsStep.tsx` component for configuring workspace directories with read/write permissions
+- **Web UI "Open in Browser"**: Quick-access button for opening results directly in browser
+- **Skills Installer Utility**: New `massgen/utils/skills_installer.py` module for automated cross-platform MCP server setup
 
 #### Bug Fixes
-- **Claude Code Tool Permissions**: Fixed tool permissions handling in Claude Code backend
-- **Orchestrator Timeout Handling**: Corrected timeout handling for error recovery scenarios
-- **Web Search Workflow Restart**: Fixed workflow error where web search would trigger repeated restarts
+- Fixed Claude Code tool permissions handling
+- Fixed orchestrator error recovery with proper timeout handling for agent respawn scenarios
+- Fixed web search workflow restart issues
+- Web search call messages now preserved in response formatting
 
 ### Previous Achievements (v0.0.3 - v0.1.26)
 

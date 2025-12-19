@@ -228,83 +228,93 @@ Most configurations use environment variables for API keys:so
 ## Release History & Examples
 
 ### v0.1.27 - Latest
-**New Features:** Log Analysis CLI, Gemini 3 Flash, Config Builder Context Paths, Web UI Enhancements
+**New Features:** Log Analysis CLI, Gemini 3 Flash, Config Builder & Web UI Enhancements
 
-**Key Features:**
-- **`massgen logs` CLI Command**: New command for viewing/analyzing run logs with filtering and export (JSON/CSV)
-- **Gemini 3 Flash Support**: Added Google's Gemini 3 Flash model to the provider registry
-- **Config Builder Context Paths Wizard**: New wizard step for configuring workspace directories
-- **Web UI "Open in Browser" Button**: Quick-access button for opening results in browser
-- **Web Search Call Preservation**: Web search messages preserved in response formatting
+**What's New:**
+- **Log Analysis CLI** - View, filter, and export your run logs with the new `massgen logs` command
+- **Gemini 3 Flash** - Google's fast Gemini 3 Flash model is now available
+- **CLI Config Builder** - Per-agent web search, system messages, coordination settings (voting sensitivity, answer novelty)
+- **Web UI Context Paths** - Configure workspace directories with read/write permissions in the quickstart wizard
+- **Web UI "Open in Browser"** - Quickly open results in your browser with one click
+- **Skills Installer** - Cross-platform utility for automated MCP server setup
+
+**Bug Fixes:**
+- Claude Code tool permissions handling
+- Orchestrator error recovery and agent respawn behavior
+- Web search workflow restart issues
 
 **New Configuration Files:**
-- `massgen/configs/providers/gemini/gemini_3_flash.yaml`: Gemini 3 Flash model configuration
-- `massgen/configs/debug/error_respawn_test.yaml`: Error recovery and agent respawn test config
+- `providers/gemini/gemini_3_flash.yaml` - Gemini 3 Flash model configuration
+- `debug/error_respawn_test.yaml` - Error recovery validation config
 
 **Try It:**
 ```bash
 # Install or upgrade
 pip install --upgrade massgen
 
-# Try Gemini 3 Flash model
-massgen --config @examples/providers/gemini/gemini_3_flash \
-  "Explain the difference between async and sync programming"
-
-# Test error recovery and agent respawn behavior
-massgen --config @examples/debug/error_respawn_test \
-  "Run a multi-step task to validate error handling"
-
-# Use the new logs analyzer command
+# Analyze your run logs
 massgen logs --list                       # List all runs
-massgen logs --run <run_id> --export csv  # Export run to CSV
+massgen logs --run <run_id> --export csv  # Export a run to CSV
+
+# Launch Web UI
+massgen --web
+
+# Try Gemini 3 Flash (requires Docker for code execution)
+uv run massgen --config massgen/configs/providers/gemini/gemini_3_flash.yaml \
+  "Create a simple Python script that demonstrates async programming"
+
+# Test error recovery (debug config - validates agent respawn fix)
+uv run massgen --config massgen/configs/debug/error_respawn_test.yaml \
+  "What is machine learning?"
+
 ```
 
 ### v0.1.26
-**New Features:** Docker Diagnostics Module, Web UI Setup System, Shadow Agent Response Depth
+**New Features:** Docker Diagnostics, Web UI Setup Wizard, Shadow Agent Response Depth
 
-**Key Features:**
-- **Docker Diagnostics Module**: Comprehensive error detection with platform-specific resolution steps for Docker issues
-- **Web UI Setup System**: Guided first-run setup with API key management and environment checks
-- **Shadow Agent Response Depth**: Test-time compute scaling via `response_depth` parameter (`low`/`medium`/`high`)
-- **Model Registry Updates**: GPT-5.1-Codex family, Claude alias notation, updated defaults
+**What's New:**
+- **Docker Diagnostics** - Comprehensive error detection with platform-specific resolution steps
+- **Web UI Setup Wizard** - Guided first-run experience with API key management
+- **Shadow Agent Response Depth** - Test-time compute scaling via `response_depth` parameter (`low`/`medium`/`high`)
+- **Model Updates** - GPT-5.1-Codex family, Claude alias notation, updated defaults
 
 **Try It:**
 ```bash
 # Install or upgrade
 pip install --upgrade massgen
 
-# Use response depth for test-time compute scaling in agent broadcasts
-massgen --config @examples/broadcast/test_broadcast_agents \
+# Test shadow agent response depth with agent broadcasts
+uv run massgen --config massgen/configs/broadcast/test_broadcast_agents.yaml \
   "Create a website about Bob Dylan. Please ask_others for what framework to use first"
 
-# Launch Web UI with setup wizard
+# Launch Web UI with guided setup
 massgen --web
 ```
 
 ### v0.1.25
-**New Features:** UI-TARS Custom Tool, GPT-5.2 Support, Evolving Skills
+**New Features:** UI-TARS Computer Use, GPT-5.2 Model, Evolving Skills
 
-**Key Features:**
-- **UI-TARS Custom Tool**: ByteDance's UI-TARS-1.5-7B model for GUI automation with vision and reasoning
-- **GPT-5.2 Model**: OpenAI's latest model added as new default
-- **Evolving Skills**: Create reusable workflow plans that improve through iteration
-- **Textual Terminal Enhancement**: Improved adaptive layouts and dark/light themes
+**What's New:**
+- **UI-TARS Computer Use** - ByteDance's UI-TARS-1.5-7B model for GUI automation with vision and reasoning
+- **GPT-5.2 Model** - OpenAI's latest model added as the new default
+- **Evolving Skills** - Create reusable workflow plans that improve through iteration
+- **Textual Terminal** - Enhanced display with adaptive layouts and dark/light themes
 
 **Try It:**
 ```bash
 # Install or upgrade
 pip install --upgrade massgen
 
-# Try UI-TARS computer use (requires UI_TARS_API_KEY and UI_TARS_ENDPOINT)
-massgen --config @examples/tools/custom_tools/ui_tars_browser_example \
+# UI-TARS browser automation (requires UI_TARS_API_KEY and UI_TARS_ENDPOINT)
+uv run massgen --config massgen/configs/tools/custom_tools/ui_tars_browser_example.yaml \
   "Search for 'Python asyncio' on Google and summarize the first result"
 
-# Use the new Textual terminal display
-massgen --config @examples/basic/single_agent_textual \
+# Textual terminal display
+uv run massgen --config massgen/configs/basic/single_agent_textual.yaml \
   "What is the transformers in deep learning?"
 
-# Create evolving skills with previous session discovery
-massgen --config @examples/skills/skills_with_previous_sessions \
+# Evolving skills with session persistence
+uv run massgen --config massgen/configs/skills/skills_with_previous_sessions.yaml \
   "Create a web scraping workflow that extracts article titles from news sites"
 ```
 
