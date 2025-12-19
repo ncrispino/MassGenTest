@@ -226,6 +226,32 @@ def display_summary(analyzer: LogAnalyzer, console: Console) -> None:
             )
         console.print(table)
 
+    # API Timing section
+    api_timing = data.get("api_timing", {})
+    if api_timing and api_timing.get("total_calls", 0) > 0:
+        total_api_time = api_timing.get("total_time_ms", 0)
+        total_api_calls = api_timing.get("total_calls", 0)
+        avg_api_time = api_timing.get("avg_time_ms", 0)
+        avg_ttft = api_timing.get("avg_ttft_ms", 0)
+
+        console.print(
+            f"\n[bold]API Calls:[/bold] "
+            f"Count: [cyan]{total_api_calls}[/cyan] | "
+            f"Total Time: [cyan]{format_duration(total_api_time)}[/cyan] | "
+            f"Avg: [cyan]{format_duration(avg_api_time)}[/cyan] | "
+            f"Avg TTFT: [cyan]{avg_ttft:.0f}ms[/cyan]",
+        )
+
+        # Show breakdown by backend if available
+        by_backend = api_timing.get("by_backend", {})
+        if by_backend and len(by_backend) > 1:
+            backend_parts = []
+            for backend, stats in by_backend.items():
+                calls = stats.get("calls", 0)
+                avg_ms = stats.get("avg_time_ms", 0)
+                backend_parts.append(f"{backend}: {calls} calls, avg {format_duration(avg_ms)}")
+            console.print(f"  [dim]{' | '.join(backend_parts)}[/dim]")
+
     # Show log directory
     console.print(f"\n[dim]Log: {analyzer.log_dir}[/dim]")
 

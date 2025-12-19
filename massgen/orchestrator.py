@@ -1496,6 +1496,55 @@ class Orchestrator(ChatAgent):
                     total_output_tokens += tu.get("output_tokens", 0)
                     total_reasoning_tokens += tu.get("reasoning_tokens", 0)
 
+            # Aggregate API call timing metrics
+            api_timing = {
+                "total_calls": 0,
+                "total_time_ms": 0.0,
+                "avg_time_ms": 0.0,
+                "avg_ttft_ms": 0.0,
+                "by_round": {},
+                "by_backend": {},
+            }
+            total_ttft_ms = 0.0
+
+            for agent_id, agent in self.agents.items():
+                if hasattr(agent, "backend") and agent.backend:
+                    backend = agent.backend
+                    if hasattr(backend, "get_api_call_history"):
+                        for metric in backend.get_api_call_history():
+                            api_timing["total_calls"] += 1
+                            api_timing["total_time_ms"] += metric.duration_ms
+                            total_ttft_ms += metric.time_to_first_token_ms
+
+                            # By round
+                            round_key = f"round_{metric.round_number}"
+                            if round_key not in api_timing["by_round"]:
+                                api_timing["by_round"][round_key] = {"calls": 0, "time_ms": 0.0, "ttft_ms": 0.0}
+                            api_timing["by_round"][round_key]["calls"] += 1
+                            api_timing["by_round"][round_key]["time_ms"] += metric.duration_ms
+                            api_timing["by_round"][round_key]["ttft_ms"] += metric.time_to_first_token_ms
+
+                            # By backend
+                            if metric.backend_name not in api_timing["by_backend"]:
+                                api_timing["by_backend"][metric.backend_name] = {"calls": 0, "time_ms": 0.0, "ttft_ms": 0.0}
+                            api_timing["by_backend"][metric.backend_name]["calls"] += 1
+                            api_timing["by_backend"][metric.backend_name]["time_ms"] += metric.duration_ms
+                            api_timing["by_backend"][metric.backend_name]["ttft_ms"] += metric.time_to_first_token_ms
+
+            # Calculate averages
+            if api_timing["total_calls"] > 0:
+                api_timing["avg_time_ms"] = round(api_timing["total_time_ms"] / api_timing["total_calls"], 2)
+                api_timing["avg_ttft_ms"] = round(total_ttft_ms / api_timing["total_calls"], 2)
+
+            # Round timing values
+            api_timing["total_time_ms"] = round(api_timing["total_time_ms"], 2)
+            for round_data in api_timing["by_round"].values():
+                round_data["time_ms"] = round(round_data["time_ms"], 2)
+                round_data["ttft_ms"] = round(round_data["ttft_ms"], 2)
+            for backend_data in api_timing["by_backend"].values():
+                backend_data["time_ms"] = round(backend_data["time_ms"], 2)
+                backend_data["ttft_ms"] = round(backend_data["ttft_ms"], 2)
+
             # Save summary file
             summary_file = log_dir / "metrics_summary.json"
             summary_data = {
@@ -1514,6 +1563,7 @@ class Orchestrator(ChatAgent):
                 },
                 "tools": tools_summary,
                 "rounds": rounds_summary,
+                "api_timing": api_timing,
                 "agents": agent_metrics,
             }
             with open(summary_file, "w", encoding="utf-8") as f:
