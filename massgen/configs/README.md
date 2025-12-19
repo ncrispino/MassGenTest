@@ -227,7 +227,39 @@ Most configurations use environment variables for API keys:so
 
 ## Release History & Examples
 
-### v0.1.26 - Latest
+### v0.1.27 - Latest
+**New Features:** Log Analysis CLI, Gemini 3 Flash, Config Builder Context Paths, Web UI Enhancements
+
+**Key Features:**
+- **`massgen logs` CLI Command**: New command for viewing/analyzing run logs with filtering and export (JSON/CSV)
+- **Gemini 3 Flash Support**: Added Google's Gemini 3 Flash model to the provider registry
+- **Config Builder Context Paths Wizard**: New wizard step for configuring workspace directories
+- **Web UI "Open in Browser" Button**: Quick-access button for opening results in browser
+- **Web Search Call Preservation**: Web search messages preserved in response formatting
+
+**New Configuration Files:**
+- `massgen/configs/providers/gemini/gemini_3_flash.yaml`: Gemini 3 Flash model configuration
+- `massgen/configs/debug/error_respawn_test.yaml`: Error recovery and agent respawn test config
+
+**Try It:**
+```bash
+# Install or upgrade
+pip install --upgrade massgen
+
+# Try Gemini 3 Flash model
+massgen --config @examples/providers/gemini/gemini_3_flash \
+  "Explain the difference between async and sync programming"
+
+# Test error recovery and agent respawn behavior
+massgen --config @examples/debug/error_respawn_test \
+  "Run a multi-step task to validate error handling"
+
+# Use the new logs analyzer command
+massgen logs --list                       # List all runs
+massgen logs --run <run_id> --export csv  # Export run to CSV
+```
+
+### v0.1.26
 **New Features:** Docker Diagnostics Module, Web UI Setup System, Shadow Agent Response Depth
 
 **Key Features:**

@@ -1,10 +1,10 @@
 # MassGen Roadmap
 
-**Current Version:** v0.1.26
+**Current Version:** v0.1.27
 
 **Release Schedule:** Mondays, Wednesdays, Fridays @ 9am PT
 
-**Last Updated:** December 17, 2025
+**Last Updated:** December 19, 2025
 
 This roadmap outlines MassGen's development priorities for upcoming releases. Each release focuses on specific capabilities with real-world use cases.
 
@@ -42,17 +42,17 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 | Release | Target | Feature | Owner | Use Case |
 |---------|--------|---------|-------|----------|
-| **v0.1.27** | 12/19/25 | Add system reminders | @ncrispino | Framework for injecting system reminders mid-run during LLM streaming |
+| **v0.1.28** | 12/22/25 | Add system reminders | @ncrispino | Framework for injecting system reminders mid-run during LLM streaming |
 | | | Memory as Tools | @ncrispino | Include memory (including filesystem) as callable tools for agents |
-| **v0.1.28** | 12/22/25 | Grok 4.1 Fast Model Support | @praneeth999 | Add support for xAI's Grok 4.1 Fast model for rapid agent responses |
+| **v0.1.29** | 12/24/25 | Grok 4.1 Fast Model Support | @praneeth999 | Add support for xAI's Grok 4.1 Fast model for rapid agent responses |
 | | | Automatic Context Compression | @ncrispino | Automatic context compression to manage long conversations efficiently |
-| **v0.1.29** | 12/24/25 | Expose MassGen as OpenAI-Compatible Chat Server | @ncrispino | Run MassGen as an OpenAI-compatible API server for integration with other tools |
+| **v0.1.30** | 12/26/25 | Expose MassGen as OpenAI-Compatible Chat Server | @ncrispino | Run MassGen as an OpenAI-compatible API server for integration with other tools |
 
 *All releases ship on MWF @ 9am PT when ready*
 
 ---
 
-## 📋 v0.1.27 - System Reminders & Memory as Tools
+## 📋 v0.1.28 - System Reminders & Memory as Tools
 
 ### Features
 
@@ -77,7 +77,7 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 ---
 
-## 📋 v0.1.28 - Grok 4.1 Fast & Context Compression
+## 📋 v0.1.29 - Grok 4.1 Fast & Context Compression
 
 ### Features
 
@@ -103,7 +103,7 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 ---
 
-## 📋 v0.1.29 - OpenAI-Compatible Server
+## 📋 v0.1.30 - OpenAI-Compatible Server
 
 ### Features
 
@@ -452,38 +452,38 @@ These features are being actively developed on **separate parallel tracks** and 
 - Issue: [#540](https://github.com/massgen/MassGen/issues/540)
 - Add support for xAI's Grok 4.1 Fast model
 - Integration with existing Grok backend infrastructure
-- **Target:** v0.1.28
+- **Target:** v0.1.29
 
 ### Track: Automatic Context Compression (@ncrispino, nickcrispino)
 - Issue: [#617](https://github.com/massgen/MassGen/issues/617)
 - Automatic context compression for long conversations
 - Intelligent summarization when context limits are reached
-- **Target:** v0.1.28
+- **Target:** v0.1.29
 
 ### Track: OpenAI-Compatible Chat Server (@ncrispino, nickcrispino)
 - Issue: [#628](https://github.com/massgen/MassGen/issues/628)
 - Run MassGen as an OpenAI-compatible API server
 - Integration with Cursor, Continue, and other tools
-- **Target:** v0.1.29
+- **Target:** v0.1.30
 
 ### Track: RL Integration (@qidanrui, @praneeth999, danrui2020, ram2561)
 - Issue: [#527](https://github.com/massgen/MassGen/issues/527)
 - Reinforcement learning integration for agent optimization
 - Adaptive agent behavior based on feedback and outcomes
 - Reward modeling for multi-agent coordination
-- **Target:** v0.1.27
+- **Target:** v0.1.28
 
 ### Track: Smithery MCP Tools Support (@ncrispino, nickcrispino)
 - Issue: [#521](https://github.com/massgen/MassGen/issues/521)
 - Integration with Smithery to expand available MCP tools
 - Automatic discovery and installation of Smithery MCP servers
-- **Target:** v0.1.27
+- **Target:** v0.1.28
 
 ### Track: Memory as Tools (@ncrispino, nickcrispino)
 - Issue: [#461](https://github.com/massgen/MassGen/issues/461)
 - Include memory (including filesystem) as callable tools for agents
 - Unified interface for different memory backends
-- **Target:** v0.1.27
+- **Target:** v0.1.28
 
 ### Track: Coding Agent Enhancements (@ncrispino, nickcrispino)
 - PR: [#251](https://github.com/massgen/MassGen/pull/251)
@@ -560,5 +560,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, code standards, te
 
 *This roadmap is community-driven. Releases ship on **Mondays, Wednesdays, Fridays @ 9am PT**. Timelines may shift based on priorities and feedback. Open an issue to suggest changes!*
 
-**Last Updated:** December 17, 2025
+**Last Updated:** December 19, 2025
 **Maintained By:** MassGen Team
