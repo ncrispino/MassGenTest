@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Recent Releases
 
 **v0.1.27 (December 19, 2025)** - Log Analysis & Config Builder Enhancements
-New `massgen logs` CLI command for run log analysis with export options (JSON/CSV). Gemini 3 Flash model support. CLI config builder with per-agent web search, system messages, and coordination settings. Web UI context paths wizard and "Open in Browser" button. Fixed web search call message preservation, Claude Code tool permissions, and orchestrator timeout handling.
+New `massgen logs` CLI command for run log analysis with export options (JSON/CSV). Gemini 3 Flash model support. CLI config builder with per-agent web search, system messages, and coordination settings. Web UI context paths wizard and "Open Folder" button. Fixed web search call message preservation, Claude Code tool permissions, and orchestrator timeout handling.
 
 **v0.1.26 (December 17, 2025)** - Web UI Setup & Shadow Agent Depth Scaling
 New Web UI setup wizard for guided first-run configuration, Docker diagnostics module with platform-specific resolution, and shadow agent response depth for test-time compute scaling.
@@ -33,8 +33,8 @@ Added UI-TARS custom tool for GUI automation, GPT-5.2 model support, and evolvin
 
 - **Web UI Context Paths Wizard**: New `ContextPathsStep` component in quickstart wizard for configuring file context paths
 
-- **Web UI "Open in Browser" Button**: Added button to open workspaces directly in browser from answer views
-  - Enhanced `massgen/frontend/web/server.py` with browser open endpoint (+73 lines)
+- **Web UI "Open Folder" Button**: Added button to open workspaces in native file browser
+  - Enhanced `massgen/frontend/web/server.py` with workspace open endpoint (+73 lines)
 
 ### Changed
 - **CLI Config Builder Enhancements**: Per-agent web search toggles, system message configuration, and improved default model selection
@@ -66,9 +66,9 @@ Added UI-TARS custom tool for GUI automation, GPT-5.2 model support, and evolvin
 - **Web UI Components**:
   - New `webui/src/components/wizard/ContextPathsStep.tsx` (234 lines): Context paths wizard step
   - Enhanced `webui/src/stores/wizardStore.ts` (+39 lines): Context path state management
-  - Enhanced `webui/src/components/AnswerBrowserModal.tsx` (+33 lines): Open in browser button
-  - Enhanced `webui/src/components/FinalAnswerView.tsx` (+36 lines): Open in browser button
-  - Enhanced `webui/src/components/InlineAnswerBrowser.tsx` (+33 lines): Open in browser button
+  - Enhanced `webui/src/components/AnswerBrowserModal.tsx` (+33 lines): Open folder button
+  - Enhanced `webui/src/components/FinalAnswerView.tsx` (+36 lines): Open folder button
+  - Enhanced `webui/src/components/InlineAnswerBrowser.tsx` (+33 lines): Open folder button
 
 ### Technical Details
 - **Major Focus**: Log analysis tooling, CLI config builder UX, Web UI enhancements

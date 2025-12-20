@@ -164,7 +164,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 - **📊 Log Analysis CLI** - New `massgen logs` command for viewing, filtering, and exporting run logs to JSON/CSV
 - **🌐 Gemini 3 Flash** - Google's Gemini 3 Flash model now available in the provider registry
 - **⚙️ Config Builder** - Per-agent web search, system messages, and coordination settings (voting sensitivity, answer novelty)
-- **🖥️ Web UI** - Context paths wizard for workspace setup, "Open in Browser" button for quick access
+- **🖥️ Web UI** - Context paths wizard for file context configuration, "Open Folder" button for workspace access
 
 **Bug Fixes:**
 - Fixed Claude Code tool permissions handling

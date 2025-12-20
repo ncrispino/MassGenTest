@@ -159,7 +159,7 @@ Recent Releases
 
 **v0.1.27 (December 19, 2025)** - Log Analysis & Config Builder Enhancements
 
-New ``massgen logs`` CLI command for run log analysis with export options (JSON/CSV). Gemini 3 Flash model support. CLI config builder with per-agent web search, system messages, and coordination settings. Web UI context paths wizard and "Open in Browser" button. Fixed web search call message preservation, Claude Code tool permissions, and orchestrator timeout handling.
+New ``massgen logs`` CLI command for run log analysis with export options (JSON/CSV). Gemini 3 Flash model support. CLI config builder with per-agent web search, system messages, and coordination settings. Web UI context paths wizard and "Open Folder" button. Fixed web search call message preservation, Claude Code tool permissions, and orchestrator timeout handling.
 
 **v0.1.26 (December 17, 2025)** - Docker Diagnostics & Web UI Setup
 

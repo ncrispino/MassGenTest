@@ -235,7 +235,7 @@ Most configurations use environment variables for API keys:so
 - **Gemini 3 Flash** - Google's fast Gemini 3 Flash model is now available
 - **CLI Config Builder** - Per-agent web search, system messages, coordination settings (voting sensitivity, answer novelty)
 - **Web UI Context Paths** - Configure workspace directories with read/write permissions in the quickstart wizard
-- **Web UI "Open in Browser"** - Quickly open results in your browser with one click
+- **Web UI "Open Folder"** - Open agent workspaces in native file browser with one click
 - **Skills Installer** - Cross-platform utility for automated MCP server setup
 
 **Bug Fixes:**
