@@ -21,6 +21,28 @@ As a result, automatic model listing primarily improves:
 It does **not** affect core execution or routing.
 
 ---
+## Model Discovery Tiers
+
+Automatic model discovery is intentionally scoped to UX-facing components
+and may vary by provider capability.
+
+Three discovery tiers are supported conceptually:
+
+1. **Live Unauthenticated Discovery**
+   - Providers exposing public model registries
+   - Example: OpenRouter
+   - No API keys required
+
+2. **Static Provider Manifests**
+   - Curated model lists stored in-repo
+   - Used for CLI UX, docs, and examples only
+   - No runtime enforcement or dependencies
+   - Suitable for providers without public APIs (e.g., Groq, OpenAI)
+
+3. **Optional Authenticated Discovery (Future)**
+   - Enabled only when user provides API keys
+   - Strictly non-blocking and UX-only
+
 ## Non-Goals
 
 - Introducing runtime dependencies on provider model registries
@@ -29,30 +51,29 @@ It does **not** affect core execution or routing.
 
 ## Current Model Listing Status
 
-| Provider     | Automatic Listing | Notes |
-|-------------|------------------|-------|
-| OpenRouter  | ✅ Yes | Models fetched dynamically via API |
-| OpenAI      | ❌ Not implemented | Requires manual updates |
-| Anthropic   | ❌ Not implemented | Requires manual updates |
-| Groq        | ❌ Not implemented | Requires manual updates |
-| Nebius      | ❌ Not implemented | Requires manual updates |
-| Together AI | ❌ Not implemented | Requires manual updates |
-| Cerebras    | ❌ Not implemented | Requires manual updates |
-| Qwen        | ❌ Not implemented | Requires manual updates |
-| Moonshot    | ❌ Not implemented | Requires manual updates |
-
+| Provider     | Discovery Method        | Notes |
+|-------------|-------------------------|-------|
+| OpenRouter  | Live (unauthenticated)  | Public API |
+| OpenAI      | Static manifest         | No public model registry |
+| Anthropic   | Static manifest         | No public model registry |
+| Groq        | Static manifest         | API key required for live listing |
+| Nebius      | Static manifest         | Enterprise-gated |
+| Together AI | Static manifest         | API key required |
+| Cerebras    | Static manifest         | Limited availability |
+| Qwen        | Static manifest         | Deployment-specific |
+| Moonshot    | Static manifest         | Closed ecosystem |
 ---
 
 ## Findings
 
-- Runtime model handling does **not** rely on provider registries
+- Most providers do not expose unauthenticated model listing APIs
+- Any automatic discovery beyond OpenRouter requires API keys
 - Provider inference occurs via model name prefixes
 - Tests confirm no hardcoded provider-specific model registries are enforced at runtime
 - Model names primarily appear in:
-  - documentation
+  - Documentation
   - CLI examples
-  - presentation artifacts
-
+  - Presentation artifacts
 ---
 These findings suggest that automatic model discovery should be treated as
 a UX concern rather than a runtime requirement.
@@ -60,9 +81,9 @@ a UX concern rather than a runtime requirement.
 ## Recommendations
 
 1. Clearly document which providers support automatic model discovery
-2. Mark providers requiring manual updates
-3. Explore API-based model listing only for UX-facing components
-4. Avoid introducing execution-time dependencies on model registries
+2. Mark providers requiring static manifests
+3. Implement static provider model manifests for non-public providers
+4. Treat authenticated API-based listing as an optional enhancement
 
 ## Follow-Up Work
 
@@ -75,4 +96,6 @@ Potential next steps include:
 - Leveraging LiteLLM or third-party wrappers for consolidated model discovery
 - Implementing automatic listing exclusively in UX-facing components (e.g., CLI setup)
 - Clearly documenting providers that must remain manually updated
+- Define a standard provider manifest format for model metadata
+
 
