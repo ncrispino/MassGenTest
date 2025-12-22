@@ -851,8 +851,7 @@ def create_app(
             "coordination": {  // optional
                 "voting_sensitivity": "balanced",  // lenient, balanced, strict
                 "answer_novelty_requirement": "lenient",  // lenient, balanced, strict
-                "max_new_answers_per_agent": 5,  // optional, limit answers per agent
-                "min_answers_before_voting": 1  // optional, require answers before voting
+                "max_new_answers_per_agent": 5  // optional, limit answers per agent
             }
         }
 
@@ -3259,10 +3258,6 @@ async def run_coordination_with_history(
         if "max_new_answers_per_agent" in orchestrator_cfg:
             orchestrator_config.max_new_answers_per_agent = orchestrator_cfg["max_new_answers_per_agent"]
 
-        # Apply minimum answers before voting if specified
-        if "min_answers_before_voting" in orchestrator_cfg:
-            orchestrator_config.min_answers_before_voting = orchestrator_cfg["min_answers_before_voting"]
-
         # Apply answer novelty requirement if specified
         if "answer_novelty_requirement" in orchestrator_cfg:
             orchestrator_config.answer_novelty_requirement = orchestrator_cfg["answer_novelty_requirement"]
@@ -3622,10 +3617,6 @@ async def run_coordination(
         # Apply answer count limit if specified
         if "max_new_answers_per_agent" in orchestrator_cfg:
             orchestrator_config.max_new_answers_per_agent = orchestrator_cfg["max_new_answers_per_agent"]
-
-        # Apply minimum answers before voting if specified
-        if "min_answers_before_voting" in orchestrator_cfg:
-            orchestrator_config.min_answers_before_voting = orchestrator_cfg["min_answers_before_voting"]
 
         # Apply answer novelty requirement if specified
         if "answer_novelty_requirement" in orchestrator_cfg:

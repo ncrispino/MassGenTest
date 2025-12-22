@@ -164,7 +164,22 @@ class ClaudeCodeBackend(LLMBackend):
 
         # Register multimodal tools if enabled
         enable_multimodal = self.config.get("enable_multimodal_tools", False) or kwargs.get("enable_multimodal_tools", False)
+
+        # Build multimodal config - priority: explicit multimodal_config > individual config variables
         self._multimodal_config = self.config.get("multimodal_config", {}) or kwargs.get("multimodal_config", {})
+        if not self._multimodal_config:
+            # Build from individual generation config variables
+            self._multimodal_config = {}
+            for media_type in ["image", "video", "audio"]:
+                backend = self.config.get(f"{media_type}_generation_backend")
+                model = self.config.get(f"{media_type}_generation_model")
+                if backend or model:
+                    self._multimodal_config[media_type] = {}
+                    if backend:
+                        self._multimodal_config[media_type]["backend"] = backend
+                    if model:
+                        self._multimodal_config[media_type]["model"] = model
+
         if enable_multimodal:
             multimodal_tools = [
                 {
@@ -173,9 +188,15 @@ class ClaudeCodeBackend(LLMBackend):
                     "path": "massgen/tool/_multimodal_tools/read_media.py",
                     "function": ["read_media"],
                 },
+                {
+                    "name": ["generate_media"],
+                    "category": "multimodal",
+                    "path": "massgen/tool/_multimodal_tools/generation/generate_media.py",
+                    "function": ["generate_media"],
+                },
             ]
             custom_tools = list(custom_tools) + multimodal_tools
-            logger.info("[ClaudeCode] Multimodal tools enabled: read_media")
+            logger.info("[ClaudeCode] Multimodal tools enabled: read_media, generate_media")
 
         if custom_tools:
             self._custom_tool_manager = ToolManager()

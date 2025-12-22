@@ -3413,28 +3413,6 @@ class ConfigBuilder:
                 )
                 console.print()
 
-                min_answers_input = Prompt.ask(
-                    "  [prompt]Min answers per agent before voting (0 = no minimum)[/prompt]",
-                    default="0",
-                )
-
-                try:
-                    min_answers = int(min_answers_input)
-                    if min_answers > 0:
-                        orchestrator_config["min_answers_before_voting"] = min_answers
-                        console.print()
-                        console.print(
-                            f"  ✅ Min answers before voting: {min_answers} per agent",
-                        )
-                    else:
-                        console.print()
-                        console.print(
-                            "  ✅ Min answers before voting: none (agents can vote immediately)",
-                        )
-                except ValueError:
-                    console.print()
-                    console.print("  ⚠️  Invalid number - using no minimum")
-
                 # Answer Novelty Requirement
                 console.print()
                 console.print(
@@ -4426,27 +4404,6 @@ class ConfigBuilder:
                     except ValueError:
                         pass  # Ignore invalid input, use unlimited
 
-                # Min answers before voting
-                min_answers_input = questionary.text(
-                    "Min answers per agent before voting (0 = no minimum):",
-                    default="0",
-                    style=questionary.Style(
-                        [
-                            ("question", "fg:cyan bold"),
-                        ],
-                    ),
-                ).ask()
-
-                if min_answers_input is None:
-                    raise KeyboardInterrupt
-
-                try:
-                    min_answers = int(min_answers_input)
-                    if min_answers > 0:
-                        coordination_settings["min_answers_before_voting"] = min_answers
-                except ValueError:
-                    pass  # Ignore invalid input, use no minimum
-
             # Step 6: Generate the full config
             console.print("\n[dim]Generating configuration...[/dim]")
 
@@ -4715,8 +4672,6 @@ class ConfigBuilder:
             orchestrator_config["answer_novelty_requirement"] = coordination_settings["answer_novelty_requirement"]
         if coordination_settings.get("max_new_answers_per_agent"):
             orchestrator_config["max_new_answers_per_agent"] = coordination_settings["max_new_answers_per_agent"]
-        if coordination_settings.get("min_answers_before_voting"):
-            orchestrator_config["min_answers_before_voting"] = coordination_settings["min_answers_before_voting"]
 
         # Build full config
         config = {

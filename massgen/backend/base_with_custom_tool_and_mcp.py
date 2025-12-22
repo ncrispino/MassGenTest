@@ -1044,28 +1044,6 @@ class CustomToolAndMCPBackend(LLMBackend):
 
         return mcp_calls, custom_calls, provider_calls
 
-    def _extract_multimodal_content(self, result: Any) -> Optional[Dict[str, Any]]:
-        """Extract multimodal_inject metadata from an ExecutionResult if present.
-
-        This helper detects when a tool (like read_media) has returned multimodal
-        content that should be injected into the tool result message.
-
-        Args:
-            result: Tool execution result (may be ExecutionResult or other type)
-
-        Returns:
-            The multimodal_inject dict if present, containing:
-            - type: "image", "audio", or "video"
-            - base64: Base64-encoded media data
-            - mime_type: MIME type string
-            - source_path: Original file path
-            - prompt: Optional prompt about the content
-            Or None if no multimodal content present.
-        """
-        if hasattr(result, "meta_info") and result.meta_info:
-            return result.meta_info.get("multimodal_inject")
-        return None
-
     @abstractmethod
     def _append_tool_result_message(
         self,

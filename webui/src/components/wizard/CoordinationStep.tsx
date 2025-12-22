@@ -6,7 +6,7 @@
  */
 
 import { motion } from 'framer-motion';
-import { Settings, Vote, Sparkles, Info, ListOrdered, CheckSquare } from 'lucide-react';
+import { Settings, Vote, Sparkles, Info, ListOrdered } from 'lucide-react';
 import { useWizardStore } from '../../stores/wizardStore';
 
 type SensitivityLevel = 'lenient' | 'balanced' | 'strict';
@@ -110,11 +110,6 @@ export function CoordinationStep() {
     setCoordinationSettings({ max_new_answers_per_agent: isNaN(num) || num <= 0 ? undefined : num });
   };
 
-  const handleMinAnswersChange = (value: string) => {
-    const num = parseInt(value, 10);
-    setCoordinationSettings({ min_answers_before_voting: isNaN(num) || num < 0 ? undefined : num });
-  };
-
   return (
     <motion.div
       initial={{ opacity: 0, x: 20 }}
@@ -192,32 +187,6 @@ export function CoordinationStep() {
                        placeholder-gray-400"
           />
         </div>
-
-        {/* Min answers before voting */}
-        <div className="p-5 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700">
-          <div className="flex items-start gap-3 mb-3">
-            <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-lg">
-              <CheckSquare className="w-5 h-5 text-blue-500" />
-            </div>
-            <div className="flex-1">
-              <h3 className="font-medium text-gray-800 dark:text-gray-200">Min Answers Before Voting</h3>
-              <p className="text-sm text-gray-500 dark:text-gray-400 mt-0.5">
-                Require each agent to provide this many answers before voting is allowed (0 = no minimum)
-              </p>
-            </div>
-          </div>
-          <input
-            type="number"
-            min="0"
-            placeholder="0 (no minimum)"
-            value={coordinationSettings.min_answers_before_voting ?? ''}
-            onChange={(e) => handleMinAnswersChange(e.target.value)}
-            className="w-full px-4 py-2.5 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-600
-                       rounded-lg text-gray-800 dark:text-gray-200 text-sm
-                       focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent
-                       placeholder-gray-400"
-          />
-        </div>
       </div>
 
       {/* Current settings summary */}
@@ -231,9 +200,6 @@ export function CoordinationStep() {
           <div>
             Max answers: <span className="font-medium text-blue-600 dark:text-blue-400">
               {coordinationSettings.max_new_answers_per_agent ?? 'unlimited'}
-            </span>,
-            min before voting: <span className="font-medium text-blue-600 dark:text-blue-400">
-              {coordinationSettings.min_answers_before_voting ?? 0}
             </span>.
           </div>
         </div>

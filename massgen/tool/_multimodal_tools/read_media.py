@@ -150,63 +150,51 @@ async def read_media(
                 output_blocks=[TextContent(data=json.dumps(result, indent=2))],
             )
 
-        # Always use fallback to understand_* tools (external API calls)
-        # Direct context injection has inconsistent support across backends:
-        # - Claude Code: MCP ImageContent not supported by Agent SDK
-        # - Other backends: Different content block formats required
-        # Using understand_* provides consistent, reliable behavior across all backends
-        if True:  # Always fallback
-            logger.info(
-                f"Model {backend_type}/{model} doesn't support native {media_type}, " f"falling back to understand_{media_type}",
+        # Use understand_* tools for all media analysis (external API calls)
+        # This provides consistent, reliable behavior across all backends
+        logger.info(f"Using understand_{media_type} for {media_type} analysis")
+
+        default_prompt = prompt or f"Please analyze this {media_type} and describe its contents."
+
+        # Extract config overrides for this media type
+        media_config = (multimodal_config or {}).get(media_type, {})
+        override_backend = media_config.get("backend") or backend_type
+        override_model = media_config.get("model")
+
+        if media_config:
+            logger.info(f"Using multimodal_config override for {media_type}: {media_config}")
+
+        if media_type == "image":
+            from massgen.tool._multimodal_tools.understand_image import understand_image
+
+            return await understand_image(
+                str(media_path),
+                prompt=default_prompt,
+                agent_cwd=agent_cwd,
+                allowed_paths=allowed_paths,
             )
+        elif media_type == "audio":
+            from massgen.tool._multimodal_tools.understand_audio import understand_audio
 
-            default_prompt = prompt or f"Please analyze this {media_type} and describe its contents."
+            return await understand_audio(
+                audio_paths=[str(media_path)],
+                prompt=default_prompt,
+                backend_type=override_backend,
+                model=override_model,
+                agent_cwd=agent_cwd,
+                allowed_paths=allowed_paths,
+            )
+        elif media_type == "video":
+            from massgen.tool._multimodal_tools.understand_video import understand_video
 
-            # Extract config overrides for this media type
-            media_config = (multimodal_config or {}).get(media_type, {})
-            override_backend = media_config.get("backend") or backend_type
-            override_model = media_config.get("model")
-
-            if media_config:
-                logger.info(f"Using multimodal_config override for {media_type}: {media_config}")
-
-            if media_type == "image":
-                from massgen.tool._multimodal_tools.understand_image import (
-                    understand_image,
-                )
-
-                return await understand_image(
-                    str(media_path),
-                    prompt=default_prompt,
-                    agent_cwd=agent_cwd,
-                    allowed_paths=allowed_paths,
-                )
-            elif media_type == "audio":
-                from massgen.tool._multimodal_tools.understand_audio import (
-                    understand_audio,
-                )
-
-                return await understand_audio(
-                    audio_paths=[str(media_path)],
-                    prompt=default_prompt,
-                    backend_type=override_backend,
-                    model=override_model,
-                    agent_cwd=agent_cwd,
-                    allowed_paths=allowed_paths,
-                )
-            elif media_type == "video":
-                from massgen.tool._multimodal_tools.understand_video import (
-                    understand_video,
-                )
-
-                return await understand_video(
-                    video_path=str(media_path),
-                    prompt=default_prompt,
-                    backend_type=override_backend,
-                    model=override_model,
-                    agent_cwd=agent_cwd,
-                    allowed_paths=allowed_paths,
-                )
+            return await understand_video(
+                video_path=str(media_path),
+                prompt=default_prompt,
+                backend_type=override_backend,
+                model=override_model,
+                agent_cwd=agent_cwd,
+                allowed_paths=allowed_paths,
+            )
 
     except ValueError as ve:
         # Path validation error

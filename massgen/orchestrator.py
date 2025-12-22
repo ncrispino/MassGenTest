@@ -175,7 +175,6 @@ class Orchestrator(ChatAgent):
         self.message_templates = self.config.message_templates or MessageTemplates(
             voting_sensitivity=self.config.voting_sensitivity,
             answer_novelty_requirement=self.config.answer_novelty_requirement,
-            min_answers_before_voting=self.config.min_answers_before_voting,
         )
         # Create system message builder for all phases (coordination, presentation, post-evaluation)
         self._system_message_builder: Optional[SystemMessageBuilder] = None  # Lazy initialization
@@ -3173,36 +3172,6 @@ Your answer:"""
 
         return (True, None)
 
-    def _check_min_answers_before_voting(self, agent_id: str) -> tuple[bool, Optional[str]]:
-        """Check if voting is allowed based on minimum answer requirements.
-
-        When min_answers_before_voting is set, the voting agent must have provided
-        at least that many answers before they can vote. This prevents premature
-        voting while avoiding deadlocks where one agent blocks another.
-
-        Args:
-            agent_id: The agent attempting to vote
-
-        Returns:
-            Tuple of (can_vote, error_message). can_vote=True if voting is allowed.
-        """
-        min_answers = self.config.min_answers_before_voting
-        if min_answers <= 0:
-            return (True, None)
-
-        # Only check if the voting agent has provided enough answers
-        this_agent_count = len(self.coordination_tracker.answers_by_agent.get(agent_id, []))
-
-        if this_agent_count < min_answers:
-            error_msg = (
-                f"Voting not allowed yet. You must provide at least {min_answers} answer(s) before voting. "
-                f"You have provided {this_agent_count} answer(s). Please use the `new_answer` tool to submit your answer."
-            )
-            logger.info(f"[Orchestrator] Vote rejected for {agent_id}: min_answers_before_voting requirement not met ({this_agent_count}/{min_answers})")
-            return (False, error_msg)
-
-        return (True, None)
-
     def _create_tool_error_messages(
         self,
         agent: "ChatAgent",
@@ -3925,22 +3894,6 @@ Your answer:"""
                                     yield (
                                         "error",
                                         "Cannot vote when no answers exist after max attempts",
-                                    )
-                                    yield ("done", None)
-                                    return
-
-                            # Check min_answers_before_voting requirement
-                            can_vote, min_answers_error = self._check_min_answers_before_voting(agent_id)
-                            if not can_vote:
-                                if attempt < max_attempts - 1:
-                                    yield ("content", f"❌ {min_answers_error}")
-                                    # Create proper tool error message for retry
-                                    enforcement_msg = self._create_tool_error_messages(agent, [tool_call], min_answers_error)
-                                    continue
-                                else:
-                                    yield (
-                                        "error",
-                                        f"Vote rejected: {min_answers_error}",
                                     )
                                     yield ("done", None)
                                     return

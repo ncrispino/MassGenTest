@@ -156,7 +156,6 @@ class AgentConfig:
         voting_sensitivity: Controls how critical agents are when voting ("lenient", "balanced", "strict")
         max_new_answers_per_agent: Maximum number of new answers each agent can provide (None = unlimited)
         answer_novelty_requirement: How different new answers must be from existing ones ("lenient", "balanced", "strict")
-        min_answers_before_voting: Minimum answers each agent must provide before voting is allowed (default: 0)
     """
 
     # Core backend configuration (includes tool enablement)
@@ -169,7 +168,6 @@ class AgentConfig:
     voting_sensitivity: str = "lenient"
     max_new_answers_per_agent: Optional[int] = None
     answer_novelty_requirement: str = "lenient"
-    min_answers_before_voting: int = 0
 
     # Agent customization
     agent_id: Optional[str] = None
@@ -842,7 +840,6 @@ class AgentConfig:
             "voting_sensitivity": self.voting_sensitivity,
             "max_new_answers_per_agent": self.max_new_answers_per_agent,
             "answer_novelty_requirement": self.answer_novelty_requirement,
-            "min_answers_before_voting": self.min_answers_before_voting,
             "timeout_config": {
                 "orchestrator_timeout_seconds": self.timeout_config.orchestrator_timeout_seconds,
             },
@@ -884,7 +881,6 @@ class AgentConfig:
         voting_sensitivity = data.get("voting_sensitivity", "lenient")
         max_new_answers_per_agent = data.get("max_new_answers_per_agent")
         answer_novelty_requirement = data.get("answer_novelty_requirement", "lenient")
-        min_answers_before_voting = data.get("min_answers_before_voting", 0)
 
         # Handle timeout_config
         timeout_config = TimeoutConfig()
@@ -916,7 +912,6 @@ class AgentConfig:
             voting_sensitivity=voting_sensitivity,
             max_new_answers_per_agent=max_new_answers_per_agent,
             answer_novelty_requirement=answer_novelty_requirement,
-            min_answers_before_voting=min_answers_before_voting,
             timeout_config=timeout_config,
             coordination_config=coordination_config,
         )
