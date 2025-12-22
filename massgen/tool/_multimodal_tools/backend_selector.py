@@ -143,7 +143,7 @@ VIDEO_BACKENDS = [
     GEMINI_VIDEO,  # Gemini has native video understanding
     OPENAI_VIDEO,  # OpenAI with frame extraction
     CLAUDE_VIDEO,  # Claude with frame extraction
-    GROK_VIDEO,  # Grok with frame extraction
+    # GROK_VIDEO,  # Grok with frame extraction
     OPENROUTER_VIDEO,  # OpenRouter with frame extraction
 ]
 
@@ -151,7 +151,7 @@ IMAGE_BACKENDS = [
     GEMINI_IMAGE,  # Gemini vision
     OPENAI_IMAGE,  # GPT-4o vision
     CLAUDE_IMAGE,  # Claude vision
-    GROK_IMAGE,  # Grok vision
+    # GROK_IMAGE,  # Grok vision
     OPENROUTER_IMAGE,  # OpenRouter vision
 ]
 
