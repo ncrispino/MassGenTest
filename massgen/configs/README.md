@@ -240,9 +240,9 @@ Most configurations use environment variables for API keys:so
 # Install or upgrade
 pip install --upgrade massgen
 
-# Unified multimodal tools - analyze and generate images, audio, video
+# Unified multimodal tools - generate and analyze images, audio, video
 massgen --config @examples/tools/custom_tools/multimodal_tools/unified_multimodal \
-  "Analyze this image and create a similar one with different colors"
+  "Create an image of two AI chatting with a human and then describe it in detail"
 
 # Multi-agent collaboration
 massgen --config @examples/basic/multi/three_agents_default \
