@@ -365,4 +365,3 @@ See Also
 
 - :doc:`/reference/yaml_schema` - Full configuration reference
 - :doc:`/reference/supported_models` - Supported models by backend
-- :doc:`/examples/case_studies/multimodal_workflow` - Real-world examples
