@@ -48,6 +48,7 @@ from .backend.chat_completions import ChatCompletionsBackend
 from .backend.claude import ClaudeBackend
 from .backend.claude_code import ClaudeCodeBackend
 from .backend.gemini import GeminiBackend
+from .backend.gemini_interactions import GeminiInteractionsBackend
 from .backend.grok import GrokBackend
 from .backend.inference import InferenceBackend
 from .backend.lmstudio import LMStudioBackend
@@ -414,6 +415,7 @@ def create_backend(backend_type: str, **kwargs) -> Any:
     - sglang: SGLang inference server (local)
     - claude: Anthropic Claude (requires ANTHROPIC_API_KEY)
     - gemini: Google Gemini (requires GOOGLE_API_KEY or GEMINI_API_KEY)
+    - gemini_interactions: Google Gemini Interactions API (experimental, requires GOOGLE_API_KEY)
     - chatcompletion: OpenAI-compatible providers (auto-detects API key based on base_url)
 
     Supported backend with external dependencies:
@@ -468,6 +470,12 @@ def create_backend(backend_type: str, **kwargs) -> Any:
         if not api_key:
             raise ConfigurationError(_api_key_error_message("Gemini", "GOOGLE_API_KEY", config_path))
         return GeminiBackend(api_key=api_key, **kwargs)
+
+    elif backend_type == "gemini_interactions":
+        api_key = kwargs.get("api_key") or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            raise ConfigurationError(_api_key_error_message("Gemini Interactions", "GOOGLE_API_KEY", config_path))
+        return GeminiInteractionsBackend(api_key=api_key, **kwargs)
 
     elif backend_type == "chatcompletion":
         api_key = kwargs.get("api_key")

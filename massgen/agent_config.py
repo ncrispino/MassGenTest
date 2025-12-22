@@ -421,6 +421,44 @@ class AgentConfig:
         return cls(backend_params=backend_params)
 
     @classmethod
+    def create_gemini_interactions_config(
+        cls,
+        model: str = "deep-research-pro-preview-12-2025",
+        enable_web_search: bool = False,
+        enable_code_execution: bool = False,
+        interactions_stream_mode: Optional[bool] = None,
+        interactions_polling_interval: float = 2.0,
+        **kwargs,
+    ) -> "AgentConfig":
+        """Create Google Gemini Interactions API configuration (EXPERIMENTAL).
+
+        Args:
+            model: Model or agent name (agents use polling, models use streaming by default)
+            enable_web_search: Enable Google Search retrieval tool
+            enable_code_execution: Enable code execution tool
+            interactions_stream_mode: Override execution mode (None = auto-detect)
+            interactions_polling_interval: Polling interval in seconds (default: 2.0)
+            **kwargs: Additional backend parameters
+        """
+        backend_params = {
+            "type": "gemini_interactions",
+            "model": model,
+            "use_interactions_api": True,
+            "interactions_polling_interval": interactions_polling_interval,
+            **kwargs,
+        }
+
+        if interactions_stream_mode is not None:
+            backend_params["interactions_stream_mode"] = interactions_stream_mode
+
+        if enable_web_search:
+            backend_params["enable_web_search"] = True
+        if enable_code_execution:
+            backend_params["enable_code_execution"] = True
+
+        return cls(backend_params=backend_params)
+
+    @classmethod
     def create_zai_config(
         cls,
         model: str = "glm-4.5",
