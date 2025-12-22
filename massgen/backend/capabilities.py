@@ -273,7 +273,7 @@ BACKEND_CAPABILITIES: Dict[str, BackendCapabilities] = {
         ],
         default_model="gemini-3-flash-preview",
         env_var="GEMINI_API_KEY",
-        notes="Google Search Retrieval provides web search. Image understanding. Image generation via Imagen 3 (nanobanana). Video generation via Veo 2.",
+        notes="Google Search Retrieval provides web search. Image understanding. Image generation via Imagen 3. Video generation via Veo 2.",
         model_release_dates={
             "gemini-3-flash-preview": "2025-12",
             "gemini-3-pro-preview": "2025-11",
@@ -506,7 +506,7 @@ BACKEND_CAPABILITIES: Dict[str, BackendCapabilities] = {
         models=["custom"],  # OpenRouter supports 300+ models
         default_model="custom",
         env_var="OPENROUTER_API_KEY",
-        notes="OpenAI-compatible API. Unified access to 300+ AI models. Image generation via Nano Banana (Gemini) and other providers.",
+        notes="OpenAI-compatible API. Unified access to 300+ AI models.",
         base_url="https://openrouter.ai/api/v1",
     ),
     "moonshot": BackendCapabilities(
