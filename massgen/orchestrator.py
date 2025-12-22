@@ -1741,13 +1741,13 @@ class Orchestrator(ChatAgent):
 
     def _collect_subagent_costs(self, log_dir: Path) -> Dict[str, Any]:
         """
-        Collect subagent costs from status.json files in the log directory.
+        Collect subagent costs and metrics from status.json and subprocess metrics.
 
         Args:
             log_dir: Path to the log directory (e.g., turn_1/attempt_1)
 
         Returns:
-            Dictionary with total costs and per-subagent breakdown
+            Dictionary with total costs, timing data, and per-subagent breakdown
         """
         subagents_dir = log_dir / "subagents"
         if not subagents_dir.exists():
@@ -1756,12 +1756,16 @@ class Orchestrator(ChatAgent):
                 "total_input_tokens": 0,
                 "total_output_tokens": 0,
                 "total_estimated_cost": 0.0,
+                "total_api_time_ms": 0.0,
+                "total_api_calls": 0,
                 "subagents": [],
             }
 
         total_input_tokens = 0
         total_output_tokens = 0
         total_estimated_cost = 0.0
+        total_api_time_ms = 0.0
+        total_api_calls = 0
         subagent_details = []
 
         # Find all status.json files in subagent directories
@@ -1774,6 +1778,7 @@ class Orchestrator(ChatAgent):
                 continue
 
             try:
+                # Read status.json for basic info
                 with open(status_file, "r", encoding="utf-8") as f:
                     status_data = json.load(f)
 
@@ -1781,21 +1786,58 @@ class Orchestrator(ChatAgent):
                 input_tokens = token_usage.get("input_tokens", 0)
                 output_tokens = token_usage.get("output_tokens", 0)
                 cost = token_usage.get("estimated_cost", 0.0)
+                elapsed_seconds = status_data.get("elapsed_seconds", 0.0)
 
                 total_input_tokens += input_tokens
                 total_output_tokens += output_tokens
                 total_estimated_cost += cost
 
-                subagent_details.append(
-                    {
-                        "subagent_id": status_data.get("subagent_id", subagent_path.name),
-                        "status": status_data.get("status", "unknown"),
-                        "input_tokens": input_tokens,
-                        "output_tokens": output_tokens,
-                        "estimated_cost": round(cost, 6),
-                        "task": status_data.get("task", "")[:100],
-                    },
-                )
+                # Initialize subagent detail entry
+                subagent_detail = {
+                    "subagent_id": status_data.get("subagent_id", subagent_path.name),
+                    "status": status_data.get("status", "unknown"),
+                    "input_tokens": input_tokens,
+                    "output_tokens": output_tokens,
+                    "estimated_cost": round(cost, 6),
+                    "elapsed_seconds": elapsed_seconds,
+                    "task": status_data.get("task", "")[:100],
+                }
+
+                # Try to read subprocess metrics for API timing data
+                subprocess_logs_file = subagent_path / "subprocess_logs.json"
+                if subprocess_logs_file.exists():
+                    try:
+                        with open(subprocess_logs_file, "r", encoding="utf-8") as f:
+                            subprocess_logs = json.load(f)
+
+                        subprocess_log_dir = subprocess_logs.get("subprocess_log_dir")
+                        if subprocess_log_dir:
+                            # Read the subprocess's metrics_summary.json
+                            metrics_file = Path(subprocess_log_dir) / "metrics_summary.json"
+                            if metrics_file.exists():
+                                with open(metrics_file, "r", encoding="utf-8") as f:
+                                    metrics_data = json.load(f)
+
+                                # Extract API timing data
+                                api_timing = metrics_data.get("api_timing", {})
+                                if api_timing:
+                                    subagent_api_time = api_timing.get("total_time_ms", 0.0)
+                                    subagent_api_calls = api_timing.get("total_calls", 0)
+
+                                    total_api_time_ms += subagent_api_time
+                                    total_api_calls += subagent_api_calls
+
+                                    subagent_detail["api_timing"] = {
+                                        "total_time_ms": round(subagent_api_time, 2),
+                                        "total_calls": subagent_api_calls,
+                                        "avg_time_ms": api_timing.get("avg_time_ms", 0.0),
+                                        "avg_ttft_ms": api_timing.get("avg_ttft_ms", 0.0),
+                                    }
+                    except Exception as e:
+                        logger.debug(f"Failed to read subprocess metrics for {subagent_path.name}: {e}")
+
+                subagent_details.append(subagent_detail)
+
             except Exception as e:
                 logger.debug(f"Failed to read subagent status from {status_file}: {e}")
 
@@ -1804,6 +1846,8 @@ class Orchestrator(ChatAgent):
             "total_input_tokens": total_input_tokens,
             "total_output_tokens": total_output_tokens,
             "total_estimated_cost": round(total_estimated_cost, 6),
+            "total_api_time_ms": round(total_api_time_ms, 2),
+            "total_api_calls": total_api_calls,
             "subagents": subagent_details,
         }
 
