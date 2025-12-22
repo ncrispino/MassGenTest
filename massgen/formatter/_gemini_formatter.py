@@ -52,6 +52,53 @@ class GeminiFormatter(FormatterBase):
         """
         return tools or []
 
+    def format_tools_for_interactions_api(
+        self,
+        custom_tools: Optional[List[Dict[str, Any]]] = None,
+        mcp_functions: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Format tools for the Gemini Interactions API."""
+        interactions_tools = []
+
+        if custom_tools:
+            for tool in custom_tools:
+                if isinstance(tool, dict) and tool.get("type") == "function" and "function" in tool:
+                    func_def = tool["function"]
+                    interactions_tools.append(
+                        {
+                            "type": "function",
+                            "name": func_def.get("name", ""),
+                            "description": func_def.get("description", ""),
+                            "parameters": func_def.get("parameters", {}),
+                        }
+                    )
+                elif isinstance(tool, dict) and "name" in tool and "parameters" in tool:
+                    interactions_tools.append(
+                        {
+                            "type": "function",
+                            "name": tool.get("name", ""),
+                            "description": tool.get("description", ""),
+                            "parameters": tool.get("parameters", {}),
+                        }
+                    )
+
+        if mcp_functions:
+            for mcp_function in mcp_functions.values():
+                try:
+                    interactions_tools.append(
+                        {
+                            "type": "function",
+                            "name": getattr(mcp_function, "name", ""),
+                            "description": getattr(mcp_function, "description", ""),
+                            "parameters": getattr(mcp_function, "parameters", {}),
+                        }
+                    )
+                except Exception as e:
+                    logger.error(f"[GeminiFormatter] Failed to convert MCP tool for Interactions API: {e}")
+                    continue
+
+        return interactions_tools
+
     def format_mcp_tools(
         self,
         mcp_functions: Dict[str, Any],
