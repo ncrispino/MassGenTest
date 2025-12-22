@@ -6,7 +6,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Loader2, AlertCircle, Eye, Code, X, Download, Copy, Check } from 'lucide-react';
+import { Loader2, AlertCircle, Eye, Code, X, Download, Copy, Check, Maximize2 } from 'lucide-react';
 import { codeToHtml } from 'shiki';
 import { useFileContent } from '../hooks/useFileContent';
 import { detectArtifactType, getArtifactConfig, type ArtifactType } from '../utils/artifactTypes';
@@ -29,6 +29,7 @@ interface InlineArtifactPreviewProps {
   filePath: string;
   workspacePath: string;
   onClose?: () => void;
+  onFullscreen?: () => void;
 }
 
 type ViewMode = 'preview' | 'source';
@@ -114,6 +115,7 @@ export function InlineArtifactPreview({
   filePath,
   workspacePath,
   onClose,
+  onFullscreen,
 }: InlineArtifactPreviewProps) {
   const { content, isLoading, error, fetchFile, clearContent } = useFileContent();
   const [viewMode, setViewMode] = useState<ViewMode>('preview');
@@ -483,6 +485,17 @@ export function InlineArtifactPreview({
               title="Download"
             >
               <Download className="w-4 h-4" />
+            </button>
+          )}
+
+          {/* Fullscreen button */}
+          {onFullscreen && (
+            <button
+              onClick={onFullscreen}
+              className="p-1.5 text-gray-400 hover:text-gray-200 hover:bg-gray-700 rounded transition-colors"
+              title="Fullscreen preview"
+            >
+              <Maximize2 className="w-4 h-4" />
             </button>
           )}
 

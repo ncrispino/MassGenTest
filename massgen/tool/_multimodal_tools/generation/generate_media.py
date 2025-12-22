@@ -8,7 +8,7 @@ It automatically selects the best available backend based on:
 2. `multimodal_config` overrides
 3. Available API keys and priority order
 """
-
+import base64
 import json
 from datetime import datetime
 from pathlib import Path
@@ -17,7 +17,12 @@ from typing import Any, Dict, List, Literal, Optional
 from massgen.logger_config import logger
 from massgen.tool._decorators import context_params
 from massgen.tool._multimodal_tools.generation._audio import generate_audio
-from massgen.tool._multimodal_tools.generation._base import GenerationConfig, MediaType
+from massgen.tool._multimodal_tools.generation._base import (
+    GenerationConfig,
+    MediaType,
+    get_default_model,
+    has_api_key,
+)
 from massgen.tool._multimodal_tools.generation._image import generate_image
 from massgen.tool._multimodal_tools.generation._selector import (
     get_available_backends_hint,
@@ -48,6 +53,60 @@ def _validate_path_access(path: Path, allowed_paths: Optional[List[Path]] = None
             continue
 
     raise ValueError(f"Path not in allowed directories: {path}")
+
+
+_ALLOWED_INPUT_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg"}
+_MAX_INPUT_IMAGE_SIZE_BYTES = 4 * 1024 * 1024  # 4MB limit for Requests API
+
+
+def _prepare_input_images(
+    image_paths: List[str],
+    base_dir: Path,
+    allowed_paths: Optional[List[Path]] = None,
+) -> tuple[list[dict[str, str]], list[str]]:
+    """Validate and load input images for image-to-image generation.
+
+    Returns a tuple of (content blocks, resolved_paths).
+    """
+
+    content_blocks: list[dict[str, str]] = []
+    resolved_paths: list[str] = []
+
+    for image_path_str in image_paths:
+        if Path(image_path_str).is_absolute():
+            resolved_path = Path(image_path_str).resolve()
+        else:
+            resolved_path = (base_dir / image_path_str).resolve()
+
+        _validate_path_access(resolved_path, allowed_paths)
+
+        if not resolved_path.exists():
+            raise ValueError(f"Input image does not exist: {resolved_path}")
+
+        if resolved_path.suffix.lower() not in _ALLOWED_INPUT_IMAGE_SUFFIXES:
+            allowed = ", ".join(sorted(_ALLOWED_INPUT_IMAGE_SUFFIXES))
+            raise ValueError(f"Input image must be one of [{allowed}]: {resolved_path}")
+
+        file_size = resolved_path.stat().st_size
+        if file_size > _MAX_INPUT_IMAGE_SIZE_BYTES:
+            size_mb = file_size / (1024 * 1024)
+            raise ValueError(
+                f"Input image too large ({size_mb:.2f}MB). Maximum is {_MAX_INPUT_IMAGE_SIZE_BYTES / (1024 * 1024):.0f}MB: {resolved_path}",
+            )
+
+        image_bytes = resolved_path.read_bytes()
+        mime_type = "image/jpeg" if resolved_path.suffix.lower() in {".jpg", ".jpeg"} else "image/png"
+        image_base64 = base64.b64encode(image_bytes).decode("utf-8")
+
+        content_blocks.append(
+            {
+                "type": "input_image",
+                "image_url": f"data:{mime_type};base64,{image_base64}",
+            },
+        )
+        resolved_paths.append(str(resolved_path))
+
+    return content_blocks, resolved_paths
 
 
 def _clean_for_filename(text: str, max_length: int = 30) -> str:
@@ -83,10 +142,11 @@ def _get_extension(media_type: MediaType, audio_format: Optional[str] = None) ->
     return "bin"
 
 
-@context_params("agent_cwd")
+@context_params("agent_cwd", "allowed_paths", "multimodal_config")
 async def generate_media(
     prompt: str,
     mode: Literal["image", "video", "audio"],
+    input_images: Optional[List[str]] = None,
     storage_path: Optional[str] = None,
     backend: Optional[str] = None,
     model: Optional[str] = None,
@@ -113,6 +173,7 @@ async def generate_media(
     Args:
         prompt: Text description of what to generate (or text to speak for audio)
         mode: Type of media to generate - "image", "video", or "audio"
+        input_images: Optional list of image paths for image-to-image (OpenAI Responses API)
         storage_path: Directory to save generated media (optional)
                      - Relative paths resolved from agent workspace
                      - Absolute paths must be in allowed directories
@@ -167,6 +228,9 @@ async def generate_media(
                 f"Invalid mode '{mode}'. Must be 'image', 'video', or 'audio'",
             )
 
+        base_dir = Path(agent_cwd) if agent_cwd else Path.cwd()
+        allowed_paths_list = [Path(p) for p in allowed_paths] if allowed_paths else None
+
         # Select backend and model (using config defaults when not specified)
         selected_backend, selected_model = select_backend_and_model(
             media_type=media_type,
@@ -179,8 +243,33 @@ async def generate_media(
             hint = get_available_backends_hint(media_type)
             return _error_result(f"No backend available for {mode} generation. {hint}")
 
+        # Optional: process input images for image-to-image generation (OpenAI only)
+        input_image_content: List[Dict[str, str]] = []
+        input_image_paths: List[str] = []
+        if media_type == MediaType.IMAGE and input_images:
+            backend_forced_to_openai = False
+
+            if selected_backend != "openai":
+                if has_api_key("openai"):
+                    backend_forced_to_openai = True
+                    selected_backend = "openai"
+                else:
+                    return _error_result(
+                        "Input images currently require the OpenAI backend (Responses API). " "Please set OPENAI_API_KEY to enable image-to-image generation.",
+                    )
+
+            input_image_content, input_image_paths = _prepare_input_images(
+                input_images,
+                base_dir,
+                allowed_paths_list,
+            )
+
+            if backend_forced_to_openai:
+                selected_model = get_default_model("openai", media_type)
+            elif selected_backend == "openai":
+                selected_model = selected_model or get_default_model("openai", media_type)
+
         # Resolve output path
-        base_dir = Path(agent_cwd) if agent_cwd else Path.cwd()
         if storage_path:
             if Path(storage_path).is_absolute():
                 output_dir = Path(storage_path).resolve()
@@ -190,7 +279,6 @@ async def generate_media(
             output_dir = base_dir
 
         # Validate path access
-        allowed_paths_list = [Path(p) for p in allowed_paths] if allowed_paths else None
         _validate_path_access(output_dir, allowed_paths_list)
         output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -213,6 +301,8 @@ async def generate_media(
             voice=voice,
             aspect_ratio=aspect_ratio,
             extra_params=extra_params or {},
+            input_images=input_image_content,
+            input_image_paths=input_image_paths,
         )
 
         # Add instructions to extra_params for audio
@@ -231,6 +321,10 @@ async def generate_media(
 
         # Return result
         if result.success:
+            metadata = dict(result.metadata or {})
+            if input_image_paths:
+                metadata["input_image_paths"] = input_image_paths
+
             return ExecutionResult(
                 output_blocks=[
                     TextContent(
@@ -245,7 +339,7 @@ async def generate_media(
                                 "model": result.model_used,
                                 "file_size": result.file_size_bytes,
                                 "duration_seconds": result.duration_seconds,
-                                "metadata": result.metadata,
+                                "metadata": metadata,
                             },
                             indent=2,
                         ),

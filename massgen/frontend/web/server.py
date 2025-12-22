@@ -5,6 +5,7 @@ FastAPI Web Server for MassGen Web UI
 Provides WebSocket endpoints for real-time coordination updates
 and serves the React frontend.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -45,7 +46,12 @@ class ConnectionManager:
         # Completed sessions: session_id -> metadata (persists after disconnect)
         self.completed_sessions: Dict[str, Dict[str, Any]] = {}
 
-    def mark_session_completed(self, session_id: str, question: str = None, config: str = None) -> None:
+    def mark_session_completed(
+        self,
+        session_id: str,
+        question: str = None,
+        config: str = None,
+    ) -> None:
         """Mark a session as completed so it persists in the session list."""
         import time
 
@@ -89,7 +95,12 @@ class ConnectionManager:
         """Get the WebDisplay for a session."""
         return self.displays.get(session_id)
 
-    def create_display(self, session_id: str, agent_ids: list, agent_models: Optional[Dict[str, str]] = None) -> WebDisplay:
+    def create_display(
+        self,
+        session_id: str,
+        agent_ids: list,
+        agent_models: Optional[Dict[str, str]] = None,
+    ) -> WebDisplay:
         """Create a new WebDisplay for a session."""
 
         async def broadcast_fn(message: Dict[str, Any]) -> None:
@@ -123,7 +134,10 @@ def get_default_config() -> Optional[str]:
     return _default_config_path
 
 
-def create_app(config_path: Optional[str] = None, automation_mode: bool = False) -> "FastAPI":
+def create_app(
+    config_path: Optional[str] = None,
+    automation_mode: bool = False,
+) -> "FastAPI":
     """Create and configure the FastAPI application.
 
     Args:
@@ -654,12 +668,17 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
             # First ensure openskills CLI is installed
             if not install_openskills_cli():
                 return JSONResponse(
-                    {"error": "Failed to install openskills CLI. Ensure npm/Node.js is installed."},
+                    {
+                        "error": "Failed to install openskills CLI. Ensure npm/Node.js is installed.",
+                    },
                     status_code=500,
                 )
             # Then install Anthropic skills
             if install_anthropic_skills():
-                return {"success": True, "message": "Anthropic skills installed successfully"}
+                return {
+                    "success": True,
+                    "message": "Anthropic skills installed successfully",
+                }
             else:
                 return JSONResponse(
                     {"error": "Failed to install Anthropic skills"},
@@ -668,7 +687,10 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
 
         elif package_id == "crawl4ai":
             if install_crawl4ai_skill():
-                return {"success": True, "message": "Crawl4AI skill installed successfully"}
+                return {
+                    "success": True,
+                    "message": "Crawl4AI skill installed successfully",
+                }
             else:
                 return JSONResponse(
                     {"error": "Failed to install Crawl4AI skill"},
@@ -692,7 +714,14 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
         for backend_type, caps in BACKEND_CAPABILITIES.items():
             # Skip generic/advanced backends for quickstart
             # Also skip ag2 as it's not a realistic standalone backend
-            if backend_type in ["chatcompletion", "inference", "lmstudio", "vllm", "sglang", "ag2"]:
+            if backend_type in [
+                "chatcompletion",
+                "inference",
+                "lmstudio",
+                "vllm",
+                "sglang",
+                "ag2",
+            ]:
                 continue
 
             # Check if API key is available (and not a placeholder)
@@ -705,7 +734,9 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
                 api_key = os.getenv(caps.env_var, "")
                 # Check it's not empty and not a placeholder from .env.example
                 # All placeholders follow pattern: your-*-key-here
-                is_placeholder = api_key.lower().startswith("your-") and api_key.lower().endswith("-key-here")
+                is_placeholder = api_key.lower().startswith(
+                    "your-",
+                ) and api_key.lower().endswith("-key-here")
                 has_api_key = bool(api_key) and not is_placeholder
             else:
                 # Local backends don't need keys
@@ -744,11 +775,24 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
         static_models = caps.models if caps else []
 
         # For providers with dynamic model lists, fetch from API
-        dynamic_providers = ["openrouter", "groq", "together", "fireworks", "cerebras", "nebius", "moonshot", "qwen", "poe"]
+        dynamic_providers = [
+            "openrouter",
+            "groq",
+            "together",
+            "fireworks",
+            "cerebras",
+            "nebius",
+            "moonshot",
+            "qwen",
+            "poe",
+        ]
 
         if provider_id in dynamic_providers:
             try:
-                dynamic_models = await get_models_for_provider(provider_id, use_cache=True)
+                dynamic_models = await get_models_for_provider(
+                    provider_id,
+                    use_cache=True,
+                )
                 if dynamic_models:
                     return {
                         "provider_id": provider_id,
@@ -852,7 +896,9 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
             if agent.get("enable_web_search") is not None:
                 tool_settings["enable_web_search"] = agent.get("enable_web_search")
             if agent.get("enable_code_execution") is not None:
-                tool_settings["enable_code_execution"] = agent.get("enable_code_execution")
+                tool_settings["enable_code_execution"] = agent.get(
+                    "enable_code_execution",
+                )
             if tool_settings:
                 agent_tools[agent_id] = tool_settings
             # Collect per-agent system messages
@@ -872,7 +918,12 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
         )
 
         # Convert to YAML string for preview
-        yaml_str = yaml.dump(config, default_flow_style=False, sort_keys=False, allow_unicode=True)
+        yaml_str = yaml.dump(
+            config,
+            default_flow_style=False,
+            sort_keys=False,
+            allow_unicode=True,
+        )
 
         return {"config": config, "yaml": yaml_str}
 
@@ -909,7 +960,11 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
         # Sanitize filename - only allow alphanumeric, underscore, dash, and .yaml extension
         if not re.match(r"^[\w\-]+\.ya?ml$", filename):
             # If invalid, sanitize it
-            base_name = re.sub(r"[^\w\-]", "_", filename.replace(".yaml", "").replace(".yml", ""))
+            base_name = re.sub(
+                r"[^\w\-]",
+                "_",
+                filename.replace(".yaml", "").replace(".yml", ""),
+            )
             filename = f"{base_name}.yaml"
 
         # Save to user config location
@@ -924,7 +979,13 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
                     f.write(yaml_content)
                 else:
                     # Serialize config object to YAML
-                    yaml.dump(config, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+                    yaml.dump(
+                        config,
+                        f,
+                        default_flow_style=False,
+                        sort_keys=False,
+                        allow_unicode=True,
+                    )
 
             return {
                 "success": True,
@@ -1087,7 +1148,9 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
         is_allowed = any(str(old_path).startswith(str(allowed.resolve())) for allowed in allowed_paths)
         if not is_allowed:
             return JSONResponse(
-                {"error": "Access denied: can only rename configs in ~/.config/massgen/"},
+                {
+                    "error": "Access denied: can only rename configs in ~/.config/massgen/",
+                },
                 status_code=403,
             )
 
@@ -1099,7 +1162,11 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
 
         # Sanitize new filename
         if not re.match(r"^[\w\-]+\.ya?ml$", new_name):
-            base_name = re.sub(r"[^\w\-]", "_", new_name.replace(".yaml", "").replace(".yml", ""))
+            base_name = re.sub(
+                r"[^\w\-]",
+                "_",
+                new_name.replace(".yaml", "").replace(".yml", ""),
+            )
             new_name = f"{base_name}.yaml"
 
         new_path = old_path.parent / new_name
@@ -1152,7 +1219,9 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
         is_allowed = any(str(config_path).startswith(str(allowed.resolve())) for allowed in allowed_paths)
         if not is_allowed:
             return JSONResponse(
-                {"error": "Access denied: can only delete configs in ~/.config/massgen/"},
+                {
+                    "error": "Access denied: can only delete configs in ~/.config/massgen/",
+                },
                 status_code=403,
             )
 
@@ -1196,7 +1265,9 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
             sessions.append(
                 {
                     "session_id": session_id,
-                    "connections": len(manager.active_connections.get(session_id, set())),
+                    "connections": len(
+                        manager.active_connections.get(session_id, set()),
+                    ),
                     "has_display": display is not None,
                     "is_running": task is not None and not task.done() if task else False,
                     "question": display.question if display and hasattr(display, "question") else None,
@@ -1298,22 +1369,58 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
                     },
                 )
 
-        # Find historical workspaces in logs directory
-        logs_dir = cwd / "logs"
-        if logs_dir.exists():
-            for date_dir in sorted(logs_dir.iterdir(), reverse=True):
-                if date_dir.is_dir():
-                    # Look for workspace directories within dated logs
-                    for ws_dir in date_dir.iterdir():
-                        if ws_dir.is_dir() and "workspace" in ws_dir.name.lower():
-                            workspaces["historical"].append(
-                                {
-                                    "name": f"{date_dir.name}/{ws_dir.name}",
-                                    "path": str(ws_dir),
-                                    "type": "historical",
-                                    "date": date_dir.name,
-                                },
-                            )
+        def add_historical_workspaces(
+            log_root: Path,
+            max_depth: int = 5,
+            max_results: int = 400,
+        ):
+            """
+            Walk historical logs (including nested turn/attempt/agent folders) and collect workspace dirs
+            without scanning the entire tree indefinitely.
+            """
+            if not log_root.exists():
+                return
+
+            results = 0
+            for date_dir in sorted(log_root.iterdir(), reverse=True):
+                if not date_dir.is_dir():
+                    continue
+
+                # Depth-limited traversal using a stack to avoid unbounded rglob
+                stack = [(date_dir, 0)]
+                while stack and results < max_results:
+                    current, depth = stack.pop()
+                    if depth > max_depth:
+                        continue
+                    try:
+                        for child in current.iterdir():
+                            if not child.is_dir():
+                                continue
+                            # If this directory looks like a workspace, record it
+                            if "workspace" in child.name.lower():
+                                rel = child.relative_to(log_root)
+                                workspaces["historical"].append(
+                                    {
+                                        "name": str(rel),
+                                        "path": str(child),
+                                        "type": "historical",
+                                        "date": date_dir.name,
+                                    },
+                                )
+                                results += 1
+                                if results >= max_results:
+                                    break
+                            # Continue traversal
+                            stack.append((child, depth + 1))
+                    except Exception:
+                        # Skip unreadable directories
+                        continue
+                if results >= max_results:
+                    break
+
+        # Find historical workspaces in legacy logs dir and new .massgen/massgen_logs
+        add_historical_workspaces(cwd / "logs")
+        add_historical_workspaces(cwd / ".massgen" / "massgen_logs")
 
         return workspaces
 
@@ -1339,6 +1446,7 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
             )
 
         files = []
+        workspace_mtime = workspace_path.stat().st_mtime
         try:
             for file_path in workspace_path.rglob("*"):
                 if file_path.is_file():
@@ -1358,19 +1466,88 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
                 status_code=500,
             )
 
-        return {"files": files, "workspace_path": str(workspace_path)}
+        return {
+            "files": files,
+            "workspace_path": str(workspace_path),
+            "workspace_mtime": workspace_mtime,
+        }
 
-    @app.get("/api/sessions/{session_id}/answer-workspaces")
-    async def get_answer_workspaces(session_id: str):
-        """Get workspaces linked to specific answer versions.
-
-        Uses multiple sources for workspace info:
-        1. Display's timeline events (live data during execution)
-        2. snapshot_mappings.json from log directory
-        3. Directory structure fallback
-        """
+    @app.get("/api/sessions/{session_id}/status")
+    async def get_session_status(session_id: str, log_dir: str = None):
+        """Get session status.json with workspace paths and agent information."""
         import json
 
+        from massgen.logger_config import get_log_session_dir
+
+        display = manager.get_display(session_id)
+
+        # Determine log session dir
+        if log_dir:
+            log_session_dir = Path(log_dir).resolve()
+        elif display and getattr(display, "log_session_dir", None):
+            log_session_dir = Path(display.log_session_dir).resolve()
+        else:
+            log_session_dir = get_log_session_dir()
+
+        # Look for status.json in various locations
+        status_paths = []
+        if log_session_dir and log_session_dir.exists():
+            # Direct status.json
+            direct_status = log_session_dir / "status.json"
+            if direct_status.exists():
+                status_paths.append(direct_status)
+
+            # Look in turn_X/attempt_Y subdirectories
+            for turn_dir in log_session_dir.glob("turn_*"):
+                if turn_dir.is_dir():
+                    turn_status = turn_dir / "status.json"
+                    if turn_status.exists():
+                        status_paths.append(turn_status)
+
+                    for attempt_dir in turn_dir.glob("attempt_*"):
+                        if attempt_dir.is_dir():
+                            attempt_status = attempt_dir / "status.json"
+                            if attempt_status.exists():
+                                status_paths.append(attempt_status)
+
+        # Return the most recent status.json (based on path depth and modification time)
+        if status_paths:
+            # Sort by modification time, most recent first
+            status_paths.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+            status_file = status_paths[0]
+
+            try:
+                with open(status_file) as f:
+                    status_data = json.load(f)
+
+                return {
+                    "status": status_data,
+                    "status_file": str(status_file),
+                    "log_dir_used": str(log_session_dir) if log_session_dir else "",
+                }
+            except Exception as e:
+                return JSONResponse(
+                    {"error": f"Failed to read status.json: {e}", "status": None},
+                    status_code=500,
+                )
+
+        return {
+            "status": None,
+            "status_file": None,
+            "log_dir_used": str(log_session_dir) if log_session_dir else "",
+            "error": "No status.json found",
+        }
+
+    @app.get("/api/sessions/{session_id}/answer-workspaces")
+    async def get_answer_workspaces(session_id: str, log_dir: str = None):
+        """Get workspaces linked to specific answer versions.
+
+        Uses status.json as the single source of truth:
+        - agents.{id}.workspace_paths.workspace for current workspaces
+        - historical_workspaces for historical answer snapshots
+
+        Falls back to directory scanning only if status.json is unavailable.
+        """
         from massgen.logger_config import get_log_session_dir
 
         display = manager.get_display(session_id)
@@ -1378,102 +1555,90 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
 
         workspaces = []
         cwd = Path.cwd()
+        sources = []
 
-        # First, try to get live data from display's timeline events
-        if display and hasattr(display, "_timeline_events"):
-            timeline_events = getattr(display, "_timeline_events", [])
-            for event in timeline_events:
-                if event.get("type") != "answer":
-                    continue
+        # Determine log session dir
+        log_session_dir = None
+        if log_dir:
+            log_session_dir = Path(log_dir).resolve()
+        elif display and getattr(display, "log_session_dir", None):
+            log_session_dir = Path(display.log_session_dir).resolve()
+        else:
+            log_session_dir = get_log_session_dir()
 
-                agent_id = event.get("agent_id", "")
-                label = event.get("label", "")
-                round_num = event.get("round", 1)
+        # PRIMARY SOURCE: Read from status.json
+        status_data = None
+        try:
+            status_response = await get_session_status(session_id, log_dir)
+            status_data = status_response.get("status")
+        except Exception as e:
+            print(f"[WARNING] Failed to get status.json: {e}")
 
-                # Map agent_id to workspace number
-                if agent_id in agent_ids:
-                    ws_num = agent_ids.index(agent_id) + 1
-                    workspace_path = cwd / f"workspace{ws_num}"
-                    if workspace_path.exists():
+        if status_data:
+            # Extract historical workspaces (answer snapshots)
+            if "historical_workspaces" in status_data:
+                for ws_data in status_data["historical_workspaces"]:
+                    workspace_path = ws_data.get("workspacePath")
+                    if workspace_path and Path(workspace_path).exists():
                         workspaces.append(
                             {
-                                "answerId": f"{agent_id}-{label}",
-                                "agentId": agent_id,
-                                "answerNumber": round_num,
-                                "answerLabel": label,
-                                "timestamp": "",
-                                "workspacePath": str(workspace_path),
+                                "answerId": ws_data.get("answerId"),
+                                "agentId": ws_data.get("agentId"),
+                                "answerNumber": ws_data.get("answerNumber", 1),
+                                "answerLabel": ws_data.get("answerLabel"),
+                                "timestamp": ws_data.get("timestamp", ""),
+                                "workspacePath": workspace_path,
                             },
                         )
+                if workspaces:
+                    sources.append("status_json")
 
-        # Also check snapshot_mappings.json for persisted workspace snapshots
-        log_session_dir = get_log_session_dir()
-        if log_session_dir and log_session_dir.exists():
-            snapshot_mappings_file = log_session_dir / "snapshot_mappings.json"
-            if snapshot_mappings_file.exists():
-                try:
-                    with open(snapshot_mappings_file) as f:
-                        snapshot_mappings = json.load(f)
-
-                    for label, mapping in snapshot_mappings.items():
-                        # Only include answers (not votes or final)
-                        if mapping.get("type") != "answer":
-                            continue
-
-                        # Skip if we already have this label from timeline
-                        if any(w["answerLabel"] == label for w in workspaces):
-                            continue
-
-                        agent_id = mapping.get("agent_id", "")
-                        timestamp = mapping.get("timestamp", "")
-
-                        # Build workspace path from mapping
-                        workspace_path = log_session_dir / agent_id / timestamp / "workspace"
-                        if workspace_path.exists():
-                            workspaces.append(
+        # FALLBACK: Directory scanning if no status.json data
+        if not workspaces and log_session_dir and log_session_dir.exists():
+            # Helper to scan a directory for agent workspaces
+            # Only includes directories that have answer.txt (not update_message.txt or vote.json)
+            def scan_for_workspaces(base_dir: Path):
+                found = []
+                agent_dirs = [p for p in base_dir.iterdir() if p.is_dir() and p.name.startswith("agent_")]
+                for agent_dir in agent_dirs:
+                    agent_id = agent_dir.name
+                    agent_index = (agent_ids.index(agent_id) + 1) if agent_id in agent_ids else 0
+                    answer_count = 0
+                    for ts_dir in sorted(agent_dir.iterdir(), key=lambda x: x.name):
+                        ws_path = ts_dir / "workspace"
+                        answer_file = ts_dir / "answer.txt"
+                        # Only include if both workspace dir AND answer.txt exist
+                        if ts_dir.is_dir() and ws_path.exists() and answer_file.exists():
+                            answer_count += 1
+                            found.append(
                                 {
-                                    "answerId": f"{agent_id}-{timestamp}",
+                                    "answerId": f"{agent_id}-{ts_dir.name}",
                                     "agentId": agent_id,
-                                    "answerNumber": mapping.get("round", 1),
-                                    "answerLabel": label,
-                                    "timestamp": timestamp,
-                                    "workspacePath": str(workspace_path),
+                                    "answerNumber": answer_count,
+                                    "answerLabel": f"agent{agent_index}.{answer_count}",
+                                    "timestamp": ts_dir.name,
+                                    "workspacePath": str(ws_path),
                                 },
                             )
-                except Exception as e:
-                    print(f"[WARNING] Failed to load snapshot_mappings.json: {e}")
+                return found
 
-            # Fallback: Scan log directory structure if no mappings found
+            # Try direct agent_* directories first
+            workspaces = scan_for_workspaces(log_session_dir)
+
+            # If not found, try turn_*/attempt_* subdirectories
             if not workspaces:
-                for entry in log_session_dir.iterdir():
-                    if not entry.is_dir():
-                        continue
+                for turn_dir in sorted(log_session_dir.glob("turn_*")):
+                    for attempt_dir in sorted(turn_dir.glob("attempt_*")):
+                        workspaces = scan_for_workspaces(attempt_dir)
+                        if workspaces:
+                            break
+                    if workspaces:
+                        break
 
-                    # Check for turn directories (turn_1, turn_2, etc.)
-                    if entry.name.startswith("turn_"):
-                        for agent_dir in entry.iterdir():
-                            if not agent_dir.is_dir():
-                                continue
-                            agent_id = agent_dir.name
-                            agent_index = (agent_ids.index(agent_id) + 1) if agent_id in agent_ids else 0
+            if workspaces:
+                sources.append("log_dir_scan")
 
-                            # Find timestamp directories with workspaces
-                            answer_count = 0
-                            for ts_dir in sorted(agent_dir.iterdir(), key=lambda x: x.name):
-                                if ts_dir.is_dir() and (ts_dir / "workspace").exists():
-                                    answer_count += 1
-                                    workspaces.append(
-                                        {
-                                            "answerId": f"{agent_id}-{ts_dir.name}",
-                                            "agentId": agent_id,
-                                            "answerNumber": answer_count,
-                                            "answerLabel": f"agent{agent_index}.{answer_count}",
-                                            "timestamp": ts_dir.name,
-                                            "workspacePath": str(ts_dir / "workspace"),
-                                        },
-                                    )
-
-        # Also include current workspaces from cwd
+        # Include current workspaces from cwd
         current = []
         for path in cwd.iterdir():
             if path.is_dir() and path.name.startswith("workspace"):
@@ -1484,8 +1649,15 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
                         "type": "current",
                     },
                 )
+        if current:
+            sources.append("cwd_current")
 
-        return {"workspaces": workspaces, "current": current}
+        return {
+            "workspaces": workspaces,
+            "current": current,
+            "sources": sources,
+            "log_dir_used": str(log_session_dir) if log_session_dir else "",
+        }
 
     @app.get("/api/workspace/file")
     async def get_file_content(path: str, workspace: str):
@@ -1680,7 +1852,10 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
 
             if not file_path_str or not workspace:
                 return JSONResponse(
-                    {"success": False, "error": "Both 'path' and 'workspace' are required"},
+                    {
+                        "success": False,
+                        "error": "Both 'path' and 'workspace' are required",
+                    },
                     status_code=400,
                 )
 
@@ -1692,7 +1867,10 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
                 file_path.relative_to(workspace_path)
             except ValueError:
                 return JSONResponse(
-                    {"success": False, "error": "Access denied: path outside workspace"},
+                    {
+                        "success": False,
+                        "error": "Access denied: path outside workspace",
+                    },
                     status_code=403,
                 )
 
@@ -1704,7 +1882,17 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
 
             # Check file extension
             suffix = file_path.suffix.lower()
-            if suffix not in [".docx", ".pptx", ".xlsx", ".doc", ".ppt", ".xls", ".odt", ".odp", ".ods"]:
+            if suffix not in [
+                ".docx",
+                ".pptx",
+                ".xlsx",
+                ".doc",
+                ".ppt",
+                ".xls",
+                ".odt",
+                ".odp",
+                ".ods",
+            ]:
                 return JSONResponse(
                     {"success": False, "error": f"Unsupported file type: {suffix}"},
                     status_code=400,
@@ -1843,7 +2031,10 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
 
             if not file_name or not content_b64:
                 return JSONResponse(
-                    {"success": False, "error": "Both 'fileName' and 'content' are required"},
+                    {
+                        "success": False,
+                        "error": "Both 'fileName' and 'content' are required",
+                    },
                     status_code=400,
                 )
 
@@ -1976,7 +2167,10 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
             data = await request.json()
             mode = data.get("mode", "files")
             multiple = data.get("multiple", True)
-            title = data.get("title", "Select Files" if mode == "files" else "Select Directory")
+            title = data.get(
+                "title",
+                "Select Files" if mode == "files" else "Select Directory",
+            )
 
             system = platform.system()
             paths = []
@@ -2030,7 +2224,13 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
                 try:
                     if mode == "directory":
                         result = subprocess.run(
-                            ["zenity", "--file-selection", "--directory", "--title", title],
+                            [
+                                "zenity",
+                                "--file-selection",
+                                "--directory",
+                                "--title",
+                                title,
+                            ],
                             capture_output=True,
                             text=True,
                             timeout=300,
@@ -2040,7 +2240,12 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
                         if multiple:
                             cmd.append("--multiple")
                             cmd.extend(["--separator", "\n"])
-                        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                        result = subprocess.run(
+                            cmd,
+                            capture_output=True,
+                            text=True,
+                            timeout=300,
+                        )
 
                     if result.returncode == 0 and result.stdout.strip():
                         paths = [p.strip() for p in result.stdout.strip().split("\n") if p.strip()]
@@ -2049,22 +2254,48 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
                     try:
                         if mode == "directory":
                             result = subprocess.run(
-                                ["kdialog", "--getexistingdirectory", ".", "--title", title],
+                                [
+                                    "kdialog",
+                                    "--getexistingdirectory",
+                                    ".",
+                                    "--title",
+                                    title,
+                                ],
                                 capture_output=True,
                                 text=True,
                                 timeout=300,
                             )
                         else:
-                            cmd = ["kdialog", "--getopenfilename", ".", "--title", title]
+                            cmd = [
+                                "kdialog",
+                                "--getopenfilename",
+                                ".",
+                                "--title",
+                                title,
+                            ]
                             if multiple:
-                                cmd = ["kdialog", "--getopenfilename", ".", "--multiple", "--title", title]
-                            result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                                cmd = [
+                                    "kdialog",
+                                    "--getopenfilename",
+                                    ".",
+                                    "--multiple",
+                                    "--title",
+                                    title,
+                                ]
+                            result = subprocess.run(
+                                cmd,
+                                capture_output=True,
+                                text=True,
+                                timeout=300,
+                            )
 
                         if result.returncode == 0 and result.stdout.strip():
                             paths = [p.strip() for p in result.stdout.strip().split("\n") if p.strip()]
                     except FileNotFoundError:
                         return JSONResponse(
-                            {"error": "No file dialog available. Please install zenity or kdialog."},
+                            {
+                                "error": "No file dialog available. Please install zenity or kdialog.",
+                            },
                             status_code=500,
                         )
 
@@ -2202,17 +2433,23 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
 
         print(f"[DEBUG] get_final_answer: session_id={session_id}")
         print(f"[DEBUG] get_final_answer: display={display}")
-        print(f"[DEBUG] get_final_answer: log_session_dir from display={log_session_dir}")
+        print(
+            f"[DEBUG] get_final_answer: log_session_dir from display={log_session_dir}",
+        )
 
         # Fallback to global log session dir if display doesn't have it
         if not log_session_dir:
             from massgen.logger_config import get_log_session_dir
 
             log_session_dir = get_log_session_dir()
-            print(f"[DEBUG] get_final_answer: log_session_dir from global={log_session_dir}")
+            print(
+                f"[DEBUG] get_final_answer: log_session_dir from global={log_session_dir}",
+            )
 
         if not log_session_dir or not log_session_dir.exists():
-            print("[DEBUG] get_final_answer: log_session_dir not found or doesn't exist")
+            print(
+                "[DEBUG] get_final_answer: log_session_dir not found or doesn't exist",
+            )
             return JSONResponse(
                 {"error": "Log directory not found", "answer": None},
                 status_code=404,
@@ -2235,7 +2472,9 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
                 if answer_file.exists():
                     try:
                         answer_content = answer_file.read_text(encoding="utf-8")
-                        print(f"[DEBUG] get_final_answer: Found answer! Length={len(answer_content)}")
+                        print(
+                            f"[DEBUG] get_final_answer: Found answer! Length={len(answer_content)}",
+                        )
                         return {
                             "answer": answer_content,
                             "agent_id": agent_dir.name,
@@ -2251,7 +2490,10 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
         result = find_answer_in_final_dir(final_dir)
         if result:
             if "error" in result:
-                return JSONResponse({"error": result["error"], "answer": None}, status_code=500)
+                return JSONResponse(
+                    {"error": result["error"], "answer": None},
+                    status_code=500,
+                )
             return result
 
         # Try 2: Check for attempt_N subdirectories (log_session_dir/attempt_N/final)
@@ -2264,7 +2506,10 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
             result = find_answer_in_final_dir(final_dir)
             if result:
                 if "error" in result:
-                    return JSONResponse({"error": result["error"], "answer": None}, status_code=500)
+                    return JSONResponse(
+                        {"error": result["error"], "answer": None},
+                        status_code=500,
+                    )
                 return result
 
         # Fallback: search in turn subdirectories (for older log structure or if log_session_dir is base)
@@ -2277,17 +2522,25 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
             result = find_answer_in_final_dir(turn_dir / "final")
             if result:
                 if "error" in result:
-                    return JSONResponse({"error": result["error"], "answer": None}, status_code=500)
+                    return JSONResponse(
+                        {"error": result["error"], "answer": None},
+                        status_code=500,
+                    )
                 return result
 
             # Check attempt_N subdirectories within turn dir
             for attempt_dir in sorted(turn_dir.iterdir(), reverse=True):
-                if not attempt_dir.is_dir() or not attempt_dir.name.startswith("attempt_"):
+                if not attempt_dir.is_dir() or not attempt_dir.name.startswith(
+                    "attempt_",
+                ):
                     continue
                 result = find_answer_in_final_dir(attempt_dir / "final")
                 if result:
                     if "error" in result:
-                        return JSONResponse({"error": result["error"], "answer": None}, status_code=500)
+                        return JSONResponse(
+                            {"error": result["error"], "answer": None},
+                            status_code=500,
+                        )
                     return result
 
         return JSONResponse(
@@ -2361,7 +2614,9 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
 
         if not cfg_path:
             return JSONResponse(
-                {"error": "No config specified. Use --config flag or provide in request."},
+                {
+                    "error": "No config specified. Use --config flag or provide in request.",
+                },
                 status_code=400,
             )
 
@@ -2631,7 +2886,9 @@ async def _save_session_metadata(
         turn_dir = get_log_session_dir_base()
         session_dir = get_log_session_root()
 
-        print(f"[WebUI] Saving metadata: turn_dir={turn_dir}, session_dir={session_dir}")
+        print(
+            f"[WebUI] Saving metadata: turn_dir={turn_dir}, session_dir={session_dir}",
+        )
 
         # Save metadata.json at turn level (CLI-compatible format)
         metadata = {
@@ -2656,7 +2913,9 @@ async def _save_session_metadata(
         history_file = session_dir / "winning_agents_history.json"
         if history_file.exists():
             try:
-                winning_agents_history = json.loads(history_file.read_text(encoding="utf-8"))
+                winning_agents_history = json.loads(
+                    history_file.read_text(encoding="utf-8"),
+                )
             except (json.JSONDecodeError, IOError):
                 pass
 
@@ -2668,7 +2927,10 @@ async def _save_session_metadata(
                 "timestamp": datetime.now().isoformat(),
             },
         )
-        history_file.write_text(json.dumps(winning_agents_history, indent=2), encoding="utf-8")
+        history_file.write_text(
+            json.dumps(winning_agents_history, indent=2),
+            encoding="utf-8",
+        )
 
         # Register session with SessionRegistry for `massgen --list-sessions` compatibility
         try:
@@ -2691,7 +2953,9 @@ async def _save_session_metadata(
         manager.session_turns[session_id] = turn_number
         manager.session_configs[session_id] = config_path
 
-        print(f"[WebUI] Saved session metadata: turn={turn_number}, winner={winning_agent}")
+        print(
+            f"[WebUI] Saved session metadata: turn={turn_number}, winner={winning_agent}",
+        )
 
     except Exception as e:
         print(f"[WebUI] Error saving session metadata: {e}")
@@ -2742,7 +3006,9 @@ async def run_coordination_with_history(
 
         # IMPORTANT: Set the base session dir to reuse the existing session log directory
         # This must happen before set_log_turn() or get_log_session_dir() is called
-        set_log_base_session_dir(session_log_dir.name)  # e.g., "log_20251202_235530_074788"
+        set_log_base_session_dir(
+            session_log_dir.name,
+        )  # e.g., "log_20251202_235530_074788"
 
         # Restore session state from previous turns
         previous_turns = []
@@ -2754,21 +3020,33 @@ async def run_coordination_with_history(
 
             # The session_log_dir is the base log dir (e.g., .massgen/massgen_logs/log_xxx)
             # We need to tell restore_session to look in the massgen_logs directory
-            print(f"[WebUI] Attempting to restore session: session_log_dir={session_log_dir}")
-            print(f"[WebUI] session_log_dir.name={session_log_dir.name}, parent={session_log_dir.parent}")
+            print(
+                f"[WebUI] Attempting to restore session: session_log_dir={session_log_dir}",
+            )
+            print(
+                f"[WebUI] session_log_dir.name={session_log_dir.name}, parent={session_log_dir.parent}",
+            )
             session_state = restore_session(
                 session_log_dir.name,  # e.g., "log_20251130_211636_581944"
-                session_storage=str(session_log_dir.parent),  # e.g., ".massgen/massgen_logs"
+                session_storage=str(
+                    session_log_dir.parent,
+                ),  # e.g., ".massgen/massgen_logs"
             )
             if session_state:
                 previous_turns = session_state.previous_turns
                 winning_agents_history = session_state.winning_agents_history
                 conversation_history = session_state.conversation_history or []
-                print(f"[WebUI] Restored {len(previous_turns)} previous turns, {len(winning_agents_history)} winners, {len(conversation_history)} history messages")
+                print(
+                    f"[WebUI] Restored {len(previous_turns)} previous turns, {len(winning_agents_history)} winners, {len(conversation_history)} history messages",
+                )
                 if conversation_history:
-                    print(f"[WebUI] Conversation history preview: {conversation_history[0] if conversation_history else 'empty'}")
+                    print(
+                        f"[WebUI] Conversation history preview: {conversation_history[0] if conversation_history else 'empty'}",
+                    )
             else:
-                print(f"[WebUI] restore_session returned None for {session_log_dir.name}")
+                print(
+                    f"[WebUI] restore_session returned None for {session_log_dir.name}",
+                )
         except Exception as e:
             print(f"[WebUI] ERROR restoring session state: {e}")
             traceback.print_exc()
@@ -2806,7 +3084,10 @@ async def run_coordination_with_history(
                 },
             )
 
-        await emit_preparation_status("Initializing agents...", f"{num_agents} agent{'s' if num_agents != 1 else ''}")
+        await emit_preparation_status(
+            "Initializing agents...",
+            f"{num_agents} agent{'s' if num_agents != 1 else ''}",
+        )
 
         def progress_callback(status: str, detail: str) -> None:
             """Thread-safe callback to queue progress updates."""
@@ -2872,21 +3153,39 @@ async def run_coordination_with_history(
                     "planning_mode_instruction",
                     "During coordination, describe what you would do without actually executing actions.",
                 ),
-                max_orchestration_restarts=coord_cfg.get("max_orchestration_restarts", 0),
-                enable_agent_task_planning=coord_cfg.get("enable_agent_task_planning", False),
+                max_orchestration_restarts=coord_cfg.get(
+                    "max_orchestration_restarts",
+                    0,
+                ),
+                enable_agent_task_planning=coord_cfg.get(
+                    "enable_agent_task_planning",
+                    False,
+                ),
                 max_tasks_per_plan=coord_cfg.get("max_tasks_per_plan", 10),
                 broadcast=coord_cfg.get("broadcast", False),
                 broadcast_sensitivity=coord_cfg.get("broadcast_sensitivity", "medium"),
                 response_depth=coord_cfg.get("response_depth", "medium"),
                 broadcast_timeout=coord_cfg.get("broadcast_timeout", 300),
-                broadcast_wait_by_default=coord_cfg.get("broadcast_wait_by_default", True),
+                broadcast_wait_by_default=coord_cfg.get(
+                    "broadcast_wait_by_default",
+                    True,
+                ),
                 max_broadcasts_per_agent=coord_cfg.get("max_broadcasts_per_agent", 10),
-                task_planning_filesystem_mode=coord_cfg.get("task_planning_filesystem_mode", False),
-                enable_memory_filesystem_mode=coord_cfg.get("enable_memory_filesystem_mode", False),
+                task_planning_filesystem_mode=coord_cfg.get(
+                    "task_planning_filesystem_mode",
+                    False,
+                ),
+                enable_memory_filesystem_mode=coord_cfg.get(
+                    "enable_memory_filesystem_mode",
+                    False,
+                ),
                 use_skills=coord_cfg.get("use_skills", False),
                 massgen_skills=coord_cfg.get("massgen_skills", []),
                 skills_directory=coord_cfg.get("skills_directory", ".agent/skills"),
-                load_previous_session_skills=coord_cfg.get("load_previous_session_skills", False),
+                load_previous_session_skills=coord_cfg.get(
+                    "load_previous_session_skills",
+                    False,
+                ),
             )
 
         # Get context sharing parameters
@@ -2906,7 +3205,9 @@ async def run_coordination_with_history(
 
         # Store the log session directory in the display
         display.log_session_dir = get_log_session_dir()
-        print(f"[WebUI] run_coordination_with_history: turn={turn_number}, log_dir={display.log_session_dir}")
+        print(
+            f"[WebUI] run_coordination_with_history: turn={turn_number}, log_dir={display.log_session_dir}",
+        )
 
         # Save execution metadata for session export/sharing (same as CLI)
         if display.log_session_dir:
@@ -2929,7 +3230,9 @@ async def run_coordination_with_history(
 
         if len(messages) > 1:
             # Multi-turn: use coordinate_with_context so agents see previous conversation
-            print(f"[WebUI] Running coordination with {len(conversation_history)} history messages")
+            print(
+                f"[WebUI] Running coordination with {len(conversation_history)} history messages",
+            )
             await ui.coordinate_with_context(orchestrator, question, messages)
         else:
             # First turn: standard coordination
@@ -3057,10 +3360,16 @@ async def run_coordination(
         # Check if Docker is being used
         uses_docker = config.get("execution", {}).get("use_docker", False)
         if uses_docker:
-            await emit_preparation_status("Preparing Docker environment...", "Setting up isolated containers")
+            await emit_preparation_status(
+                "Preparing Docker environment...",
+                "Setting up isolated containers",
+            )
 
         # Create agents from config with progress updates
-        await emit_preparation_status("Initializing agents...", f"{num_agents} agent{'s' if num_agents != 1 else ''}")
+        await emit_preparation_status(
+            "Initializing agents...",
+            f"{num_agents} agent{'s' if num_agents != 1 else ''}",
+        )
 
         # Create progress callback that sends WebSocket updates
         # We run agent creation in a thread so progress updates can be sent in real-time
@@ -3100,10 +3409,17 @@ async def run_coordination(
             if model_name:
                 agent_models[agent_id] = model_name
 
-        await send_init_status(f"Agents ready: {', '.join(agent_ids)}", "agents_ready", 60)
+        await send_init_status(
+            f"Agents ready: {', '.join(agent_ids)}",
+            "agents_ready",
+            60,
+        )
 
         # Emit status about loaded agents
-        await emit_preparation_status("Configuring orchestrator...", ", ".join(agent_ids))
+        await emit_preparation_status(
+            "Configuring orchestrator...",
+            ", ".join(agent_ids),
+        )
 
         # Create web display with agent_models
         display = manager.create_display(session_id, agent_ids, agent_models)
@@ -3138,21 +3454,39 @@ async def run_coordination(
                     "planning_mode_instruction",
                     "During coordination, describe what you would do without actually executing actions.",
                 ),
-                max_orchestration_restarts=coord_cfg.get("max_orchestration_restarts", 0),
-                enable_agent_task_planning=coord_cfg.get("enable_agent_task_planning", False),
+                max_orchestration_restarts=coord_cfg.get(
+                    "max_orchestration_restarts",
+                    0,
+                ),
+                enable_agent_task_planning=coord_cfg.get(
+                    "enable_agent_task_planning",
+                    False,
+                ),
                 max_tasks_per_plan=coord_cfg.get("max_tasks_per_plan", 10),
                 broadcast=coord_cfg.get("broadcast", False),
                 broadcast_sensitivity=coord_cfg.get("broadcast_sensitivity", "medium"),
                 response_depth=coord_cfg.get("response_depth", "medium"),
                 broadcast_timeout=coord_cfg.get("broadcast_timeout", 300),
-                broadcast_wait_by_default=coord_cfg.get("broadcast_wait_by_default", True),
+                broadcast_wait_by_default=coord_cfg.get(
+                    "broadcast_wait_by_default",
+                    True,
+                ),
                 max_broadcasts_per_agent=coord_cfg.get("max_broadcasts_per_agent", 10),
-                task_planning_filesystem_mode=coord_cfg.get("task_planning_filesystem_mode", False),
-                enable_memory_filesystem_mode=coord_cfg.get("enable_memory_filesystem_mode", False),
+                task_planning_filesystem_mode=coord_cfg.get(
+                    "task_planning_filesystem_mode",
+                    False,
+                ),
+                enable_memory_filesystem_mode=coord_cfg.get(
+                    "enable_memory_filesystem_mode",
+                    False,
+                ),
                 use_skills=coord_cfg.get("use_skills", False),
                 massgen_skills=coord_cfg.get("massgen_skills", []),
                 skills_directory=coord_cfg.get("skills_directory", ".agent/skills"),
-                load_previous_session_skills=coord_cfg.get("load_previous_session_skills", False),
+                load_previous_session_skills=coord_cfg.get(
+                    "load_previous_session_skills",
+                    False,
+                ),
             )
 
         # Get context sharing parameters
@@ -3173,7 +3507,9 @@ async def run_coordination(
         from massgen.logger_config import get_log_session_dir, save_execution_metadata
 
         display.log_session_dir = get_log_session_dir()
-        print(f"[DEBUG] run_coordination: Set display.log_session_dir = {display.log_session_dir}")
+        print(
+            f"[DEBUG] run_coordination: Set display.log_session_dir = {display.log_session_dir}",
+        )
 
         # Print status.json location for automation mode monitoring
         if display.log_session_dir:
@@ -3196,7 +3532,10 @@ async def run_coordination(
         await send_init_status("Starting coordination...", "starting", 100)
 
         # Final preparation status before starting
-        await emit_preparation_status("Launching agents...", "Agents will appear momentarily")
+        await emit_preparation_status(
+            "Launching agents...",
+            "Agents will appear momentarily",
+        )
 
         # Run coordination
         await ui.coordinate(orchestrator, question)
@@ -3283,8 +3622,16 @@ def run_server(
         logging.getLogger("uvicorn.error").setLevel(logging.WARNING)
 
         # Suppress websockets deprecation warnings
-        warnings.filterwarnings("ignore", category=DeprecationWarning, module="websockets")
-        warnings.filterwarnings("ignore", category=DeprecationWarning, module="uvicorn.protocols.websockets")
+        warnings.filterwarnings(
+            "ignore",
+            category=DeprecationWarning,
+            module="websockets",
+        )
+        warnings.filterwarnings(
+            "ignore",
+            category=DeprecationWarning,
+            module="uvicorn.protocols.websockets",
+        )
 
         uvicorn.run(
             app,

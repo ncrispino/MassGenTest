@@ -1884,20 +1884,20 @@ class OutputFirstVerificationSection(SystemPromptSection):
 
     def __init__(self):
         super().__init__(
-            title="Output-First Verification",
+            title="Output-First Verification & Improvement",
             priority=Priority.HIGH,
             xml_tag="output_first_verification",
         )
 
     def build_content(self) -> str:
-        return """## Output-First Verification
+        return """## Output-First Verification & Improvement
 
-**Core Principle: Verify your work the way a user would experience it.**
+**Core Principle: Verify your work the way a user would experience it, then iterate fixes until the user-visible outcome is solid.**
 
-Before checking code or implementation details, verify the actual OUTPUT:
+Treat verification as a loop: run/view output → note gaps → fix → re-run → confirm fixes → repeat until outcomes meet the goal.
 
-| Artifact Type | Verify By | Then Check |
-|--------------|-----------|------------|
+| Artifact Type | Verify By (user view) | Then Check (implementation) |
+|--------------|-----------------------|-----------------------------|
 | Script/Code | Run it, observe output | Implementation details |
 | Website/App | View it in browser | HTML/CSS/JS code |
 | Generated files | Open and read contents | Generation logic |
@@ -1909,18 +1909,22 @@ Before checking code or implementation details, verify the actual OUTPUT:
 - A file generator that runs but produces wrong content has **failed**
 - An API call that executes but returns errors has **failed**
 
-**The goal is to verify OUTCOMES, not implementations.**
+**The goal is to verify OUTCOMES, not implementations, and to use findings to improve the output.**
 
 ### Apply at every stage:
-1. **During development** - test as you build, don't wait until "done"
-2. **Before answering** - verify deliverables work as intended
+1. **During development** - short loops: run/view, adjust, rerun
+2. **Before answering** - final pass on the actual output
 3. **During evaluation** - judge by results, not code elegance
 
 ### Verification examples:
 - **Code**: `python script.py` → check output matches expectations
 - **Files**: Read generated file → verify contents are correct
 - **Websites**: Open in browser or screenshot → verify it renders properly
-- **APIs**: Make test request → verify response is valid"""
+- **APIs**: Make test request → verify response is valid
+
+### Finalization:
+- Use `new_answer` when you produced work or iterated based on verification.
+- Use `vote` only when selecting the best existing answer without making changes."""
 
 
 class MultimodalToolsSection(SystemPromptSection):

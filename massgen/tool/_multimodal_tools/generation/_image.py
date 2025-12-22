@@ -67,10 +67,21 @@ async def _generate_image_openai(config: GenerationConfig) -> GenerationResult:
         client = OpenAI(api_key=api_key)
         model = config.model or get_default_model("openai", MediaType.IMAGE)
 
+        # Build input content (supports optional input_images for image-to-image)
+        if config.input_images:
+            input_content = [
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": config.prompt}, *config.input_images],
+                },
+            ]
+        else:
+            input_content = config.prompt
+
         # Generate image using OpenAI Responses API
         response = client.responses.create(
             model=model,
-            input=config.prompt,
+            input=input_content,
             tools=[{"type": "image_generation"}],
         )
 

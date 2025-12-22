@@ -7,12 +7,13 @@
 
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { ArrowLeft, FileText, Folder, Trophy, ChevronDown, ChevronRight, File, RefreshCw, History, Copy, Check, Loader2, Send, Plus, ExternalLink, Share2, X, Eye, Bell } from 'lucide-react';
-import { useAgentStore, selectSelectedAgent, selectAgents, selectResolvedFinalAnswer, selectAgentOrder, selectAnswers } from '../stores/agentStore';
+import { ArrowLeft, FileText, Folder, Trophy, ChevronDown, ChevronRight, File, RefreshCw, History, Copy, Check, Loader2, Send, Plus, ExternalLink, Share2, X, Eye } from 'lucide-react';
+import { useAgentStore, selectSelectedAgent, selectAgents, selectResolvedFinalAnswer, selectAgentOrder } from '../stores/agentStore';
 import type { AnswerWorkspace } from '../types';
 import { InlineArtifactPreview } from './InlineArtifactPreview';
 import { ConversationHistory } from './ConversationHistory';
 import { canPreviewFile } from '../utils/artifactTypes';
+import { clearFileCache } from '../hooks/useFileContent';
 
 // Types for workspace API responses
 interface WorkspaceInfo {
@@ -42,6 +43,14 @@ interface FileInfo {
 
 // Map workspace name to agent ID (e.g., "workspace1" -> agent at index 0)
 function getAgentIdFromWorkspace(workspaceName: string, agentOrder: string[]): string | undefined {
+  const agentMatch = workspaceName.match(/agent_([a-z0-9_]+)/i);
+  if (agentMatch) {
+    const candidate = `agent_${agentMatch[1].toLowerCase()}`;
+    if (agentOrder.includes(candidate)) {
+      return candidate;
+    }
+  }
+
   const match = workspaceName.match(/workspace(\d+)/);
   if (match) {
     const index = parseInt(match[1], 10) - 1;
@@ -218,6 +227,7 @@ export function FinalAnswerView({ onBackToAgents, onFollowUp, onNewSession, isCo
   const selectedAgent = useAgentStore(selectSelectedAgent);
   const agents = useAgentStore(selectAgents);
   const agentOrder = useAgentStore(selectAgentOrder);
+  const sessionId = useAgentStore((s) => s.sessionId);
 
   const winnerAgent = selectedAgent ? agents[selectedAgent] : null;
   const displayName = winnerAgent?.modelName
@@ -232,62 +242,39 @@ export function FinalAnswerView({ onBackToAgents, onFollowUp, onNewSession, isCo
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [answerWorkspaces, setAnswerWorkspaces] = useState<AnswerWorkspace[]>([]);
   const [selectedAnswerLabel, setSelectedAnswerLabel] = useState<string>('current');
+  // Track which agent's workspace we're viewing (defaults to winner)
+  const [selectedAgentWorkspace, setSelectedAgentWorkspace] = useState<string | null>(null);
 
   // File viewer state (inline preview, not modal)
   const [selectedFilePath, setSelectedFilePath] = useState<string>('');
+  const [isPreviewFullscreen, setIsPreviewFullscreen] = useState(false);
 
   // Track auto-preview per workspace
   const hasAutoPreviewedRef = useRef<string | null>(null);
+  // Track previous workspace path for change detection
+  const prevWorkspacePathRef = useRef<string | null>(null);
 
-  // Get answers for new answer notification
-  const answers = useAgentStore(selectAnswers);
-
-  // New answer notification state
-  const [newAnswerNotification, setNewAnswerNotification] = useState<{
-    show: boolean;
-    answerLabel: string;
-  } | null>(null);
-  const lastKnownAnswerCountRef = useRef<number>(0);
-
-  // Track new answers while on workspace tab
+  // Reset workspace-related state when session changes (new run)
   useEffect(() => {
-    if (activeTab === 'workspace') {
-      // If we have more answers than before, show notification
-      if (answers.length > lastKnownAnswerCountRef.current && lastKnownAnswerCountRef.current > 0) {
-        // Find the newest answer
-        const newestAnswer = [...answers].sort((a, b) => b.timestamp - a.timestamp)[0];
-        if (newestAnswer) {
-          const agentIdx = agentOrder.indexOf(newestAnswer.agentId) + 1;
-          const answerLabel = newestAnswer.answerNumber === 0
-            ? 'Final Answer'
-            : `Agent ${agentIdx} Answer ${newestAnswer.answerNumber}`;
+    setWorkspaces({ current: [], historical: [] });
+    setWorkspaceFiles([]);
+    setSelectedFilePath('');
+    setSelectedAnswerLabel('current');
+    setSelectedAgentWorkspace(null);
+    setWorkspaceError(null);
+    setIsLoadingFiles(false);
+    setIsLoadingWorkspaces(false);
+    hasAutoPreviewedRef.current = null;
+    prevWorkspacePathRef.current = null;
+    clearFileCache();
+  }, [sessionId]);
 
-          setNewAnswerNotification({
-            show: true,
-            answerLabel,
-          });
-        }
-      }
-      lastKnownAnswerCountRef.current = answers.length;
-    }
-  }, [answers.length, activeTab, agentOrder, answers]);
-
-  // Update answer count when switching tabs
+  // Initialize selectedAgentWorkspace to winner when available
   useEffect(() => {
-    if (activeTab === 'workspace') {
-      lastKnownAnswerCountRef.current = answers.length;
+    if (selectedAgent && !selectedAgentWorkspace) {
+      setSelectedAgentWorkspace(selectedAgent);
     }
-  }, [activeTab, answers.length]);
-
-  // Handle notification actions
-  const handleViewNewAnswer = useCallback(() => {
-    setActiveTab('answer');
-    setNewAnswerNotification(null);
-  }, []);
-
-  const handleDismissNotification = useCallback(() => {
-    setNewAnswerNotification(null);
-  }, []);
+  }, [selectedAgent, selectedAgentWorkspace]);
 
   // Handle file click from workspace browser - sets file for inline preview
   const handleFileClick = useCallback((filePath: string) => {
@@ -364,15 +351,51 @@ export function FinalAnswerView({ onBackToAgents, onFollowUp, onNewSession, isCo
     }
   }, []);
 
-  // Map workspaces to winner agent
-  const winnerWorkspace = useMemo(() => {
-    if (!selectedAgent) return null;
+  // Map workspaces to selected agent (defaults to winner, but can switch)
+  const activeWorkspace = useMemo(() => {
+    const targetAgent = selectedAgentWorkspace || selectedAgent;
+    if (!targetAgent) return null;
+
+    // If viewing historical version, get path from answerWorkspaces
+    if (selectedAnswerLabel !== 'current') {
+      const answerWs = answerWorkspaces.find(
+        (w) => w.agentId === targetAgent && w.answerLabel === selectedAnswerLabel
+      );
+      if (answerWs) {
+        return {
+          name: answerWs.answerLabel,
+          path: answerWs.workspacePath,
+          type: 'historical' as const,
+        };
+      }
+      return null;
+    }
+
+    // Get current workspace for the agent
     const ws = workspaces.current.find((w) => {
       const agentId = getAgentIdFromWorkspace(w.name, agentOrder);
-      return agentId === selectedAgent;
+      return agentId === targetAgent;
     });
     return ws || null;
-  }, [workspaces, selectedAgent, agentOrder]);
+  }, [workspaces, selectedAgent, selectedAgentWorkspace, selectedAnswerLabel, answerWorkspaces, agentOrder]);
+
+  // Check if current agent is the winner AND has a workspace
+  // Only the winner agent should show "Final" option
+  const hasFinalWorkspace = useMemo(() => {
+    const targetAgent = selectedAgentWorkspace || selectedAgent;
+    // Only show "Final" for the winner agent
+    if (!targetAgent || targetAgent !== selectedAgent) return false;
+    return workspaces.current.some((w) => {
+      const agentId = getAgentIdFromWorkspace(w.name, agentOrder);
+      return agentId === targetAgent;
+    });
+  }, [workspaces, selectedAgent, selectedAgentWorkspace, agentOrder]);
+
+  // Get historical workspaces for current agent
+  const agentHistoricalWorkspaces = useMemo(() => {
+    const targetAgent = selectedAgentWorkspace || selectedAgent;
+    return answerWorkspaces.filter(w => w.agentId === targetAgent);
+  }, [answerWorkspaces, selectedAgentWorkspace, selectedAgent]);
 
   // Fetch workspaces when workspace tab is active
   useEffect(() => {
@@ -380,18 +403,15 @@ export function FinalAnswerView({ onBackToAgents, onFollowUp, onNewSession, isCo
       fetchWorkspaces();
       fetchAnswerWorkspaces();
     }
-  }, [activeTab, fetchWorkspaces, fetchAnswerWorkspaces]);
-
-  // Track previous workspace path to detect actual changes
-  const prevWorkspacePathRef = useRef<string | null>(null);
+  }, [activeTab, fetchWorkspaces, fetchAnswerWorkspaces, sessionId]);
 
   // Fetch files when workspace is available
   // Also clear selected file when workspace changes to avoid showing stale content
   useEffect(() => {
-    const currentPath = winnerWorkspace?.path || null;
+    const currentPath = activeWorkspace?.path || null;
     const pathChanged = prevWorkspacePathRef.current !== currentPath;
 
-    if (winnerWorkspace && activeTab === 'workspace' && pathChanged) {
+    if (activeWorkspace && activeTab === 'workspace' && pathChanged) {
       prevWorkspacePathRef.current = currentPath;
       // Clear the selected file path when workspace actually changes
       setSelectedFilePath('');
@@ -399,16 +419,26 @@ export function FinalAnswerView({ onBackToAgents, onFollowUp, onNewSession, isCo
       hasAutoPreviewedRef.current = null;
       // Clear workspace files first to show loading state
       setWorkspaceFiles([]);
-      fetchWorkspaceFiles(winnerWorkspace);
+      fetchWorkspaceFiles(activeWorkspace);
+    } else if (!activeWorkspace && workspaceFiles.length > 0) {
+      setWorkspaceFiles([]);
+      setSelectedFilePath('');
     }
-  }, [winnerWorkspace, activeTab, fetchWorkspaceFiles]);
+  }, [activeWorkspace, activeTab, fetchWorkspaceFiles, workspaceFiles.length]);
+
+  // Clear selected file when workspace files become empty (prevents stale preview)
+  useEffect(() => {
+    if (workspaceFiles.length === 0 && selectedFilePath && !isLoadingFiles) {
+      setSelectedFilePath('');
+    }
+  }, [workspaceFiles.length, selectedFilePath, isLoadingFiles]);
 
   // Build file tree
   const fileTree = useMemo(() => buildFileTree(workspaceFiles), [workspaceFiles]);
 
   // Auto-preview: Select first previewable file when workspace files are loaded
   useEffect(() => {
-    const workspaceKey = winnerWorkspace?.path || '';
+    const workspaceKey = activeWorkspace?.path || '';
     if (
       workspaceFiles.length > 0 &&
       !selectedFilePath &&
@@ -460,7 +490,7 @@ export function FinalAnswerView({ onBackToAgents, onFollowUp, onNewSession, isCo
         setSelectedFilePath(mainFile);
       }
     }
-  }, [workspaceFiles, selectedFilePath, activeTab, winnerWorkspace]);
+  }, [workspaceFiles, selectedFilePath, activeTab, activeWorkspace]);
 
   // Copy to clipboard
   const handleCopy = useCallback(async () => {
@@ -651,51 +681,82 @@ export function FinalAnswerView({ onBackToAgents, onFollowUp, onNewSession, isCo
               className="h-full flex flex-col"
             >
               {/* Workspace toolbar */}
-              <div className="px-6 py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex items-center gap-4">
-                {/* Version selector */}
+              <div className="px-6 py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50 flex items-center gap-4 flex-wrap">
+                {/* Agent selector */}
                 <div className="flex items-center gap-2">
-                  <History className="w-4 h-4 text-amber-500" />
-                  <span className="text-sm text-gray-500 dark:text-gray-400">Version:</span>
-                  <div className="relative">
-                    <select
-                      value={selectedAnswerLabel}
-                      onChange={(e) => {
-                        const label = e.target.value;
-                        setSelectedAnswerLabel(label);
-                        if (label === 'current' && winnerWorkspace) {
-                          fetchWorkspaceFiles(winnerWorkspace);
-                        } else {
-                          const answerWs = answerWorkspaces.find(w => w.answerLabel === label);
-                          if (answerWs) {
-                            fetchWorkspaceFiles({
-                              name: answerWs.answerLabel,
-                              path: answerWs.workspacePath,
-                              type: 'historical'
-                            });
-                          }
-                        }
-                      }}
-                      className="appearance-none bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600
-                                 rounded-lg px-3 py-1.5 pr-8 text-sm text-gray-700 dark:text-gray-200
-                                 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    >
-                      <option value="current">Current</option>
-                      {answerWorkspaces
-                        .filter(w => w.agentId === selectedAgent)
-                        .map((ws) => (
+                  <Folder className="w-4 h-4 text-blue-400" />
+                  <span className="text-sm text-gray-500 dark:text-gray-400">Agent:</span>
+                  <div className="flex gap-1">
+                    {agentOrder.map((agentId) => {
+                      const isWinner = agentId === selectedAgent;
+                      const isSelected = agentId === (selectedAgentWorkspace || selectedAgent);
+                      return (
+                        <button
+                          key={agentId}
+                          onClick={() => {
+                            setSelectedAgentWorkspace(agentId);
+                            // For winner, default to 'current' (Final)
+                            // For non-winners, default to first historical workspace if available
+                            if (agentId === selectedAgent) {
+                              setSelectedAnswerLabel('current');
+                            } else {
+                              const agentWs = answerWorkspaces.filter(w => w.agentId === agentId);
+                              if (agentWs.length > 0) {
+                                setSelectedAnswerLabel(agentWs[0].answerLabel);
+                              } else {
+                                setSelectedAnswerLabel('current'); // Will show empty state
+                              }
+                            }
+                            setSelectedFilePath('');
+                          }}
+                          className={`px-3 py-1 text-sm rounded transition-colors flex items-center gap-1 ${
+                            isSelected
+                              ? 'bg-blue-600 text-white'
+                              : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-300 dark:hover:bg-gray-600'
+                          }`}
+                        >
+                          {agentId}
+                          {isWinner && <Trophy className="w-3 h-3 text-yellow-400" />}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Version selector - only show if there are versions to select */}
+                {(hasFinalWorkspace || agentHistoricalWorkspaces.length > 0) && (
+                  <div className="flex items-center gap-2">
+                    <History className="w-4 h-4 text-amber-500" />
+                    <span className="text-sm text-gray-500 dark:text-gray-400">Version:</span>
+                    <div className="relative">
+                      <select
+                        value={selectedAnswerLabel}
+                        onChange={(e) => {
+                          const label = e.target.value;
+                          setSelectedAnswerLabel(label);
+                          // Workspace will be automatically updated via activeWorkspace memo
+                          setSelectedFilePath('');
+                        }}
+                        className="appearance-none bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600
+                                   rounded-lg px-3 py-1.5 pr-8 text-sm text-gray-700 dark:text-gray-200
+                                   focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      >
+                        {hasFinalWorkspace && <option value="current">Final</option>}
+                        {agentHistoricalWorkspaces.map((ws) => (
                           <option key={ws.answerId} value={ws.answerLabel}>
                             {ws.answerLabel}
                           </option>
                         ))}
-                    </select>
-                    <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-400 pointer-events-none" />
+                      </select>
+                      <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-400 pointer-events-none" />
+                    </div>
                   </div>
-                </div>
+                )}
 
                 {/* Open Folder button */}
-                {winnerWorkspace && (
+                {activeWorkspace && (
                   <button
-                    onClick={() => openWorkspaceInFinder(winnerWorkspace.path)}
+                    onClick={() => openWorkspaceInFinder(activeWorkspace.path)}
                     className="ml-auto flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500
                                rounded-lg transition-colors text-white text-sm"
                     title="Open workspace in file browser"
@@ -709,13 +770,26 @@ export function FinalAnswerView({ onBackToAgents, onFollowUp, onNewSession, isCo
                 <button
                   onClick={() => { fetchWorkspaces(); fetchAnswerWorkspaces(); }}
                   disabled={isLoadingWorkspaces}
-                  className={`${!winnerWorkspace ? 'ml-auto' : ''} p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors
+                  className={`${!activeWorkspace ? 'ml-auto' : ''} p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors
                              text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200`}
                   title="Refresh workspaces"
                 >
                   <RefreshCw className={`w-4 h-4 ${isLoadingWorkspaces ? 'animate-spin' : ''}`} />
                 </button>
               </div>
+
+              {/* Active workspace path display */}
+              {activeWorkspace && (
+                <div className="px-6 py-2 border-b border-gray-200 dark:border-gray-700 text-xs text-gray-500 dark:text-gray-400 flex items-center gap-2">
+                  <span className="font-semibold text-gray-600 dark:text-gray-300">Path:</span>
+                  <span className="truncate" title={activeWorkspace.path}>
+                    {activeWorkspace.path}
+                  </span>
+                  <span className={selectedAnswerLabel === 'current' ? 'text-green-600 dark:text-green-400 font-medium' : 'text-amber-600 dark:text-amber-400 font-medium'}>
+                    ({selectedAnswerLabel === 'current' ? 'final' : 'historical snapshot'})
+                  </span>
+                </div>
+              )}
 
               {/* Error display */}
               {workspaceError && (
@@ -724,87 +798,54 @@ export function FinalAnswerView({ onBackToAgents, onFollowUp, onNewSession, isCo
                 </div>
               )}
 
-              {/* New Answer Notification */}
-              <AnimatePresence>
-                {newAnswerNotification && (
-                  <motion.div
-                    initial={{ opacity: 0, y: -20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -20 }}
-                    className="mx-4 mt-3 p-3 bg-blue-900/40 border border-blue-600/50 rounded-lg flex items-center justify-between"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="p-2 bg-blue-600/30 rounded-full">
-                        <Bell className="w-4 h-4 text-blue-400" />
-                      </div>
-                      <div>
-                        <p className="text-sm text-blue-200 font-medium">
-                          New answer available
-                        </p>
-                        <p className="text-xs text-blue-300/70">
-                          {newAnswerNotification.answerLabel} has been submitted
-                        </p>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={handleViewNewAnswer}
-                        className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-lg transition-colors flex items-center gap-1.5"
-                      >
-                        <Eye className="w-3.5 h-3.5" />
-                        View Answer
-                      </button>
-                      <button
-                        onClick={handleDismissNotification}
-                        className="p-1.5 text-blue-300 hover:text-white hover:bg-blue-700/50 rounded-lg transition-colors"
-                        title="Dismiss"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </motion.div>
-                )}
-              </AnimatePresence>
-
               {/* Split View: File Tree + Preview */}
               <div className="flex-1 flex overflow-hidden">
-                {/* Left: File Tree */}
-                <div className="w-80 shrink-0 border-r border-gray-200 dark:border-gray-700 overflow-y-auto custom-scrollbar p-4">
-                  {isLoadingWorkspaces || isLoadingFiles ? (
-                    <div className="flex flex-col items-center justify-center h-64 text-gray-500">
-                      <RefreshCw className="w-6 h-6 mb-3 animate-spin" />
-                      <p className="text-sm">Loading...</p>
-                    </div>
-                  ) : !winnerWorkspace ? (
-                    <div className="flex flex-col items-center justify-center h-64 text-gray-500">
-                      <Folder className="w-10 h-10 mb-3 opacity-50" />
-                      <p className="text-sm">No workspace found</p>
-                    </div>
-                  ) : workspaceFiles.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center h-64 text-gray-500">
-                      <Folder className="w-10 h-10 mb-3 opacity-50" />
-                      <p className="text-sm">No files</p>
-                    </div>
-                  ) : (
-                    <div>
-                      <div className="mb-2 text-xs text-gray-500 dark:text-gray-400 flex items-center gap-2">
-                        <Folder className="w-3 h-3" />
-                        <span>{workspaceFiles.length} files</span>
+                {/* Left: File Tree - hidden when fullscreen */}
+                {!isPreviewFullscreen && (
+                  <div className="w-80 shrink-0 border-r border-gray-200 dark:border-gray-700 overflow-y-auto custom-scrollbar p-4">
+                    {isLoadingWorkspaces || isLoadingFiles ? (
+                      <div className="flex flex-col items-center justify-center h-64 text-gray-500">
+                        <RefreshCw className="w-6 h-6 mb-3 animate-spin" />
+                        <p className="text-sm">Loading...</p>
                       </div>
-                      {fileTree.map((node) => (
-                        <FileNode key={node.path} node={node} depth={0} onFileClick={handleFileClick} />
-                      ))}
-                    </div>
-                  )}
-                </div>
+                    ) : !activeWorkspace ? (
+                      <div className="flex flex-col items-center justify-center h-64 text-gray-500">
+                        <Folder className="w-10 h-10 mb-3 opacity-50" />
+                        <p className="text-sm">No workspace found</p>
+                        {selectedAnswerLabel !== 'current' && (
+                          <p className="text-xs text-amber-500 mt-1">Historical snapshot not available</p>
+                        )}
+                      </div>
+                    ) : workspaceFiles.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center h-64 text-gray-500">
+                        <Folder className="w-10 h-10 mb-3 opacity-50" />
+                        <p className="text-sm">No files</p>
+                      </div>
+                    ) : (
+                      <div>
+                        <div className="mb-2 text-xs text-gray-500 dark:text-gray-400 flex items-center gap-2">
+                          <Folder className="w-3 h-3" />
+                          <span>{workspaceFiles.length} files</span>
+                          <span className={selectedAnswerLabel === 'current' ? 'text-green-500' : 'text-amber-500'}>
+                            ({selectedAnswerLabel === 'current' ? 'final' : 'historical'})
+                          </span>
+                        </div>
+                        {fileTree.map((node) => (
+                          <FileNode key={node.path} node={node} depth={0} onFileClick={handleFileClick} />
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
 
                 {/* Right: Inline Preview */}
-                <div className="flex-1 overflow-hidden p-4">
-                  {selectedFilePath && winnerWorkspace ? (
+                <div className="flex-1 overflow-hidden p-4 relative">
+                  {selectedFilePath && activeWorkspace ? (
                     <InlineArtifactPreview
                       filePath={selectedFilePath}
-                      workspacePath={winnerWorkspace.path}
+                      workspacePath={activeWorkspace.path}
                       onClose={handleInlinePreviewClose}
+                      onFullscreen={() => setIsPreviewFullscreen(true)}
                     />
                   ) : (
                     <div className="flex flex-col items-center justify-center h-full text-gray-500 bg-gray-100 dark:bg-gray-800/30 rounded-lg border border-gray-200 dark:border-gray-700">
@@ -815,6 +856,50 @@ export function FinalAnswerView({ onBackToAgents, onFollowUp, onNewSession, isCo
                   )}
                 </div>
               </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Fullscreen Preview Modal */}
+        <AnimatePresence>
+          {isPreviewFullscreen && selectedFilePath && activeWorkspace && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-8"
+              onClick={() => setIsPreviewFullscreen(false)}
+            >
+              <motion.div
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.9, opacity: 0 }}
+                className="w-full h-full max-w-7xl max-h-[90vh] bg-white dark:bg-gray-900 rounded-xl shadow-2xl overflow-hidden flex flex-col"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {/* Fullscreen header */}
+                <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
+                  <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-300">
+                    <File className="w-4 h-4" />
+                    <span className="font-medium">{selectedFilePath}</span>
+                  </div>
+                  <button
+                    onClick={() => setIsPreviewFullscreen(false)}
+                    className="p-2 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-lg transition-colors text-gray-500 dark:text-gray-400"
+                    title="Close fullscreen"
+                  >
+                    <X className="w-5 h-5" />
+                  </button>
+                </div>
+                {/* Fullscreen preview content */}
+                <div className="flex-1 overflow-hidden p-4">
+                  <InlineArtifactPreview
+                    filePath={selectedFilePath}
+                    workspacePath={activeWorkspace.path}
+                    onClose={() => setIsPreviewFullscreen(false)}
+                  />
+                </div>
+              </motion.div>
             </motion.div>
           )}
         </AnimatePresence>

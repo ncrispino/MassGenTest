@@ -38,6 +38,8 @@ class GenerationConfig:
         voice: For audio - voice ID
         aspect_ratio: For image/video - aspect ratio string
         extra_params: Backend-specific parameters
+        input_images: Optional input images (image-to-image)
+        input_image_paths: Resolved input image paths (for metadata)
     """
 
     prompt: str
@@ -50,6 +52,8 @@ class GenerationConfig:
     voice: Optional[str] = None
     aspect_ratio: Optional[str] = None
     extra_params: Dict[str, Any] = field(default_factory=dict)
+    input_images: List[Dict[str, str]] = field(default_factory=list)
+    input_image_paths: List[str] = field(default_factory=list)
 
 
 @dataclass
