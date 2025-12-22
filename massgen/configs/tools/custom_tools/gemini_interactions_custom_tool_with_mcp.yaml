@@ -1,0 +1,28 @@
+# MassGen Configuration: Gemini Interactions with MCP Integration
+# Usage: uv run massgen --config massgen/configs/tools/custom_tools/gemini_interactions_custom_tool_with_mcp.yaml "whats the sum of 123 and 456? and whats the weather of Tokyo and london?"
+
+agents:
+  - id: "gemini_interactions_custom_tool" # Google Gemini Interactions
+    backend:
+      type: "gemini_interactions"
+      model: "gemini-2.5-flash"
+      custom_tools:
+        - name: ["two_num_tool"]
+          category: "math"
+          path: "massgen/tool/_basic/_two_num_tool.py"
+          function: ["two_num_tool"]
+      mcp_servers:
+        - name: "weather"
+          type: "stdio"
+          command: "npx"
+          args: ["-y", "@fak111/weather-mcp"]
+    system_message: |
+      You have access to:
+      - two_num_tool: Adds two numbers
+      - Weather MCP: Provides weather information
+
+      Use these tools to answer questions. Do not speculate or invent tool capabilities.
+
+ui:
+  display_type: "rich_terminal"
+  logging_enabled: true
