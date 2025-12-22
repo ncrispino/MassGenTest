@@ -70,7 +70,7 @@ class GeminiFormatter(FormatterBase):
                             "name": func_def.get("name", ""),
                             "description": func_def.get("description", ""),
                             "parameters": func_def.get("parameters", {}),
-                        }
+                        },
                     )
                 elif isinstance(tool, dict) and "name" in tool and "parameters" in tool:
                     interactions_tools.append(
@@ -79,7 +79,7 @@ class GeminiFormatter(FormatterBase):
                             "name": tool.get("name", ""),
                             "description": tool.get("description", ""),
                             "parameters": tool.get("parameters", {}),
-                        }
+                        },
                     )
 
         if mcp_functions:
@@ -91,7 +91,7 @@ class GeminiFormatter(FormatterBase):
                             "name": getattr(mcp_function, "name", ""),
                             "description": getattr(mcp_function, "description", ""),
                             "parameters": getattr(mcp_function, "parameters", {}),
-                        }
+                        },
                     )
                 except Exception as e:
                     logger.error(f"[GeminiFormatter] Failed to convert MCP tool for Interactions API: {e}")
