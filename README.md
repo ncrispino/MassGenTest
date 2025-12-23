@@ -300,22 +300,33 @@ git clone https://github.com/Leezekun/MassGen.git
 cd MassGen
 
 # Install in editable mode with pip
+# Option 1: Not Installing with uv
 pip install -e .
-
-# Or with uv (faster)
-uv pip install -e .
 
 # Optional: External framework integration
 pip install -e ".[external]"
 
-# Automated setup (Unix/Linux/macOS) - installs dependencies, skills, Docker images
+# Automated setup (works on all platforms) - installs dependencies, skills, Docker images, also sets up API keys
+massgen --setup
+
+# Or use the bash script (Unix/Linux/macOS only), need manually config API keys, see sections below 
 ./scripts/init.sh
 
-# Or just install skills (works on all platforms)
+# If you would like to install other dependencies later, here is a light-weighted setup script which only installs skills (works on all platforms)
 massgen --setup-skills
 
 # Or use the bash script (Unix/Linux/macOS only)
 ./scripts/init_skills.sh
+
+# Option 2 (recommended): Installing with uv (faster)
+uv pip install -e .
+
+# If you install massgen in uv, make sure to include "uv run" before all commands
+uv run massgen --setup
+uv run ./scripts/init.sh
+uv run massgen --setup-skills
+uv run ./scripts/init_skills.sh
+
 ```
 
 > **Note:** The `--setup-skills` command works cross-platform (Windows, macOS, Linux). The bash scripts (`init.sh`, `init_skills.sh`) are Unix-only but provide additional dev setup like Docker image builds.
