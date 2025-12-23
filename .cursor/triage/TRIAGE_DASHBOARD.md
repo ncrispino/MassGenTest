@@ -5,8 +5,8 @@
 | Metric | Baseline | Current | Delta |
 | :-- | --: | --: | --: |
 | Total | 622 | 622 | 0 |
-| Passed | 518 | 531 | +13 |
-| Failed | 56 | 35 | -21 |
+| Passed | 518 | 534 | +16 |
+| Failed | 56 | 32 | -24 |
 | Skipped | 48 | 56 | +8 |
 
 ### Progress Log (Snapshots after each completed cluster)
@@ -23,6 +23,7 @@
 | e1b979b82b | [x] Resolved | GitHub Copilot | 622 | 529 | 43 | 50 |
 | 2265711670 | [x] Resolved | GitHub Copilot | 622 | 530 | 42 | 50 |
 | full_suite_2025-12-23 | [~] Test Run | GitHub Copilot | 622 | 531 | 35 | 56 |
+| 2a747ad546+10e40617fc+a6331c8a4f | [x] Resolved | GitHub Copilot | 622 | 534 | 32 | 56 |
 
 ## Clusters
 
@@ -35,9 +36,9 @@
 | [917dbd053a](clusters/cluster_917dbd053a.md) | 3 | `<unknown>` | `AssertionError: assert False  +  where False = <AsyncMock name='mock.retrieve' id='<n>'>.called  +  ` | [x] Resolved | GitHub Copilot | 3 Fail -> 3 Pass. Enabled persistent memory retrieval by default. |
 | [925e5d67cf](clusters/cluster_925e5d67cf.md) | 3 | `<unknown>` | `assert 0 == 1  +  where 0 = len([])` | [x] Resolved | GitHub Copilot | 3 Fail -> 3 Pass. Fixed monkeypatch approach in event loop tests; fixed callable func handling and test expectations for tool name prefixes. |
 | [9cac85ecd5](clusters/cluster_9cac85ecd5.md) | 2 | `<unknown>` | `ValueError: Claude Code backend requires 'cwd' configuration for workspace management` | [x] Resolved | GitHub Copilot | 2 Fail -> 2 Skip. Added @pytest.mark.integration and cwd config to ClaudeCode tests. |
-| [2a747ad546](clusters/cluster_2a747ad546.md) | 1 | `<unknown>` | `AssertionError: Error during fallback test: object Mock can't be used in 'await' expression assert F` | [ ] Open | |
-| [10e40617fc](clusters/cluster_10e40617fc.md) | 1 | `<unknown>` | `AssertionError: Error during no stored answer test: object Mock can't be used in 'await' expression ` | [ ] Open | |
-| [a6331c8a4f](clusters/cluster_a6331c8a4f.md) | 1 | `<unknown>` | `AssertionError: Error during normal content test: object Mock can't be used in 'await' expression as` | [ ] Open | |
+| [2a747ad546](clusters/cluster_2a747ad546.md) | 1 | `<unknown>` | `AssertionError: Error during fallback test: object Mock can't be used in 'await' expression assert F` | [x] Resolved | GitHub Copilot | 1 Fail -> 1 Pass. Fixed mock agent.backend.filesystem_manager = None. |
+| [10e40617fc](clusters/cluster_10e40617fc.md) | 1 | `<unknown>` | `AssertionError: Error during no stored answer test: object Mock can't be used in 'await' expression ` | [x] Resolved | GitHub Copilot | 1 Fail -> 1 Pass. Fixed mock agent.backend.filesystem_manager = None. |
+| [a6331c8a4f](clusters/cluster_a6331c8a4f.md) | 1 | `<unknown>` | `AssertionError: Error during normal content test: object Mock can't be used in 'await' expression as` | [x] Resolved | GitHub Copilot | 1 Fail -> 1 Pass. Fixed mock agent.backend.filesystem_manager = None. |
 | [ddb4cca0e8](clusters/cluster_ddb4cca0e8.md) | 1 | `<unknown>` | `AssertionError: Read should be blocked from reading .m4v files assert not True` | [x] Resolved | GitHub Copilot | 1 Fail -> 1 Pass. Added .m4v, .mpg, .mpeg to BINARY_FILE_EXTENSIONS. |
 | [e1b979b82b](clusters/cluster_e1b979b82b.md) | 1 | `<unknown>` | `AssertionError: Read should be blocked from reading .o files assert not True` | [x] Resolved | GitHub Copilot | 1 Fail -> 1 Pass. Added .o, .a, .class, .jar to BINARY_FILE_EXTENSIONS. |
 | [2265711670](clusters/cluster_2265711670.md) | 1 | `<unknown>` | `AssertionError: Read should be blocked from reading .wma files assert not True` | [x] Resolved | GitHub Copilot | 1 Fail -> 1 Pass. Added .wma to BINARY_FILE_EXTENSIONS. |
