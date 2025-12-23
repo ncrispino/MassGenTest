@@ -605,15 +605,18 @@ class CustomToolAndMCPBackend(LLMBackend):
                     path = tool_config.get("path")
                     category = tool_config.get("category", "default")
 
-                    # Normalize function field to list
-                    func_field = tool_config.get("function")
+                    # Normalize function field to list (support both "function" and "func" keys)
+                    func_field = tool_config.get("function") or tool_config.get("func")
                     if isinstance(func_field, str):
                         functions = [func_field]
                     elif isinstance(func_field, list):
                         functions = func_field
+                    elif callable(func_field):
+                        # Direct function object passed
+                        functions = [func_field]
                     else:
                         logger.error(
-                            f"Invalid function field type: {type(func_field)}. " f"Must be str or List[str].",
+                            f"Invalid function field type: {type(func_field)}. " f"Must be str, callable, or List[str].",
                         )
                         continue
 
@@ -698,7 +701,13 @@ class CustomToolAndMCPBackend(LLMBackend):
                             )
 
                         # Use custom name for logging and tracking if provided
-                        registered_name = names[i] if names[i] else func
+                        # Handle callable functions by extracting their __name__
+                        if names[i]:
+                            registered_name = names[i]
+                        elif callable(func):
+                            registered_name = getattr(func, "__name__", str(func))
+                        else:
+                            registered_name = str(func)
 
                         # Track tool name for categorization
                         if registered_name.startswith("custom_tool__"):

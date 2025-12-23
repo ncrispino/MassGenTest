@@ -163,6 +163,7 @@ BINARY_FILE_EXTENSIONS = frozenset(
         ".flac",
         ".aac",
         ".m4a",
+        ".wma",
         # Video
         ".mp4",
         ".avi",
@@ -171,6 +172,9 @@ BINARY_FILE_EXTENSIONS = frozenset(
         ".wmv",
         ".flv",
         ".webm",
+        ".m4v",
+        ".mpg",
+        ".mpeg",
         # Archives
         ".zip",
         ".tar",
@@ -179,11 +183,15 @@ BINARY_FILE_EXTENSIONS = frozenset(
         ".xz",
         ".7z",
         ".rar",
-        # Executables
+        # Executables and object files
         ".exe",
         ".dll",
         ".so",
         ".dylib",
+        ".o",
+        ".a",
+        ".class",
+        ".jar",
         # Documents (binary formats)
         ".pdf",
         ".doc",

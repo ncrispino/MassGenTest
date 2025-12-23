@@ -278,9 +278,9 @@ class TestResponseBackendCustomTools:
             ],
         )
 
-        # Simulate captured function calls
+        # Simulate captured function calls using the prefixed names as the LLM would return them
         captured_calls = [
-            {"name": "calculate_sum", "call_id": "1", "arguments": '{"a": 1, "b": 2}'},
+            {"name": "custom_tool__calculate_sum", "call_id": "1", "arguments": '{"a": 1, "b": 2}'},
             {"name": "web_search", "call_id": "2", "arguments": '{"query": "test"}'},
             {"name": "unknown_mcp_tool", "call_id": "3", "arguments": "{}"},
         ]
@@ -300,7 +300,7 @@ class TestResponseBackendCustomTools:
 
         # Verify categorization
         assert len(custom_calls) == 1
-        assert custom_calls[0]["name"] == "calculate_sum"
+        assert custom_calls[0]["name"] == "custom_tool__calculate_sum"
 
         assert len(provider_calls) == 2
         assert "web_search" in [c["name"] for c in provider_calls]
