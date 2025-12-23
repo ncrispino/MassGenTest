@@ -70,12 +70,12 @@ XFAIL_EXPIRED_FAIL=1 /Users/admin/src/MassGen/.venv/bin/python -m pytest -q mass
 
 ## Failure clustering + task packets
 
-Script: [`scripts/triage_pytest_failures.py`](../../scripts/triage_pytest_failures.py)
+Script: [`.cursor/triage/triage_pytest_failures.py`](../../.cursor/triage/triage_pytest_failures.py)
 
 Run:
 
 ```bash
-/Users/admin/src/MassGen/.venv/bin/python scripts/triage_pytest_failures.py \
+/Users/admin/src/MassGen/.venv/bin/python .cursor/triage/triage_pytest_failures.py \
   --junit-xml .cursor/triage/junit.xml \
   --out-dir .cursor/triage
 ```
