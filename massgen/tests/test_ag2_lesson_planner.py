@@ -195,8 +195,8 @@ class TestAG2ToolWithBackend:
             ],
         )
 
-        # Verify tool is registered
-        assert "ag2_lesson_planner" in backend._custom_tool_names
+        # Verify tool is registered (with custom_tool__ prefix)
+        assert "custom_tool__ag2_lesson_planner" in backend._custom_tool_names
 
         # Verify schema generation
         schemas = backend._get_custom_tools_schemas()
@@ -205,7 +205,7 @@ class TestAG2ToolWithBackend:
         # Find our tool's schema
         ag2_schema = None
         for schema in schemas:
-            if schema["function"]["name"] == "ag2_lesson_planner":
+            if schema["function"]["name"] == "custom_tool__ag2_lesson_planner":
                 ag2_schema = schema
                 break
 

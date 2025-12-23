@@ -5,8 +5,8 @@
 | Metric | Baseline | Current | Delta |
 | :-- | --: | --: | --: |
 | Total | 622 | 622 | 0 |
-| Passed | 518 | 534 | +16 |
-| Failed | 56 | 32 | -24 |
+| Passed | 518 | 549 | +31 |
+| Failed | 56 | 15 | -41 |
 | Skipped | 48 | 56 | +8 |
 
 ### Progress Log (Snapshots after each completed cluster)
@@ -24,6 +24,7 @@
 | 2265711670 | [x] Resolved | GitHub Copilot | 622 | 530 | 42 | 50 |
 | full_suite_2025-12-23 | [~] Test Run | GitHub Copilot | 622 | 531 | 35 | 56 |
 | 2a747ad546+10e40617fc+a6331c8a4f | [x] Resolved | GitHub Copilot | 622 | 534 | 32 | 56 |
+| batch_10_clusters | [x] Resolved | GitHub Copilot | 622 | 549 | 15 | 56 |
 
 ## Clusters
 
@@ -42,17 +43,17 @@
 | [ddb4cca0e8](clusters/cluster_ddb4cca0e8.md) | 1 | `<unknown>` | `AssertionError: Read should be blocked from reading .m4v files assert not True` | [x] Resolved | GitHub Copilot | 1 Fail -> 1 Pass. Added .m4v, .mpg, .mpeg to BINARY_FILE_EXTENSIONS. |
 | [e1b979b82b](clusters/cluster_e1b979b82b.md) | 1 | `<unknown>` | `AssertionError: Read should be blocked from reading .o files assert not True` | [x] Resolved | GitHub Copilot | 1 Fail -> 1 Pass. Added .o, .a, .class, .jar to BINARY_FILE_EXTENSIONS. |
 | [2265711670](clusters/cluster_2265711670.md) | 1 | `<unknown>` | `AssertionError: Read should be blocked from reading .wma files assert not True` | [x] Resolved | GitHub Copilot | 1 Fail -> 1 Pass. Added .wma to BINARY_FILE_EXTENSIONS. |
-| [addd89f9c7](clusters/cluster_addd89f9c7.md) | 1 | `<unknown>` | `AssertionError: Regex pattern did not match.   Expected regex: 'Azure OpenAI endpoint URL is require` | [ ] Open | |
-| [403c7f4eb0](clusters/cluster_403c7f4eb0.md) | 1 | `<unknown>` | `AssertionError: Regex pattern did not match.   Expected regex: 'Both llm_backend and embedding_backe` | [ ] Open | |
-| [e93ca5b364](clusters/cluster_e93ca5b364.md) | 1 | `<unknown>` | `AssertionError: assert 'Invalid output format' in 'VHS is not installed. Please install it from http` | [ ] Open | |
-| [5574b4d202](clusters/cluster_5574b4d202.md) | 1 | `<unknown>` | `AssertionError: assert 'Sleep 10s' in '# VHS tape for MassGen terminal recording\n# Auto-generated b` | [ ] Open | |
-| [903d89c512](clusters/cluster_903d89c512.md) | 1 | `<unknown>` | `AssertionError: assert 'ag2_lesson_planner' in set()  +  where set() = <massgen.backend.response.Res` | [ ] Open | |
-| [f60ae3a821](clusters/cluster_f60ae3a821.md) | 1 | `<unknown>` | `AssertionError: assert 'calculate_sum' in set()  +  where set() = <massgen.backend.response.Response` | [ ] Open | |
-| [179e903383](clusters/cluster_179e903383.md) | 1 | `<unknown>` | `AssertionError: assert 'calculate_sum' in {'custom_tool__calculate_sum': RegisteredToolEntry(tool_na` | [ ] Open | |
-| [0417872da1](clusters/cluster_0417872da1.md) | 1 | `<unknown>` | `AssertionError: assert 'custom_function' in {'custom_tool__custom_function': RegisteredToolEntry(too` | [ ] Open | |
-| [810ae1adca](clusters/cluster_810ae1adca.md) | 1 | `<unknown>` | `AssertionError: assert 'faulty_tool' in set()  +  where set() = <massgen.backend.response.ResponseBa` | [ ] Open | |
-| [95e42d89f4](clusters/cluster_95e42d89f4.md) | 1 | `<unknown>` | `AssertionError: assert 'filesystem' not in ['filesystem', 'command_line']` | [ ] Open | |
-| [a582835a54](clusters/cluster_a582835a54.md) | 1 | `<unknown>` | `AssertionError: assert 'filesystem' not in ['filesystem', 'workspace_tools', 'command_line']` | [ ] Open | |
+| [addd89f9c7](clusters/cluster_addd89f9c7.md) | 1 | `<unknown>` | `AssertionError: Regex pattern did not match.   Expected regex: 'Azure OpenAI endpoint URL is require` | [x] Resolved | GitHub Copilot | 1 Fail -> 1 Pass. Updated regex to match new API key validation order. |
+| [403c7f4eb0](clusters/cluster_403c7f4eb0.md) | 1 | `<unknown>` | `AssertionError: Regex pattern did not match.   Expected regex: 'Both llm_backend and embedding_backe` | [x] Resolved | GitHub Copilot | 1 Fail -> 1 Pass. Updated regex to match new llm_config validation message. |
+| [e93ca5b364](clusters/cluster_e93ca5b364.md) | 1 | `<unknown>` | `AssertionError: assert 'Invalid output format' in 'VHS is not installed. Please install it from http` | [x] Resolved | GitHub Copilot | 1 Fail -> 1 Pass. Added monkeypatch to mock VHS as installed for format validation test. |
+| [5574b4d202](clusters/cluster_5574b4d202.md) | 1 | `<unknown>` | `AssertionError: assert 'Sleep 10s' in '# VHS tape for MassGen terminal recording\n# Auto-generated b` | [x] Resolved | GitHub Copilot | 1 Fail -> 1 Pass. Updated expected Sleep duration from 10s to 2s. |
+| [903d89c512](clusters/cluster_903d89c512.md) | 1 | `<unknown>` | `AssertionError: assert 'ag2_lesson_planner' in set()  +  where set() = <massgen.backend.response.Res` | [x] Resolved | GitHub Copilot | 1 Fail -> 1 Pass. Updated test to expect custom_tool__ prefix. |
+| [f60ae3a821](clusters/cluster_f60ae3a821.md) | 1 | `<unknown>` | `AssertionError: assert 'calculate_sum' in set()  +  where set() = <massgen.backend.response.Response` | [x] Resolved | GitHub Copilot | 1 Fail -> 1 Pass. Updated test to expect custom_tool__ prefix. |
+| [179e903383](clusters/cluster_179e903383.md) | 1 | `<unknown>` | `AssertionError: assert 'calculate_sum' in {'custom_tool__calculate_sum': RegisteredToolEntry(tool_na` | [x] Resolved | GitHub Copilot | 1 Fail -> 1 Pass. Updated test to expect custom_tool__ prefix. |
+| [0417872da1](clusters/cluster_0417872da1.md) | 1 | `<unknown>` | `AssertionError: assert 'custom_function' in {'custom_tool__custom_function': RegisteredToolEntry(too` | [x] Resolved | GitHub Copilot | 1 Fail -> 1 Pass. Updated test to expect custom_tool__ prefix. |
+| [810ae1adca](clusters/cluster_810ae1adca.md) | 1 | `<unknown>` | `AssertionError: assert 'faulty_tool' in set()  +  where set() = <massgen.backend.response.ResponseBa` | [x] Resolved | GitHub Copilot | 1 Fail -> 1 Pass. Updated test to expect custom_tool__ prefix. |
+| [95e42d89f4](clusters/cluster_95e42d89f4.md) | 1 | `<unknown>` | `AssertionError: assert 'filesystem' not in ['filesystem', 'command_line']` | [x] Resolved | GitHub Copilot | 1 Fail -> 1 Pass. Updated test to expect filesystem IS present with limited tools. |
+| [a582835a54](clusters/cluster_a582835a54.md) | 1 | `<unknown>` | `AssertionError: assert 'filesystem' not in ['filesystem', 'workspace_tools', 'command_line']` | [x] Resolved | GitHub Copilot | 1 Fail -> 1 Pass. Updated test to expect filesystem IS present with limited tools. |
 | [3cf8378975](clusters/cluster_3cf8378975.md) | 1 | `<unknown>` | `AssertionError: assert 'gemini-3-flash-preview' == 'gemini-<num>-flash'      #x1B[0m#x1B[91m- gemini` | [x] Resolved | GitHub Copilot | 1 Fail -> 1 Pass. Updated test to expect new default gemini-3-flash-preview model. |
 | [bb85095009](clusters/cluster_bb85095009.md) | 1 | `<unknown>` | `AssertionError: assert 'gpt-<num>-codex' == 'gpt-5'      #x1B[0m#x1B[91m- gpt-5#x1B[39;49;00m#x1B[90` | [x] Resolved | GitHub Copilot | 1 Fail -> 1 Pass. Updated build_config tests to expect default gpt-5.1-codex and use context_paths parameter. |
 | [08427b80fc](clusters/cluster_08427b80fc.md) | 1 | `<unknown>` | `AssertionError: assert 'langgraph_lesson_planner' in set()  +  where set() = <massgen.backend.respon` | [ ] Open | |

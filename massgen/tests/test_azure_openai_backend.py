@@ -43,7 +43,7 @@ class TestAzureOpenAIBackend:
     def test_init_missing_api_key(self):
         """Test initialization fails without API key."""
         with patch.dict(os.environ, {}, clear=True):
-            with pytest.raises(ValueError, match="Azure OpenAI endpoint URL is required"):
+            with pytest.raises(ValueError, match="Azure OpenAI API key is required"):
                 AzureOpenAIBackend()
 
     def test_init_missing_endpoint(self):
