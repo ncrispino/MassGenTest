@@ -16,7 +16,7 @@ All triage artifacts are stored in `.cursor/triage/` to prevent workspace clutte
 
 ## 2. The "Fix Loop" (Agent Protocol)
 
-Agents must follow this strict loop when assigned a triage task.
+Agents must follow this strict loop when assigned a triage task. **Always use the `.venv` environment for execution.**
 
 ### Phase 1: Pickup
 1.  **Read Dashboard**: Open `.cursor/triage/TRIAGE_DASHBOARD.md`.
@@ -30,11 +30,15 @@ Agents must follow this strict loop when assigned a triage task.
 
 ### Phase 3: Fix
 1.  **Analyze**: Use the stack trace and suspect files to identify the root cause.
-2.  **Classify**:
-    *   **Unit Bug**: Fix the code or the test logic.
+2.  **Scope & Safety**:
+    *   **Primary Goal**: Align failing tests with current CODE or clean them up.
+    *   **Code Freeze**: Do NOT change application code unless absolutely necessary and apparent.
+    *   **Escalate**: If application code appears fundamentally broken/bad, **STOP** and warn the user.
+3.  **Classify**:
+    *   **Test Fix**: Update test logic/expectations.
     *   **Integration/External**: Add `@pytest.mark.integration` (or `docker`/`expensive`) to skip by default.
-    *   **Defer**: If fixing is too complex for now, add an entry to `massgen/tests/xfail_registry.yml` with a strict **expiry date**.
-3.  **Implement**: Apply the fix.
+    *   **Defer**: Add an entry to `massgen/tests/xfail_registry.yml` with a strict **expiry date**.
+4.  **Implement**: Apply the fix.
 
 ### Phase 4: Verify (Verify Fix)
 1.  **Execute Repro**: Run the "Single failing test" command again.
