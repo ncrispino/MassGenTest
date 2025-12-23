@@ -399,6 +399,18 @@ sudo ~/.lmstudio/bin/lms bootstrap
 cmd /c %USERPROFILE%\.lmstudio\bin\lms.exe bootstrap
 ```
 
+**After setup:**
+```bash
+# Interactive mode
+massgen
+
+# Single query
+massgen "Your question here"
+
+# With example configurations
+massgen --config @examples/basic/multi/three_agents_default "Your question"
+```
+
 ### 2. 🔐 API Configuration
 
 **Create a `.env` file in your working directory with your API keys:**
