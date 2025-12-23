@@ -1,7 +1,7 @@
+# -*- coding: utf-8 -*-
 from __future__ import annotations
 
 import copy
-import time
 import uuid
 from typing import Any, AsyncGenerator, AsyncIterator, Dict, Optional, Protocol
 
@@ -101,5 +101,3 @@ class MassGenEngine:
             if chunk.source is None:
                 chunk.source = "orchestrator"
             yield chunk
-
-

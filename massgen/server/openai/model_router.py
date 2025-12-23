@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -32,5 +33,3 @@ def resolve_model(raw_model: str, *, default_config: Optional[str], default_mode
         return ResolvedModel(raw_model=raw_model, config_path=default_config, override_model=raw_model)
 
     return ResolvedModel(raw_model=raw_model, config_path=None, override_model=raw_model or None)
-
-

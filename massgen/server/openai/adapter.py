@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from __future__ import annotations
 
 import time
@@ -229,5 +230,3 @@ async def stream_to_sse_frames(
         delta={},
         finish_reason="stop",
     )
-
-

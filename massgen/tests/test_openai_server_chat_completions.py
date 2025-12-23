@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import json
 from typing import AsyncIterator
 
@@ -69,5 +70,3 @@ def test_chat_completions_streaming():
             got += delta.get("content", "") or ""
         assert saw_done is True
         assert got == "Hello world"
-
-

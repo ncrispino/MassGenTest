@@ -1,8 +1,8 @@
+# -*- coding: utf-8 -*-
 from __future__ import annotations
 
 import json
 from typing import Any, Dict
-
 
 SSE_HEADERS: Dict[str, str] = {
     "Cache-Control": "no-cache",
@@ -18,5 +18,3 @@ def format_sse(data: Any) -> str:
 
 def format_done() -> str:
     return "data: [DONE]\n\n"
-
-

@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from __future__ import annotations
 
 from fastapi import FastAPI
@@ -12,5 +13,3 @@ def create_app(*, engine: Engine | None = None, settings: ServerSettings | None 
     app = FastAPI(title="MassGen OpenAI-Compatible Server", version="0")
     app.include_router(build_router(engine=engine, settings=settings))
     return app
-
-

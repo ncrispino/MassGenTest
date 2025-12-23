@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional
@@ -29,5 +30,3 @@ class ChatCompletionRequest(BaseModel):
     tools: Optional[List[Dict[str, Any]]] = None
     tool_choice: Optional[Any] = None
     parallel_tool_calls: Optional[bool] = None
-
-

@@ -3695,11 +3695,7 @@ Your answer:"""
                 tool_calls = []
                 workflow_tool_found = False
                 # Determine internal tool names for this run (includes broadcast tools if enabled).
-                internal_tool_names = {
-                    (t.get("function", {}) or {}).get("name")
-                    for t in (self.workflow_tools or [])
-                    if isinstance(t, dict)
-                }
+                internal_tool_names = {(t.get("function", {}) or {}).get("name") for t in (self.workflow_tools or []) if isinstance(t, dict)}
 
                 logger.info(f"[Orchestrator] Agent {agent_id} starting to stream chat response...")
 

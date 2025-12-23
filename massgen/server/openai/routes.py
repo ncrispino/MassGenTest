@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from __future__ import annotations
 
 import uuid
@@ -83,5 +84,3 @@ def build_router(*, engine: Optional[Engine] = None, settings: Optional[ServerSe
         return JSONResponse(resp)
 
     return router
-
-

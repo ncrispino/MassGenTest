@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -33,5 +34,3 @@ class ServerSettings:
             default_model=default_model or None,
             debug=_get_bool("MASSGEN_SERVER_DEBUG", cls.debug),
         )
-
-

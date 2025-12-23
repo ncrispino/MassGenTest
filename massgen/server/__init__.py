@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 MassGen OpenAI-compatible server package.
 
@@ -9,5 +10,3 @@ Exposes a FastAPI app with:
 from .app import create_app
 
 __all__ = ["create_app"]
-
-

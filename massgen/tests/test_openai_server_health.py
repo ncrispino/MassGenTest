@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from fastapi.testclient import TestClient
 
 from massgen.server.app import create_app
@@ -11,5 +12,3 @@ def test_health_ok():
     data = resp.json()
     assert data["status"] == "ok"
     assert data["service"] == "massgen-server"
-
-

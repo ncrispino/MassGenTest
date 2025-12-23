@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import json
 from typing import AsyncIterator
 
@@ -133,5 +134,3 @@ def test_tool_name_collision_rejected():
         },
     )
     assert resp.status_code == 400
-
-
