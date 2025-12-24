@@ -38,6 +38,8 @@ from .base_with_custom_tool_and_mcp import (
     ToolExecutionConfig,
 )
 
+OPENROUTER_DEFAULT_WEB_ENGINE = "exa"
+OPENROUTER_DEFAULT_WEB_MAX_RESULTS = 1
 
 class ChatCompletionsBackend(CustomToolAndMCPBackend):
     """Complete OpenAI-compatible Chat Completions API backend.
@@ -195,7 +197,29 @@ class ChatCompletionsBackend(CustomToolAndMCPBackend):
         base_url = all_params.get("base_url", "")
         if "openrouter.ai" in base_url:
             extra_body = api_params.get("extra_body", {})
+            if not isinstance(extra_body, dict):
+                extra_body = {}
             extra_body["usage"] = {"include": True}
+            
+            # OpenRouter: Enable web search via plugins array
+            # OpenRouter uses plugins array instead of function tools for web search
+            # We put plugins in extra_body since OpenAI SDK doesn't accept it as a direct parameter
+            if all_params.get("enable_web_search", False):
+                web_plugin = {"id": "web"}
+                
+                # Add optional web search configuration
+                # Parameters match OpenRouter API: engine (native/exa) and max_results
+                engine = all_params.get("engine", OPENROUTER_DEFAULT_WEB_ENGINE)
+                web_plugin["engine"] = engine
+                
+                max_results = all_params.get("max_results", OPENROUTER_DEFAULT_WEB_MAX_RESULTS)
+                web_plugin["max_results"] = max_results
+                
+                # Add plugins to extra_body (OpenRouter expects it as top-level field in request body)
+                if "plugins" not in extra_body:
+                    extra_body["plugins"] = []
+                extra_body["plugins"].append(web_plugin)
+            
             api_params["extra_body"] = extra_body
 
         # Add provider tools (web search, code interpreter) if enabled
