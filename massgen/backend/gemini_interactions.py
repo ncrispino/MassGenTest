@@ -1080,6 +1080,7 @@ class GeminiInteractionsBackend(CustomToolAndMCPBackend):
                 logger.info(f"[GeminiInteractions] Response modalities: {all_params['response_modalities']}")
 
             # Add system instruction if present
+            # Note: Some agents (e.g., deep-research) don't support system_instruction
             system_message = None
             for msg in messages:
                 if msg.get("role") == "system":
@@ -1087,7 +1088,19 @@ class GeminiInteractionsBackend(CustomToolAndMCPBackend):
                     break
 
             if system_message:
-                interaction_params["system_instruction"] = system_message
+                # Agents that don't support system_instruction parameter
+                unsupported_system_instruction_agents = ["deep-research"]
+                model_lower = model_name.lower()
+                supports_system_instruction = not any(agent_type in model_lower for agent_type in unsupported_system_instruction_agents)
+
+                if supports_system_instruction:
+                    interaction_params["system_instruction"] = system_message
+                else:
+                    # For agents that don't support system_instruction, prepend to input
+                    logger.info(
+                        f"[GeminiInteractions] Agent '{model_name}' doesn't support system_instruction, " "prepending to input instead",
+                    )
+                    interaction_params["input"] = f"[Instructions: {system_message}]\n\n{interaction_params['input']}"
 
             # Log messages being sent
             log_backend_agent_message(
