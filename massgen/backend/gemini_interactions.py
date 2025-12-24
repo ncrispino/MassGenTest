@@ -583,8 +583,10 @@ class GeminiInteractionsBackend(CustomToolAndMCPBackend):
             full_text = ""
             captured_function_calls = []
             last_interaction = None
+            chunk_count = 0
 
             async for chunk in stream:
+                chunk_count += 1
                 last_interaction = chunk
 
                 # Check for event_type (Interactions API streaming format)
@@ -608,6 +610,20 @@ class GeminiInteractionsBackend(CustomToolAndMCPBackend):
                                 log_stream_chunk("backend.gemini_interactions", "content", text_delta, agent_id)
                                 yield StreamChunk(type="content", content=text_delta)
 
+                        elif delta_type == "function_call":
+                            # Native function call from Gemini Interactions API
+                            func_name = getattr(delta, "name", "")
+                            func_id = getattr(delta, "id", f"call_{len(captured_function_calls)}")
+                            func_args = getattr(delta, "arguments", {})
+                            if func_name:
+                                call = {
+                                    "name": func_name,
+                                    "call_id": func_id,
+                                    "arguments": json.dumps(func_args) if isinstance(func_args, dict) else func_args,
+                                }
+                                captured_function_calls.append(call)
+                                logger.info(f"[GeminiInteractions] Native function call: {func_name}")
+
                         elif delta_type == "thought":
                             thought_delta = getattr(delta, "thought", "")
                             if thought_delta:
@@ -617,6 +633,10 @@ class GeminiInteractionsBackend(CustomToolAndMCPBackend):
                                     content=thought_delta,
                                     source="gemini_interactions",
                                 )
+
+                        elif delta_type == "thought_signature":
+                            # Thinking signatures - just log for debugging
+                            logger.debug("[GeminiInteractions] Received thought signature")
 
                 elif event_type == "interaction.complete":
                     interaction = getattr(chunk, "interaction", None)
@@ -655,6 +675,9 @@ class GeminiInteractionsBackend(CustomToolAndMCPBackend):
                             if call:
                                 captured_function_calls.append(call)
                                 logger.info(f"[GeminiInteractions] Function call detected: {call['name']}")
+
+            # Log summary of what we received
+            logger.info(f"[GeminiInteractions] Stream complete: {chunk_count} chunks, text_len={len(full_text)}, func_calls={len(captured_function_calls)}")
 
             if last_interaction and hasattr(last_interaction, "id") and self._store_interactions:
                 self._previous_interaction_id = last_interaction.id
@@ -986,11 +1009,15 @@ class GeminiInteractionsBackend(CustomToolAndMCPBackend):
                     )
 
             # Convert all tools to Interactions API format using formatter
-            if custom_tools_schemas or mcp_functions_to_use:
+            # Include workflow tools (new_answer, vote) from the tools parameter
+            workflow_tools = [t for t in (tools or []) if t.get("type") == "function" and t.get("function", {}).get("name") in ("new_answer", "vote", "ask_others")]
+
+            if custom_tools_schemas or mcp_functions_to_use or workflow_tools:
                 try:
                     tools_to_apply = self.formatter.format_tools_for_interactions_api(
                         custom_tools=custom_tools_schemas,
                         mcp_functions=mcp_functions_to_use,
+                        workflow_tools=workflow_tools,
                     )
                     logger.info(f"[GeminiInteractions] Formatted {len(tools_to_apply)} tools for Interactions API")
                 except Exception as e:
@@ -1012,6 +1039,9 @@ class GeminiInteractionsBackend(CustomToolAndMCPBackend):
             # Apply tools to interaction params
             if tools_to_apply:
                 interaction_params["tools"] = tools_to_apply
+                # Debug: Log what tools are being sent
+                tool_names = [t.get("name", t.get("type", "unknown")) for t in tools_to_apply]
+                logger.info(f"[GeminiInteractions] Tools being sent to API: {tool_names}")
 
             # Build generation config
             generation_config = {}
@@ -1086,9 +1116,14 @@ class GeminiInteractionsBackend(CustomToolAndMCPBackend):
                 ):
                     if chunk.type == "content":
                         full_content_text += chunk.content or ""
+                        yield chunk
                     elif chunk.type == "tool_calls":
+                        # Don't yield tool_calls here - we'll handle them after categorization
+                        # to avoid double-emitting workflow tools (vote, new_answer, ask_others)
                         captured_function_calls.extend(chunk.tool_calls or [])
-                    yield chunk
+                    else:
+                        # Yield other chunk types (thought, error, etc.)
+                        yield chunk
             else:
                 # Polling mode
                 async for chunk in self._poll_interaction(
@@ -1099,9 +1134,14 @@ class GeminiInteractionsBackend(CustomToolAndMCPBackend):
                 ):
                     if chunk.type == "content":
                         full_content_text += chunk.content or ""
+                        yield chunk
                     elif chunk.type == "tool_calls":
+                        # Don't yield tool_calls here - we'll handle them after categorization
+                        # to avoid double-emitting workflow tools (vote, new_answer, ask_others)
                         captured_function_calls.extend(chunk.tool_calls or [])
-                    yield chunk
+                    else:
+                        # Yield other chunk types (thought, error, etc.)
+                        yield chunk
 
             # ====================================================================
             # Structured Coordination Output Parsing
@@ -1385,7 +1425,42 @@ class GeminiInteractionsBackend(CustomToolAndMCPBackend):
                             async for chunk in stream:
                                 last_interaction = chunk
 
-                                if hasattr(chunk, "outputs") and chunk.outputs:
+                                # Handle event_type streaming format (same as first stream)
+                                event_type = getattr(chunk, "event_type", None)
+
+                                if event_type == "content.delta":
+                                    delta = getattr(chunk, "delta", None)
+                                    if delta:
+                                        delta_type = getattr(delta, "type", None)
+
+                                        if delta_type == "text":
+                                            text_delta = getattr(delta, "text", "")
+                                            if text_delta:
+                                                continuation_text += text_delta
+                                                log_stream_chunk(
+                                                    "backend.gemini_interactions",
+                                                    "content",
+                                                    text_delta,
+                                                    agent_id,
+                                                )
+                                                yield StreamChunk(type="content", content=text_delta)
+
+                                        elif delta_type == "function_call":
+                                            # Native function call from continuation
+                                            func_name = getattr(delta, "name", "")
+                                            func_id = getattr(delta, "id", f"cont_call_{len(continuation_function_calls)}")
+                                            func_args = getattr(delta, "arguments", {})
+                                            if func_name:
+                                                call = {
+                                                    "name": func_name,
+                                                    "call_id": func_id,
+                                                    "arguments": json.dumps(func_args) if isinstance(func_args, dict) else func_args,
+                                                }
+                                                continuation_function_calls.append(call)
+                                                logger.info(f"[GeminiInteractions] Continuation function call: {func_name}")
+
+                                # Also handle outputs format (fallback)
+                                elif hasattr(chunk, "outputs") and chunk.outputs:
                                     for output in chunk.outputs:
                                         output_type = getattr(output, "type", None)
 
@@ -1484,19 +1559,12 @@ class GeminiInteractionsBackend(CustomToolAndMCPBackend):
                         logger.info("[GeminiInteractions] No more function calls, continuation complete")
                         break
 
-                    # Yield function calls chunk
-                    yield StreamChunk(
-                        type="tool_calls",
-                        tool_calls=continuation_function_calls,
-                        source="gemini_interactions",
-                    )
-
-                    # Categorize and execute new tool calls
+                    # Categorize tool calls FIRST before yielding
                     mcp_calls, custom_calls, provider_calls = self._categorize_tool_calls(
                         continuation_function_calls,
                     )
 
-                    # If provider calls, emit and exit (handled by orchestrator)
+                    # If provider calls, emit only workflow tools and exit (handled by orchestrator)
                     if provider_calls:
                         workflow_tool_calls = []
                         for call in provider_calls:
@@ -1526,6 +1594,15 @@ class GeminiInteractionsBackend(CustomToolAndMCPBackend):
                                 source="gemini_interactions",
                             )
                         break
+
+                    # For non-workflow calls, yield the tool_calls chunk for custom/MCP tools
+                    non_workflow_calls = custom_calls + mcp_calls
+                    if non_workflow_calls:
+                        yield StreamChunk(
+                            type="tool_calls",
+                            tool_calls=non_workflow_calls,
+                            source="gemini_interactions",
+                        )
 
                     # Execute custom and MCP tools
                     all_calls = custom_calls + mcp_calls
