@@ -381,13 +381,38 @@ def load_config_file(config_path: str) -> Dict[str, Any]:
     try:
         with open(path, "r", encoding="utf-8") as f:
             if path.suffix.lower() in [".yaml", ".yml"]:
-                return yaml.safe_load(f)
+                config = yaml.safe_load(f)
             elif path.suffix.lower() == ".json":
-                return json.load(f)
+                config = json.load(f)
             else:
                 raise ConfigurationError(f"Unsupported config file format: {path.suffix}")
+
+            # Expand environment variables in the config
+            return _expand_env_vars(config)
     except Exception as e:
         raise ConfigurationError(f"Error reading config file: {e}")
+
+
+def _expand_env_vars(config: Any) -> Any:
+    """Recursively expand environment variables in config.
+
+    Replaces ${VAR_NAME} with the value of the VAR_NAME environment variable.
+    If the variable is not set, leaves the ${VAR_NAME} string as-is.
+    """
+    import re
+
+    if isinstance(config, dict):
+        return {k: _expand_env_vars(v) for k, v in config.items()}
+    elif isinstance(config, list):
+        return [_expand_env_vars(item) for item in config]
+    elif isinstance(config, str):
+        # Replace ${VAR} with environment variable value
+        pattern = r'\$\{([^}]+)\}'
+        def replacer(match):
+            var_name = match.group(1)
+            return os.getenv(var_name, match.group(0))
+        return re.sub(pattern, replacer, config)
+    return config
 
 
 def _api_key_error_message(provider_name: str, env_var: str, config_path: Optional[str] = None) -> str:

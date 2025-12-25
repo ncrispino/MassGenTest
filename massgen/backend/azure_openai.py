@@ -65,7 +65,7 @@ class AzureOpenAIBackend(LLMBackend):
             all_params = {**self.config, **kwargs}
 
             # Import Azure OpenAI client
-            from openai import AsyncAzureOpenAI
+            from openai import AsyncAzureOpenAI, AsyncOpenAI
 
             azure_endpoint = all_params.get("azure_endpoint") or all_params.get("base_url") or os.getenv("AZURE_OPENAI_ENDPOINT")
             api_version = all_params.get("api_version") or os.getenv("AZURE_OPENAI_API_VERSION", "2024-12-01-preview")
@@ -74,19 +74,42 @@ class AzureOpenAIBackend(LLMBackend):
             if not azure_endpoint:
                 raise ValueError("Azure OpenAI endpoint URL is required. Set AZURE_OPENAI_ENDPOINT environment variable or pass azure_endpoint/base_url parameter.")
 
-            if not api_version:
-                raise ValueError("Azure OpenAI API version is required. Set AZURE_OPENAI_API_VERSION environment variable or pass api_version parameter.")
-
             # Clean up endpoint URL
             if azure_endpoint.endswith("/"):
                 azure_endpoint = azure_endpoint[:-1]
 
-            # Initialize Azure OpenAI client
-            self.client = AsyncAzureOpenAI(
-                api_version=api_version,
-                azure_endpoint=azure_endpoint,
-                api_key=self.api_key,
-            )
+            # Detect if this is an OpenAI-compatible endpoint (v1 format) or Azure-specific
+            # OpenAI-compatible endpoints contain "/openai/v1" in the path
+            is_openai_compatible = "/openai/v1" in azure_endpoint
+
+            if is_openai_compatible:
+                # Use standard OpenAI client for OpenAI-compatible Azure endpoints
+                log_backend_activity(
+                    self.get_provider_name(),
+                    "Using OpenAI-compatible endpoint",
+                    {"endpoint": azure_endpoint},
+                    agent_id=agent_id,
+                )
+                self.client = AsyncOpenAI(
+                    base_url=azure_endpoint,
+                    api_key=self.api_key,
+                )
+            else:
+                # Use Azure-specific client for traditional Azure OpenAI endpoints
+                if not api_version:
+                    raise ValueError("Azure OpenAI API version is required for Azure-specific endpoints. Set AZURE_OPENAI_API_VERSION environment variable or pass api_version parameter.")
+
+                log_backend_activity(
+                    self.get_provider_name(),
+                    "Using Azure-specific endpoint",
+                    {"endpoint": azure_endpoint, "api_version": api_version},
+                    agent_id=agent_id,
+                )
+                self.client = AsyncAzureOpenAI(
+                    api_version=api_version,
+                    azure_endpoint=azure_endpoint,
+                    api_key=self.api_key,
+                )
 
             # Get deployment name from model parameter
             deployment_name = all_params.get("model")
@@ -129,8 +152,13 @@ class AzureOpenAIBackend(LLMBackend):
                 "messages": modified_messages,
                 "model": deployment_name,  # Use deployment name directly
                 "stream": True,
-                "stream_options": {"include_usage": True},  # Enable usage tracking in stream
             }
+
+            # Only add stream_options for models that support it
+            # Ministral and some other models don't support stream_options
+            models_without_stream_options = ["ministral", "mistral"]
+            if not any(model_name.lower() in deployment_name.lower() for model_name in models_without_stream_options):
+                api_params["stream_options"] = {"include_usage": True}  # Enable usage tracking in stream
 
             # Only add tools if explicitly provided and not empty
             if tools and len(tools) > 0:
@@ -152,6 +180,7 @@ class AzureOpenAIBackend(LLMBackend):
                 "base_url",
                 "enable_web_search",
                 "enable_rate_limit",  # Add this line - not supported by Azure OpenAI
+                "api_key",
             }
             for key, value in kwargs.items():
                 if key not in excluded_params and value is not None:
@@ -251,7 +280,15 @@ class AzureOpenAIBackend(LLMBackend):
                 yield StreamChunk(type="done")
 
         except Exception as e:
+            import traceback
+            error_details = traceback.format_exc()
             error_msg = f"Azure OpenAI API error: {str(e)}"
+            log_backend_activity(
+                self.get_provider_name(),
+                "Error occurred",
+                {"error": str(e), "traceback": error_details, "endpoint": azure_endpoint if 'azure_endpoint' in locals() else 'unknown'},
+                agent_id=agent_id,
+            )
             log_stream_chunk("backend.azure_openai", "error", error_msg, agent_id)
             yield StreamChunk(type="error", error=error_msg)
 
