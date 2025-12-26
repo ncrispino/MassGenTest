@@ -3569,8 +3569,6 @@ async def run_coordination_with_history(
                 pg_cfg = coord_cfg["persona_generator"]
                 persona_generator_config = PersonaGeneratorConfig(
                     enabled=pg_cfg.get("enabled", False),
-                    backend=pg_cfg.get("backend", {"type": "openai", "model": "gpt-4o-mini"}),
-                    strategy=pg_cfg.get("strategy", "complementary"),
                     diversity_mode=pg_cfg.get("diversity_mode", "perspective"),
                     persona_guidelines=pg_cfg.get("persona_guidelines"),
                     persist_across_turns=pg_cfg.get("persist_across_turns", False),
@@ -3957,8 +3955,6 @@ async def run_coordination(
                 pg_cfg = coord_cfg["persona_generator"]
                 persona_generator_config = PersonaGeneratorConfig(
                     enabled=pg_cfg.get("enabled", False),
-                    backend=pg_cfg.get("backend", {"type": "openai", "model": "gpt-4o-mini"}),
-                    strategy=pg_cfg.get("strategy", "complementary"),
                     diversity_mode=pg_cfg.get("diversity_mode", "perspective"),
                     persona_guidelines=pg_cfg.get("persona_guidelines"),
                     persist_across_turns=pg_cfg.get("persist_across_turns", False),

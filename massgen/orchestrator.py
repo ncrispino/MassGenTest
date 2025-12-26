@@ -962,10 +962,8 @@ class Orchestrator(ChatAgent):
         try:
             pg_config = self.config.coordination_config.persona_generator
 
-            # Initialize generator (backend not needed for subagent mode)
+            # Initialize generator
             generator = PersonaGenerator(
-                backend=None,
-                strategy=pg_config.strategy,
                 guidelines=pg_config.persona_guidelines,
                 diversity_mode=pg_config.diversity_mode,
             )

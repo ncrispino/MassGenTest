@@ -53,8 +53,6 @@ class PersonaGeneratorConfig:
 
     Attributes:
         enabled: Whether persona generation is enabled
-        backend: Backend configuration for the LLM to use for generation
-        strategy: Generation strategy (complementary, diverse, specialized, adversarial)
         diversity_mode: Type of diversity to generate:
             - "perspective": Different values/priorities (what to optimize for)
             - "implementation": Different solution types/interpretations (what kind of solution)
@@ -64,15 +62,11 @@ class PersonaGeneratorConfig:
     """
 
     enabled: bool = False
-    backend: Dict[str, Any] = None
-    strategy: str = "complementary"
     diversity_mode: str = "perspective"  # "perspective" or "implementation"
     persona_guidelines: Optional[str] = None
     persist_across_turns: bool = False  # Default: generate new personas each turn
 
     def __post_init__(self):
-        if self.backend is None:
-            self.backend = {"type": "openai", "model": "gpt-4o-mini"}
         # Validate diversity_mode
         if self.diversity_mode not in (DiversityMode.PERSPECTIVE, DiversityMode.IMPLEMENTATION):
             self.diversity_mode = DiversityMode.PERSPECTIVE
@@ -108,21 +102,15 @@ class PersonaGenerator:
 
     def __init__(
         self,
-        backend: Any,
-        strategy: str = "complementary",
         guidelines: Optional[str] = None,
         diversity_mode: str = "perspective",
     ):
         """Initialize the persona generator.
 
         Args:
-            backend: LLM backend to use for generation
-            strategy: Generation strategy (complementary, diverse, specialized, adversarial)
             guidelines: Optional custom guidelines for persona generation
             diversity_mode: Type of diversity - "perspective" or "implementation"
         """
-        self.backend = backend
-        self.strategy = strategy
         self.guidelines = guidelines
         self.diversity_mode = diversity_mode
 

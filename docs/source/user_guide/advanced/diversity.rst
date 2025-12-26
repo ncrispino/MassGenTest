@@ -95,7 +95,7 @@ Quick Start
        enabled: true
        backend:
          type: "gemini"
-         model: "gemini-2.5-flash"
+         model: "gemini-3-flash-preview"
        num_variants: 3
        strategy: "balanced"
 
@@ -159,7 +159,7 @@ Under ``orchestrator.dspy.backend``:
 
    backend:
      type: "gemini"              # openai|anthropic|gemini|lmstudio|vllm|cerebras
-     model: "gemini-2.5-flash"   # Required
+     model: "gemini-3-flash-preview"   # Required
      api_key: "..."              # Optional (uses env var if omitted)
      temperature: 0.7            # Optional (overrides strategy temps)
      max_tokens: 150             # Optional
@@ -407,7 +407,7 @@ Full configuration with all options:
          diversity_mode: "perspective"
          backend:
            type: "gemini"
-           model: "gemini-2.5-flash"
+           model: "gemini-3-flash-preview"
 
 With implementation diversity:
 
@@ -436,7 +436,7 @@ For maximum diversity, combine multiple techniques:
        enabled: true
        backend:
          type: "gemini"
-         model: "gemini-2.5-flash"
+         model: "gemini-3-flash-preview"
        num_variants: 3
        strategy: "diverse"
 
