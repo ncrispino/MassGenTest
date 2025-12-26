@@ -9,6 +9,8 @@ from __future__ import annotations
 import os
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
+from loguru import logger
+
 from ..logger_config import (
     log_backend_activity,
     log_backend_agent_message,
@@ -136,6 +138,17 @@ class AzureOpenAIBackend(LLMBackend):
             workflow_tools = [t for t in tools if t.get("function", {}).get("name") in ["new_answer", "vote", "submit", "restart_orchestration"]] if tools else []
             has_workflow_tools = len(workflow_tools) > 0
 
+            # CRITICAL DEBUG: Log tool detection (using logger.info to ensure it appears)
+            tool_names = [t.get("function", {}).get("name") for t in tools] if tools else []
+            logger.info(
+                f"[Azure OpenAI] Agent {agent_id}: Tool detection - "
+                f"total_tools={len(tools) if tools else 0}, "
+                f"all_tool_names={tool_names}, "
+                f"workflow_tools_detected={len(workflow_tools)}, "
+                f"workflow_tool_names={[t.get('function', {}).get('name') for t in workflow_tools]}, "
+                f"has_workflow_tools={has_workflow_tools}"
+            )
+
             # Modify messages to include workflow tool instructions if needed
             modified_messages = self._prepare_messages_with_workflow_tools(messages, workflow_tools) if has_workflow_tools else messages
 
@@ -197,7 +210,8 @@ class AzureOpenAIBackend(LLMBackend):
                 "azure_endpoint",
                 "base_url",
                 "enable_web_search",
-                "enable_rate_limit",  # Add this line - not supported by Azure OpenAI
+                "enable_rate_limit",  # Not supported by Azure OpenAI
+                "instance_id",  # Not supported by Azure OpenAI
                 "api_key",
             }
             for key, value in kwargs.items():
@@ -415,24 +429,35 @@ class AzureOpenAIBackend(LLMBackend):
                     )
 
             system_parts.append("\n--- MassGen Workflow Instructions ---")
-            system_parts.append(
-                "IMPORTANT: You must respond with a structured JSON decision at the end of your response.",
-            )
-            system_parts.append(
-                "You must use the coordination tools (new_answer, vote) " "to participate in multi-agent workflows.",
-            )
-            system_parts.append(
-                "The JSON MUST be formatted as a strict JSON code block:",
-            )
-            system_parts.append("1. Start with ```json on one line")
-            system_parts.append("2. Include your JSON content (properly formatted)")
-            system_parts.append("3. End with ``` on one line")
-            system_parts.append(
-                'Example format:\n```json\n{"tool_name": "vote", "arguments": {"agent_id": "agent1", "reason": "explanation"}}\n```',
-            )
-            system_parts.append(
-                "The JSON block should be placed at the very end of your response, after your analysis.",
-            )
+            system_parts.append("CRITICAL REQUIREMENT: You MUST end your response with a JSON tool call.")
+            system_parts.append("This is MANDATORY - responses without a tool call will be rejected.")
+            system_parts.append("")
+            system_parts.append("Step 1: Provide your analysis and reasoning (optional)")
+            system_parts.append("Step 2: End with EXACTLY this format:")
+            system_parts.append("")
+            system_parts.append("```json")
+            system_parts.append('{"tool_name": "TOOL_NAME", "arguments": {YOUR_ARGUMENTS}}')
+            system_parts.append("```")
+            system_parts.append("")
+            system_parts.append("IMPORTANT FORMATTING RULES:")
+            system_parts.append("- The JSON MUST be wrapped in ```json and ``` markers")
+            system_parts.append("- Use double quotes for all strings")
+            system_parts.append("- The field name MUST be 'tool_name' (not 'name' or 'function')")
+            system_parts.append("- The arguments MUST be in an 'arguments' object")
+            system_parts.append("")
+            system_parts.append("Complete Examples:")
+            system_parts.append("")
+            system_parts.append("Example 1 - Providing a new answer:")
+            system_parts.append("```json")
+            system_parts.append('{"tool_name": "new_answer", "arguments": {"content": "My answer here"}}')
+            system_parts.append("```")
+            system_parts.append("")
+            system_parts.append("Example 2 - Voting for another agent:")
+            system_parts.append("```json")
+            system_parts.append('{"tool_name": "vote", "arguments": {"agent_id": "agent1", "reason": "Their answer is better"}}')
+            system_parts.append("```")
+            system_parts.append("")
+            system_parts.append("REMEMBER: Every response MUST end with one of these tool calls!")
 
         return "\n".join(system_parts)
 
@@ -466,30 +491,40 @@ class AzureOpenAIBackend(LLMBackend):
         1. Markdown JSON blocks with tool_name
         2. Plain JSON objects with proper nested structure support
         3. Fallback pattern for simple {"content": "..."} format
+        4. Loose text patterns for common tool usage phrases
         """
         try:
             import json
             import re
 
+            # Enhanced debug logging to see what we're trying to extract
+            logger.info(f"[AzureOpenAI] Attempting to extract workflow tools from content (length={len(content)})")
+            logger.debug(f"[AzureOpenAI] Full content: {content}")
+
             # Strategy 1: Look for JSON inside markdown code blocks first
             markdown_json_pattern = r"```json\s*(\{.*?\})\s*```"
             markdown_matches = re.findall(markdown_json_pattern, content, re.DOTALL)
+
+            if markdown_matches:
+                logger.info(f"[AzureOpenAI] Found {len(markdown_matches)} markdown JSON blocks")
 
             for match in reversed(markdown_matches):
                 try:
                     parsed = json.loads(match.strip())
                     if isinstance(parsed, dict) and "tool_name" in parsed:
+                        logger.info(f"[AzureOpenAI] Successfully extracted tool from markdown: {parsed.get('tool_name')}")
                         # Convert to MassGen tool call format
                         tool_call = {
                             "id": f"call_{hash(match) % 10000}",  # Generate a unique ID
                             "type": "function",
                             "function": {
                                 "name": parsed["tool_name"],
-                                "arguments": json.dumps(parsed["arguments"]),
+                                "arguments": json.dumps(parsed.get("arguments", {})),
                             },
                         }
                         return [tool_call]
                 except json.JSONDecodeError as e:
+                    logger.warning(f"[AzureOpenAI] Markdown JSON parse failed: {str(e)}")
                     log_backend_activity(
                         self.get_provider_name(),
                         "Markdown JSON parse failed",
@@ -515,6 +550,9 @@ class AzureOpenAIBackend(LLMBackend):
                         potential_json_blocks.append(content[current_block_start:i+1])
                         current_block_start = -1
 
+            if potential_json_blocks:
+                logger.info(f"[AzureOpenAI] Found {len(potential_json_blocks)} potential JSON blocks")
+
             # Try to parse each potential JSON block
             for block in reversed(potential_json_blocks):  # Process from end to get latest
                 if '"tool_name"' not in block:
@@ -523,6 +561,7 @@ class AzureOpenAIBackend(LLMBackend):
                 try:
                     parsed = json.loads(block.strip())
                     if isinstance(parsed, dict) and "tool_name" in parsed:
+                        logger.info(f"[AzureOpenAI] Successfully extracted tool from JSON block: {parsed.get('tool_name')}")
                         # Convert to MassGen tool call format
                         tool_call = {
                             "id": f"call_{hash(block) % 10000}",
@@ -534,6 +573,7 @@ class AzureOpenAIBackend(LLMBackend):
                         }
                         return [tool_call]
                 except json.JSONDecodeError as e:
+                    logger.warning(f"[AzureOpenAI] JSON block parse failed: {str(e)}, block: {block[:100]}")
                     log_backend_activity(
                         self.get_provider_name(),
                         "JSON block parse failed",
@@ -548,6 +588,7 @@ class AzureOpenAIBackend(LLMBackend):
             azure_matches = re.findall(azure_content_pattern, content, re.DOTALL)
 
             if azure_matches:
+                logger.info(f"[AzureOpenAI] Found {len(azure_matches)} Azure-style content blocks")
                 # Take the last content match and convert to new_answer tool call
                 answer_content = azure_matches[-1]
                 tool_call = {
@@ -560,7 +601,55 @@ class AzureOpenAIBackend(LLMBackend):
                 }
                 return [tool_call]
 
+            # Strategy 4: LOOSE TEXT PATTERN MATCHING
+            # Look for common phrases that indicate tool usage even without proper JSON
+            # This is a last resort for models that struggle with JSON formatting
+
+            # Pattern 1: Look for "new_answer" with quoted content
+            new_answer_pattern = r'new_answer.*?["\'](.+?)["\']'
+            new_answer_matches = re.findall(new_answer_pattern, content, re.DOTALL | re.IGNORECASE)
+            if new_answer_matches:
+                logger.info(f"[AzureOpenAI] Found new_answer via loose pattern matching")
+                answer_content = new_answer_matches[-1].strip()
+                tool_call = {
+                    "id": f"call_{hash(answer_content) % 10000}",
+                    "type": "function",
+                    "function": {
+                        "name": "new_answer",
+                        "arguments": json.dumps({"content": answer_content}),
+                    },
+                }
+                return [tool_call]
+
+            # Pattern 2: Look for "vote" with agent_id
+            vote_pattern = r'vote.*?agent[_\s]*id["\'\s:]*(["\']?agent\d+["\']?)'
+            vote_matches = re.findall(vote_pattern, content, re.IGNORECASE)
+            if vote_matches:
+                logger.info(f"[AzureOpenAI] Found vote via loose pattern matching")
+                agent_id = vote_matches[-1].strip('"\' ')
+                # Try to extract reason
+                reason_pattern = r'reason["\'\s:]*(["\'](.+?)["\']|([^\n,}]+))'
+                reason_matches = re.findall(reason_pattern, content, re.DOTALL | re.IGNORECASE)
+                reason = ""
+                if reason_matches:
+                    # Take the first non-empty group
+                    for match in reason_matches:
+                        reason = match[1] if match[1] else match[2]
+                        if reason:
+                            break
+                tool_call = {
+                    "id": f"call_{hash(content) % 10000}",
+                    "type": "function",
+                    "function": {
+                        "name": "vote",
+                        "arguments": json.dumps({"agent_id": agent_id, "reason": reason.strip()}),
+                    },
+                }
+                return [tool_call]
+
             # No tool calls found
+            logger.warning(f"[AzureOpenAI] No workflow tool calls extracted from content (length={len(content)})")
+            logger.warning(f"[AzureOpenAI] Content sample: {content[:500]}")
             log_backend_activity(
                 self.get_provider_name(),
                 "No workflow tool calls extracted",
@@ -571,6 +660,7 @@ class AzureOpenAIBackend(LLMBackend):
         except Exception as e:
             import traceback
             error_details = traceback.format_exc()
+            logger.error(f"[AzureOpenAI] Tool extraction failed with exception: {str(e)}")
             log_backend_activity(
                 self.get_provider_name(),
                 "Tool extraction failed with exception",
