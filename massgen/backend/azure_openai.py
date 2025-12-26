@@ -601,7 +601,41 @@ class AzureOpenAIBackend(LLMBackend):
                 }
                 return [tool_call]
 
-            # Strategy 4: LOOSE TEXT PATTERN MATCHING
+            # Strategy 4: DIRECT ARGUMENTS WITHOUT TOOL_NAME WRAPPER
+            # Some models output just the arguments: {"agent_id":"agent1","reason":"..."}
+            # or {"content":"..."} without the tool_name wrapper
+            for block in reversed(potential_json_blocks):
+                try:
+                    parsed = json.loads(block.strip())
+                    if isinstance(parsed, dict):
+                        # Check if it's a vote (has agent_id and reason)
+                        if "agent_id" in parsed and "reason" in parsed:
+                            logger.info(f"[AzureOpenAI] Found vote arguments without tool_name wrapper")
+                            tool_call = {
+                                "id": f"call_{hash(block) % 10000}",
+                                "type": "function",
+                                "function": {
+                                    "name": "vote",
+                                    "arguments": json.dumps(parsed),
+                                },
+                            }
+                            return [tool_call]
+                        # Check if it's a new_answer (has content but not agent_id)
+                        elif "content" in parsed and "agent_id" not in parsed:
+                            logger.info(f"[AzureOpenAI] Found new_answer arguments without tool_name wrapper")
+                            tool_call = {
+                                "id": f"call_{hash(block) % 10000}",
+                                "type": "function",
+                                "function": {
+                                    "name": "new_answer",
+                                    "arguments": json.dumps(parsed),
+                                },
+                            }
+                            return [tool_call]
+                except (json.JSONDecodeError, AttributeError):
+                    continue
+
+            # Strategy 5: LOOSE TEXT PATTERN MATCHING
             # Look for common phrases that indicate tool usage even without proper JSON
             # This is a last resort for models that struggle with JSON formatting
 
