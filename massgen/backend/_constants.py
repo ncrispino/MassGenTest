@@ -15,4 +15,3 @@ OPENROUTER_DEFAULT_WEB_ENGINE = "exa"
 
 # Default maximum number of search results to return
 OPENROUTER_DEFAULT_WEB_MAX_RESULTS = 1
-
