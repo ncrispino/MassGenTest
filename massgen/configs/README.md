@@ -242,11 +242,11 @@ Most configurations use environment variables for API keys:so
 pip install --upgrade massgen
 
 # OpenRouter web search - search the web with any OpenRouter model
-massgen --config massgen/configs/basic/single/single_openrouter_web_search.yaml \
+uv run massgen --config massgen/configs/basic/single/single_openrouter_web_search.yaml \
   "What are the latest developments in quantum computing?"
 
 # Persona diversity - automatic diverse personas for multi-agent collaboration
-massgen --config massgen/configs/basic/multi/persona_diversity_example.yaml \
+uv run massgen --config massgen/configs/basic/multi/persona_diversity_example.yaml \
   "Create a website about Bob Dylan"
 ```
 
