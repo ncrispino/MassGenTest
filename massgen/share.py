@@ -3,14 +3,22 @@
 
 This module provides functionality to upload MassGen session logs to GitHub Gist
 for easy sharing. Viewers can access shared sessions without authentication.
+
+Enhanced to support:
+- Multi-turn session sharing (all turns in chronological order)
+- Error state sharing (incomplete/failed sessions)
+- Workspace artifact inclusion with size limits and interactive prompts
 """
 
 import fnmatch
 import json
+import re
 import subprocess
 import tempfile
+from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from rich.console import Console
 
@@ -22,6 +30,87 @@ from .filesystem_manager._constants import (
     SHARE_EXCLUDE_EXTENSIONS as EXCLUDE_EXTENSIONS,
 )
 from .filesystem_manager._constants import WORKSPACE_INCLUDE_EXTENSIONS
+
+# =============================================================================
+# Data Classes for Multi-Turn Sharing
+# =============================================================================
+
+
+@dataclass
+class TurnInfo:
+    """Metadata for a single turn in a session.
+
+    Attributes:
+        turn_number: 1-indexed turn number
+        attempt_number: Attempt within turn (usually 1)
+        attempt_path: Absolute path to the attempt directory
+        status: Turn status - "complete", "error", or "timeout"
+        question: The question/prompt for this turn (if available)
+        winner: The winning agent ID (if applicable)
+    """
+
+    turn_number: int
+    attempt_number: int
+    attempt_path: Path
+    status: str = "complete"
+    question: Optional[str] = None
+    winner: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for JSON serialization."""
+        return {
+            "turn_number": self.turn_number,
+            "attempt_number": self.attempt_number,
+            "status": self.status,
+            "question": self.question,
+            "winner": self.winner,
+        }
+
+
+@dataclass
+class WorkspaceWarning:
+    """Warning about workspace size limit exceedance.
+
+    Attributes:
+        agent_id: The agent whose workspace exceeded the limit
+        turn_number: Turn number where this workspace exists
+        actual_size: Actual workspace size in bytes
+        limit: The configured limit in bytes
+        file_count: Number of files in the workspace
+        files: List of (path, size) tuples for files in the workspace
+    """
+
+    agent_id: str
+    turn_number: int
+    actual_size: int
+    limit: int
+    file_count: int
+    files: List[Tuple[str, int]] = field(default_factory=list)
+
+
+class WorkspaceAction(Enum):
+    """Actions user can take when workspace limit is exceeded."""
+
+    INCREASE_LIMIT = "increase_limit"
+    EXCLUDE_WORKSPACE = "exclude_workspace"
+    SELECT_FILES = "select_files"
+    CANCEL = "cancel"
+
+
+@dataclass
+class WorkspaceDecision:
+    """User's decision about how to handle workspace limit exceedance.
+
+    Attributes:
+        action: The action to take
+        new_limit: New limit in bytes (if action is INCREASE_LIMIT)
+        selected_files: List of file paths to include (if action is SELECT_FILES)
+    """
+
+    action: WorkspaceAction
+    new_limit: Optional[int] = None
+    selected_files: Optional[List[str]] = None
+
 
 # Priority files to always include (most important first)
 PRIORITY_FILES = [
@@ -161,6 +250,580 @@ def collect_files(log_dir: Path) -> Tuple[Dict[str, str], List[Tuple[str, int]]]
     return files, skipped
 
 
+# =============================================================================
+# Multi-Turn Session Sharing Functions
+# =============================================================================
+
+
+def collect_files_multi_turn(
+    session_root: Path,
+    turns: List["TurnInfo"],
+    include_workspace: bool = True,
+    workspace_limit: int = 500_000,
+) -> Tuple[Dict[str, str], List[Tuple[str, int]], List[WorkspaceWarning]]:
+    """Collect files from all turns in a multi-turn session.
+
+    Unlike collect_files() which only collects from a single attempt directory,
+    this function iterates over all turns and prefixes files with turn/attempt info.
+
+    Args:
+        session_root: Path to the session root directory
+        turns: List of TurnInfo objects for turns to include
+        include_workspace: Whether to include workspace artifacts
+        workspace_limit: Maximum workspace size per agent in bytes
+
+    Returns:
+        Tuple of (files dict, skipped list, workspace warnings)
+        - files: Dict mapping flattened filenames to content
+        - skipped: List of (rel_path, size) tuples for skipped files
+        - warnings: List of WorkspaceWarning for limit exceedances
+    """
+    files: Dict[str, str] = {}
+    skipped: List[Tuple[str, int]] = []
+    warnings: List[WorkspaceWarning] = []
+    total_size = 0
+
+    for turn in turns:
+        turn_prefix = f"turn_{turn.turn_number}__attempt_{turn.attempt_number}__"
+        attempt_dir = turn.attempt_path
+
+        # Collect files from this turn's attempt directory
+        candidates = []
+        for file_path in attempt_dir.rglob("*"):
+            if not file_path.is_file():
+                continue
+
+            rel_path = str(file_path.relative_to(attempt_dir))
+
+            # Skip nested subagent log directories (creates very long paths)
+            if ".massgen" in rel_path or "massgen_logs" in rel_path:
+                continue
+
+            # Check exclusion patterns
+            if should_exclude(file_path, rel_path):
+                continue
+
+            try:
+                size = file_path.stat().st_size
+                if size == 0:
+                    continue
+                if size > MAX_FILE_SIZE:
+                    skipped.append((f"{turn_prefix}{rel_path}", size))
+                    continue
+                candidates.append((rel_path, file_path, size))
+            except OSError:
+                continue
+
+        # Sort: priority files first, then by size
+        def sort_key(item: Tuple[str, Path, int]) -> Tuple[int, int, int]:
+            rel_path, _, size = item
+            filename = Path(rel_path).name
+            if filename in PRIORITY_FILES:
+                return (0, PRIORITY_FILES.index(filename), size)
+            return (1, 0, size)
+
+        candidates.sort(key=sort_key)
+
+        # Add files within limits
+        for rel_path, file_path, size in candidates:
+            if len(files) >= MAX_FILES:
+                skipped.append((f"{turn_prefix}{rel_path}", size))
+                continue
+            if total_size + size > MAX_TOTAL_SIZE:
+                skipped.append((f"{turn_prefix}{rel_path}", size))
+                continue
+
+            try:
+                content = file_path.read_text(errors="replace")
+                if not content.strip():
+                    continue
+                # Flatten path with turn prefix
+                flat_name = turn_prefix + rel_path.replace("/", "__").replace("\\", "__")
+                files[flat_name] = content
+                total_size += size
+            except (OSError, UnicodeDecodeError):
+                skipped.append((f"{turn_prefix}{rel_path}", size))
+                continue
+
+    return files, skipped, warnings
+
+
+def collect_workspace_files(
+    session_root: Path,
+    turns: List["TurnInfo"],
+    limit_per_agent: int = 500_000,
+) -> Dict[str, Tuple[str, int]]:
+    """Collect workspace files from all turns with size tracking.
+
+    Workspace files are found in patterns like:
+    - turn_N/attempt_N/agent_id/timestamp/workspace/*
+    - turn_N/attempt_N/final/agent_id/workspace/*
+
+    Args:
+        session_root: Path to the session root directory
+        turns: List of TurnInfo objects
+        limit_per_agent: Maximum workspace size per agent in bytes
+
+    Returns:
+        Dict mapping flattened file paths to (content, size) tuples
+    """
+    workspace_files: Dict[str, Tuple[str, int]] = {}
+
+    for turn in turns:
+        attempt_dir = turn.attempt_path
+
+        # Find workspace directories
+        for workspace_dir in attempt_dir.rglob("workspace"):
+            if not workspace_dir.is_dir():
+                continue
+
+            # Get agent ID from path (workspace is under agent_id/timestamp/workspace or final/agent_id/workspace)
+            rel_to_attempt = workspace_dir.relative_to(attempt_dir)
+            parts = rel_to_attempt.parts
+            if len(parts) >= 2:
+                _agent_id = parts[1] if parts[0] == "final" else parts[0]  # noqa: F841 - reserved for future per-agent tracking
+            else:
+                pass
+
+            # Track size per agent for this turn
+            agent_size = 0
+
+            for file_path in workspace_dir.rglob("*"):
+                if not file_path.is_file():
+                    continue
+
+                # Skip nested subagent log directories (very long paths)
+                rel_to_workspace = str(file_path.relative_to(workspace_dir))
+                if ".massgen" in rel_to_workspace or "massgen_logs" in rel_to_workspace:
+                    continue
+
+                # Skip non-allowed extensions
+                suffix = file_path.suffix.lower()
+                if suffix not in WORKSPACE_INCLUDE_EXTENSIONS:
+                    continue
+
+                try:
+                    size = file_path.stat().st_size
+                    if size == 0:
+                        continue
+
+                    # Check per-agent limit
+                    if agent_size + size > limit_per_agent:
+                        continue
+
+                    content = file_path.read_text(errors="replace")
+                    if not content.strip():
+                        continue
+
+                    # Create flattened path
+                    rel_path = file_path.relative_to(attempt_dir)
+                    turn_prefix = f"turn_{turn.turn_number}__attempt_{turn.attempt_number}__"
+                    flat_name = turn_prefix + str(rel_path).replace("/", "__").replace("\\", "__")
+
+                    workspace_files[flat_name] = (content, size)
+                    agent_size += size
+
+                except (OSError, UnicodeDecodeError):
+                    continue
+
+    return workspace_files
+
+
+def detect_sensitive_patterns(workspace_dir: Path) -> List[str]:
+    """Detect files that may contain sensitive data.
+
+    Checks for:
+    - .env files
+    - Files containing patterns like api_key, secret, password
+    - Credential files (credentials.json, etc.)
+
+    Args:
+        workspace_dir: Path to workspace directory to scan
+
+    Returns:
+        List of relative file paths that may contain sensitive data
+    """
+    sensitive_files: List[str] = []
+
+    # Sensitive filename patterns
+    sensitive_names = {
+        ".env",
+        ".env.local",
+        ".env.production",
+        "credentials.json",
+        "secrets.json",
+        "secrets.yaml",
+        ".npmrc",
+        ".pypirc",
+    }
+
+    # Patterns to search in file content
+    sensitive_patterns = [
+        re.compile(r'["\']?api[_-]?key["\']?\s*[:=]', re.IGNORECASE),
+        re.compile(r'["\']?secret["\']?\s*[:=]', re.IGNORECASE),
+        re.compile(r'["\']?password["\']?\s*[:=]', re.IGNORECASE),
+        re.compile(r'["\']?token["\']?\s*[:=]', re.IGNORECASE),
+        re.compile(r"sk-[a-zA-Z0-9]{20,}"),  # OpenAI-style API keys
+        re.compile(r"AKIA[0-9A-Z]{16}"),  # AWS access key IDs
+    ]
+
+    if not workspace_dir.exists():
+        return sensitive_files
+
+    for file_path in workspace_dir.rglob("*"):
+        if not file_path.is_file():
+            continue
+
+        rel_path = str(file_path.relative_to(workspace_dir))
+
+        # Check filename
+        if file_path.name.lower() in sensitive_names:
+            sensitive_files.append(rel_path)
+            continue
+
+        # Check content of text files
+        suffix = file_path.suffix.lower()
+        if suffix in {".json", ".yaml", ".yml", ".txt", ".env", ".ini", ".conf", ".config"}:
+            try:
+                content = file_path.read_text(errors="ignore")
+                for pattern in sensitive_patterns:
+                    if pattern.search(content):
+                        sensitive_files.append(rel_path)
+                        break
+            except (OSError, UnicodeDecodeError):
+                continue
+
+    return sensitive_files
+
+
+def prompt_workspace_limit_exceeded(
+    agent_id: str,
+    actual_size: int,
+    limit: int,
+    files: List[Tuple[str, int]],
+) -> WorkspaceDecision:
+    """Prompt user when workspace exceeds size limit.
+
+    Args:
+        agent_id: The agent whose workspace exceeded the limit
+        actual_size: Actual workspace size in bytes
+        limit: The configured limit in bytes
+        files: List of (filename, size) tuples
+
+    Returns:
+        WorkspaceDecision with the user's choice
+    """
+    import questionary
+
+    def format_size(size_bytes: int) -> str:
+        if size_bytes >= 1024 * 1024:
+            return f"{size_bytes / (1024 * 1024):.1f}MB"
+        elif size_bytes >= 1024:
+            return f"{size_bytes / 1024:.1f}KB"
+        return f"{size_bytes}B"
+
+    print(f"\n⚠️  Workspace for '{agent_id}' exceeds limit:")
+    print(f"   Size: {format_size(actual_size)} (limit: {format_size(limit)})")
+    print(f"   Files: {len(files)}")
+
+    choices = [
+        questionary.Choice("Increase limit to include all files", value="increase"),
+        questionary.Choice("Exclude this workspace from share", value="exclude"),
+        questionary.Choice("Select specific files to include", value="select"),
+        questionary.Choice("Cancel export", value="cancel"),
+    ]
+
+    answer = questionary.select(
+        "What would you like to do?",
+        choices=choices,
+    ).ask()
+
+    if answer == "increase":
+        new_limit = questionary.text(
+            "Enter new limit (e.g., '1MB', '2MB'):",
+            default=f"{int(actual_size * 1.1 / 1024)}KB",
+        ).ask()
+        try:
+            new_limit_bytes = parse_size(new_limit) if new_limit else actual_size * 2
+            return WorkspaceDecision(action=WorkspaceAction.INCREASE_LIMIT, new_limit=new_limit_bytes)
+        except ValueError:
+            return WorkspaceDecision(action=WorkspaceAction.INCREASE_LIMIT, new_limit=actual_size * 2)
+    elif answer == "exclude":
+        return WorkspaceDecision(action=WorkspaceAction.EXCLUDE_WORKSPACE)
+    elif answer == "select":
+        selected = prompt_file_selection(files, limit)
+        return WorkspaceDecision(action=WorkspaceAction.SELECT_FILES, selected_files=selected)
+    else:
+        return WorkspaceDecision(action=WorkspaceAction.CANCEL)
+
+
+def prompt_sensitive_data_warning(sensitive_files: List[str]) -> bool:
+    """Prompt user about detected sensitive data.
+
+    Args:
+        sensitive_files: List of file paths that may contain sensitive data
+
+    Returns:
+        True to proceed with sharing, False to cancel
+    """
+    import questionary
+
+    print("\n⚠️  Potentially sensitive files detected:")
+    for f in sensitive_files[:5]:
+        print(f"   - {f}")
+    if len(sensitive_files) > 5:
+        print(f"   ... and {len(sensitive_files) - 5} more")
+
+    answer = questionary.confirm(
+        "These files may contain API keys, passwords, or other secrets. Continue sharing?",
+        default=False,
+    ).ask()
+
+    return answer if answer is not None else False
+
+
+def prompt_large_session_warning(file_count: int, total_size: int) -> bool:
+    """Prompt user about sharing a large session.
+
+    Args:
+        file_count: Number of files to share
+        total_size: Total size in bytes
+
+    Returns:
+        True to proceed with sharing, False to cancel
+    """
+    import questionary
+
+    def format_size(size_bytes: int) -> str:
+        if size_bytes >= 1024 * 1024:
+            return f"{size_bytes / (1024 * 1024):.1f}MB"
+        elif size_bytes >= 1024:
+            return f"{size_bytes / 1024:.1f}KB"
+        return f"{size_bytes}B"
+
+    print(f"\n📦 Large session detected: {file_count} files ({format_size(total_size)})")
+
+    answer = questionary.confirm(
+        "This session is quite large. Continue sharing?",
+        default=True,
+    ).ask()
+
+    return answer if answer is not None else True
+
+
+def prompt_file_selection(files: List[Tuple[str, int]], limit: int) -> List[str]:
+    """Prompt user to select specific files to include.
+
+    Args:
+        files: List of (filename, size) tuples
+        limit: Size limit in bytes
+
+    Returns:
+        List of selected file paths
+    """
+    import questionary
+
+    def format_size(size_bytes: int) -> str:
+        if size_bytes >= 1024 * 1024:
+            return f"{size_bytes / (1024 * 1024):.1f}MB"
+        elif size_bytes >= 1024:
+            return f"{size_bytes / 1024:.1f}KB"
+        return f"{size_bytes}B"
+
+    # Sort by size descending
+    sorted_files = sorted(files, key=lambda x: x[1], reverse=True)
+
+    choices = [
+        questionary.Choice(
+            f"{name} ({format_size(size)})",
+            value=name,
+            checked=size <= limit // len(files) if files else False,
+        )
+        for name, size in sorted_files[:20]  # Limit to 20 files for readability
+    ]
+
+    if len(sorted_files) > 20:
+        print(f"(Showing top 20 of {len(sorted_files)} files by size)")
+
+    selected = questionary.checkbox(
+        "Select files to include:",
+        choices=choices,
+    ).ask()
+
+    return selected if selected else []
+
+
+def determine_session_status(turns: List["TurnInfo"]) -> str:
+    """Determine overall session status from turns.
+
+    Args:
+        turns: List of TurnInfo objects
+
+    Returns:
+        Session status: "complete", "error", or "interrupted"
+    """
+    if not turns:
+        return "interrupted"
+
+    # Check the last turn's status
+    last_turn = turns[-1]
+    if last_turn.status == "error":
+        return "error"
+    if last_turn.status == "timeout":
+        return "error"
+    if last_turn.status == "interrupted":
+        return "interrupted"
+
+    # Check if any turn had errors
+    for turn in turns:
+        if turn.status == "error" or turn.status == "timeout":
+            return "error"
+
+    return "complete"
+
+
+def extract_error_info(turn_path: Path) -> Optional[Dict[str, Any]]:
+    """Extract error details from a turn's status.json.
+
+    Args:
+        turn_path: Path to the turn's attempt directory
+
+    Returns:
+        Error info dict with type, message, agent_id, or None if no error
+    """
+    status_file = turn_path / "status.json"
+    if not status_file.exists():
+        return None
+
+    try:
+        status_data = json.loads(status_file.read_text())
+
+        # Check rounds for errors
+        rounds = status_data.get("rounds", {}).get("by_outcome", {})
+        if rounds.get("error", 0) == 0 and rounds.get("timeout", 0) == 0:
+            return None
+
+        # Look for agent-specific errors
+        agents = status_data.get("agents", {})
+        for agent_id, agent_data in agents.items():
+            if "error" in agent_data:
+                error = agent_data["error"]
+                return {
+                    "type": error.get("type", "unknown"),
+                    "message": error.get("message", "Unknown error"),
+                    "timestamp": error.get("timestamp"),
+                    "agent_id": agent_id,
+                }
+
+        # Generic error if no agent-specific error found
+        if rounds.get("timeout", 0) > 0:
+            return {"type": "timeout", "message": "Session timed out", "agent_id": None}
+
+        return {"type": "unknown", "message": "Session ended with error", "agent_id": None}
+
+    except (json.JSONDecodeError, KeyError):
+        return None
+
+
+def create_session_manifest(
+    session_root: Path,
+    turns: List["TurnInfo"],
+    error_info: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Create _session_manifest.json content for multi-turn sessions.
+
+    Args:
+        session_root: Path to the session root directory
+        turns: List of TurnInfo objects
+        error_info: Optional error details if session failed
+
+    Returns:
+        Manifest dict to be serialized as JSON
+    """
+    status = determine_session_status(turns)
+
+    # Aggregate metrics from all turns
+    total_cost = 0.0
+    total_input_tokens = 0
+    total_output_tokens = 0
+    question = None
+    winner = None
+
+    for turn in turns:
+        # Get first turn's question as session question
+        if question is None and turn.question:
+            question = turn.question
+
+        # Get last successful turn's winner
+        if turn.winner:
+            winner = turn.winner
+
+        # Try to load metrics from each turn
+        metrics_file = turn.attempt_path / "metrics_summary.json"
+        if metrics_file.exists():
+            try:
+                metrics = json.loads(metrics_file.read_text())
+                costs = metrics.get("costs", {})
+                total_cost += costs.get("total_estimated_cost", 0.0)
+                total_input_tokens += costs.get("total_input_tokens", 0)
+                total_output_tokens += costs.get("total_output_tokens", 0)
+            except (json.JSONDecodeError, KeyError):
+                pass
+
+    manifest = {
+        "version": "2.0",
+        "session_id": session_root.name,
+        "turn_count": len(turns),
+        "status": status,
+        "question": question,
+        "winner": winner,
+        "total_cost": total_cost,
+        "total_tokens": {
+            "input": total_input_tokens,
+            "output": total_output_tokens,
+        },
+        "turns": [turn.to_dict() for turn in turns],
+    }
+
+    if error_info:
+        manifest["error"] = error_info
+
+    return manifest
+
+
+def parse_size(size_str: str) -> int:
+    """Parse a size string like '500KB' or '1MB' into bytes.
+
+    Args:
+        size_str: Size string (e.g., "500KB", "1MB", "1000")
+
+    Returns:
+        Size in bytes
+
+    Raises:
+        ValueError: If the size string is invalid
+    """
+    size_str = size_str.strip().upper()
+
+    # Try plain number first
+    if size_str.isdigit():
+        return int(size_str)
+
+    # Try KB/MB suffixes
+    match = re.match(r"^(\d+)\s*(KB|MB|GB)$", size_str)
+    if match:
+        value = int(match.group(1))
+        unit = match.group(2)
+        if unit == "KB":
+            return value * 1024
+        elif unit == "MB":
+            return value * 1024 * 1024
+        elif unit == "GB":
+            return value * 1024 * 1024 * 1024
+
+    raise ValueError(f'Invalid size string: "{size_str}". Use format like "500KB" or "1MB".')
+
+
 def create_gist(files: Dict[str, str], description: str) -> str:
     """Create a secret gist and return the gist ID.
 
@@ -208,6 +871,101 @@ def create_gist(files: Dict[str, str], description: str) -> str:
             raise ShareError(
                 "GitHub CLI (gh) not found.\n" "Install it from https://cli.github.com/",
             )
+
+
+def share_session_multi_turn(
+    session_root: Path,
+    turns: List["TurnInfo"],
+    console: Optional[Console] = None,
+    include_workspace: bool = True,
+    workspace_limit: int = 500_000,
+) -> str:
+    """Upload multi-turn session to GitHub Gist and return viewer URL.
+
+    Args:
+        session_root: Path to the session root directory
+        turns: List of TurnInfo objects for turns to include
+        console: Optional console for status messages
+        include_workspace: Whether to include workspace artifacts
+        workspace_limit: Maximum workspace size per agent in bytes
+
+    Returns:
+        Viewer URL
+
+    Raises:
+        ShareError: If sharing fails
+    """
+    if console:
+        console.print(f"[bold]Session:[/bold] {session_root.name}")
+        console.print(f"[bold]Turns:[/bold] {len(turns)}")
+        console.print()
+
+    # Show turn-by-turn progress
+    if console:
+        for turn in turns:
+            status_icon = "✓" if turn.status == "complete" else "✗" if turn.status == "error" else "○"
+            status_color = "green" if turn.status == "complete" else "red" if turn.status == "error" else "yellow"
+            question_preview = ""
+            if turn.question:
+                q = turn.question.replace("\n", " ").strip()
+                question_preview = f" - {q[:40]}..." if len(q) > 40 else f" - {q}"
+            console.print(
+                f"  [{status_color}]{status_icon}[/{status_color}] " f"Turn {turn.turn_number}{question_preview}",
+            )
+        console.print()
+
+    if console:
+        console.print("[dim]Collecting files...[/dim]")
+
+    files, skipped, warnings = collect_files_multi_turn(
+        session_root,
+        turns,
+        include_workspace=include_workspace,
+        workspace_limit=workspace_limit,
+    )
+
+    if not files:
+        raise ShareError("No files to upload")
+
+    # Add session manifest
+    status = determine_session_status(turns)
+    error_info = None
+    if status == "error" and turns:
+        error_info = extract_error_info(turns[-1].attempt_path)
+
+    manifest = create_session_manifest(session_root, turns, error_info)
+    files["_session_manifest.json"] = json.dumps(manifest, indent=2)
+
+    total_size = sum(len(c) for c in files.values())
+
+    # Warn if files were skipped
+    if skipped and console:
+        console.print(f"[yellow]Skipped {len(skipped)} files (too large or over limit):[/yellow]")
+        skipped_sorted = sorted(skipped, key=lambda x: x[1], reverse=True)
+        for path, size in skipped_sorted[:5]:
+            console.print(f"  [dim]- {path} ({size:,} bytes)[/dim]")
+        if len(skipped_sorted) > 5:
+            console.print(f"  [dim]... and {len(skipped_sorted) - 5} more[/dim]")
+        console.print()
+
+    if console:
+        console.print(f"[dim]Uploading {len(files)} files ({total_size:,} bytes)...[/dim]")
+
+    # Create description from manifest
+    description = "MassGen Session"
+    if manifest.get("question"):
+        q = manifest["question"].replace("\n", " ").strip()
+        if len(q) > 50:
+            q = q[:47] + "..."
+        description = f"MassGen: {q}"
+    if status == "error":
+        description = f"[ERROR] {description}"
+    if len(turns) > 1:
+        description = f"{description} ({len(turns)} turns)"
+
+    gist_id = create_gist(files, description)
+
+    return f"{VIEWER_URL_BASE}?gist={gist_id}"
 
 
 def share_session(log_dir: Path | str, console: Optional[Console] = None) -> str:

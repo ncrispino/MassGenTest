@@ -14,6 +14,8 @@ from typing import Any, AsyncGenerator, Callable, Dict, Generator, List, Optiona
 from docstring_parser import parse
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
+from massgen.logger_config import logger
+
 from ._async_helpers import (
     wrap_as_async_generator,
     wrap_object_async,
@@ -219,6 +221,15 @@ class ToolManager:
         # Override description if provided
         if description:
             tool_schema["function"]["description"] = description
+
+        # Debug: log actual schema description
+        actual_desc = tool_schema["function"].get("description")
+        if actual_desc:
+            source = "yaml override" if description else "docstring"
+            truncated = actual_desc[:100] + "..." if len(actual_desc) > 100 else actual_desc
+            logger.debug(f"Tool '{tool_name}' schema description ({source}): {truncated}")
+        else:
+            logger.debug(f"Tool '{tool_name}' schema description: None (no docstring or yaml description)")
 
         # Extract context param names from decorator
         context_param_names = getattr(base_func, "__context_params__", set())
