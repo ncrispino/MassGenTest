@@ -458,6 +458,92 @@ See :doc:`../user_guide/sessions/memory` for user-facing documentation.
 
 Implementation: ``massgen/backend/_compression_utils.py``
 
+Streaming Buffer
+~~~~~~~~~~~~~~~~
+
+The ``StreamingBufferMixin`` captures streamed content during API calls, enabling
+compression recovery to preserve partial work when context limits are exceeded.
+
+**How it works:**
+
+1. As chunks stream from the API, content is accumulated in ``_streaming_buffer``
+2. If a context length error occurs mid-stream, the buffer contains partial work
+3. The buffer content is passed to compression, which summarizes it
+4. The summary is injected as an assistant message for retry
+
+**Buffer content flow:**
+
+.. code-block:: text
+
+   API Stream → buffer.add_content() → _streaming_buffer accumulates
+                                              ↓
+                              Context error detected
+                                              ↓
+                              buffer_content passed to compress_messages_for_recovery()
+                                              ↓
+                              Summarized into: "[Tool execution results]\n{buffer}"
+                                              ↓
+                              Injected as assistant message in compressed result
+
+**Backend Support:**
+
+.. list-table:: Streaming Buffer Support by Backend
+   :header-rows: 1
+   :widths: 30 20 50
+
+   * - Backend
+     - Buffer Support
+     - Notes
+   * - ``ChatCompletionsBackend``
+     - ✅ Yes
+     - Base for OpenAI-compatible APIs
+   * - ``ClaudeBackend``
+     - ✅ Yes
+     - Anthropic Messages API
+   * - ``GeminiBackend``
+     - ✅ Yes
+     - Google Gemini SDK
+   * - ``ResponseBackend``
+     - ✅ Yes
+     - OpenAI Responses API
+   * - ``GrokBackend``
+     - ✅ Yes
+     - Inherits from ChatCompletionsBackend
+   * - ``LMStudioBackend``
+     - ✅ Yes
+     - Inherits from ChatCompletionsBackend
+   * - ``InferenceBackend``
+     - ✅ Yes
+     - Inherits from ChatCompletionsBackend
+   * - ``AzureOpenAIBackend``
+     - ❌ No
+     - Extends LLMBackend directly
+   * - ``ClaudeCodeBackend``
+     - ❌ No
+     - Streaming handled internally
+   * - ``ExternalAgentBackend``
+     - ❌ No
+     - Wrapper for external agents
+
+**Implementation:**
+
+- ``massgen/backend/_streaming_buffer_mixin.py`` - Mixin class providing buffer methods
+- Buffer methods: ``_clear_streaming_buffer()``, ``_add_to_streaming_buffer()``
+- Buffer respects ``_compression_retry`` flag to avoid clearing during retry
+
+**Adding buffer support to a backend:**
+
+.. code-block:: python
+
+   from ._streaming_buffer_mixin import StreamingBufferMixin
+
+   class MyBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
+       # StreamingBufferMixin MUST come first in MRO
+       pass
+
+**Note:** The mixin must appear before other base classes in the inheritance list
+to ensure proper method resolution order (MRO).
+
 MCP Tool Result Optimization
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
