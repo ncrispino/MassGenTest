@@ -127,18 +127,22 @@ def get_session_turns(session_root: Path) -> List[TurnInfo]:
             try:
                 status_data = json.loads(status_file.read_text())
 
-                # Check for errors
-                rounds = status_data.get("rounds", {}).get("by_outcome", {})
-                if rounds.get("error", 0) > 0:
-                    status = "error"
-                elif rounds.get("timeout", 0) > 0:
-                    status = "timeout"
-
-                # Get question and winner
+                # Get question and winner first
                 meta = status_data.get("meta", {})
                 question = meta.get("question")
                 results = status_data.get("results", {})
                 winner = results.get("winner")
+
+                # Check for errors - but if there's a winner, the turn completed successfully
+                # (individual agent errors during coordination don't mean the turn failed)
+                if winner:
+                    status = "complete"
+                else:
+                    rounds = status_data.get("rounds", {}).get("by_outcome", {})
+                    if rounds.get("error", 0) > 0:
+                        status = "error"
+                    elif rounds.get("timeout", 0) > 0:
+                        status = "timeout"
 
             except (json.JSONDecodeError, KeyError):
                 pass
@@ -313,23 +317,46 @@ def export_command(args) -> int:
             - yes: Skip interactive prompts
             - dry_run: Show what would be shared without creating gist
             - verbose: Show detailed file listing
+            - json: Output result as JSON
 
     Returns:
         Exit code (0 for success, 1 for error)
     """
     from .share import ShareError, parse_size, share_session_multi_turn
 
-    console = Console()
+    # Check for JSON output mode
+    json_output = getattr(args, "json", False)
+    dry_run = getattr(args, "dry_run", False)
+    verbose = getattr(args, "verbose", False)
+
+    # For JSON output, suppress console output until the end
+    console = Console(quiet=json_output)
+
+    result_data = {
+        "success": False,
+        "error": None,
+        "url": None,
+        "session_root": None,
+        "turns": [],
+        "files": [],
+        "total_size": 0,
+    }
 
     try:
         # Resolve log directory to session root
         log_dir_arg = getattr(args, "log_dir", None)
         session_root = find_session_root(log_dir_arg)
+        result_data["session_root"] = str(session_root)
 
         # Get all turns in the session
         all_turns = get_session_turns(session_root)
         if not all_turns:
-            console.print("[red]Error:[/red] No turns found in session")
+            error_msg = "No turns found in session"
+            if json_output:
+                result_data["error"] = error_msg
+                print(json.dumps(result_data, indent=2))
+            else:
+                console.print(f"[red]Error:[/red] {error_msg}")
             return 1
 
         # Parse turn range
@@ -337,15 +364,36 @@ def export_command(args) -> int:
         try:
             turn_numbers = parse_turn_range(turns_arg, len(all_turns))
         except ValueError as e:
-            console.print(f"[red]Error:[/red] {e}")
+            if json_output:
+                result_data["error"] = str(e)
+                print(json.dumps(result_data, indent=2))
+            else:
+                console.print(f"[red]Error:[/red] {e}")
             return 1
 
         # Filter turns to requested range
         turns = [t for t in all_turns if t.turn_number in turn_numbers]
 
         if not turns:
-            console.print("[red]Error:[/red] No turns match the specified range")
+            error_msg = "No turns match the specified range"
+            if json_output:
+                result_data["error"] = error_msg
+                print(json.dumps(result_data, indent=2))
+            else:
+                console.print(f"[red]Error:[/red] {error_msg}")
             return 1
+
+        # Add turn info to result
+        result_data["turns"] = [
+            {
+                "turn_number": t.turn_number,
+                "attempt_number": t.attempt_number,
+                "status": t.status,
+                "question": t.question,
+                "winner": t.winner,
+            }
+            for t in turns
+        ]
 
         # Parse workspace options
         include_workspace = not getattr(args, "no_workspace", False)
@@ -353,11 +401,16 @@ def export_command(args) -> int:
         try:
             workspace_limit = parse_size(workspace_limit_str)
         except ValueError as e:
-            console.print(f"[red]Error:[/red] {e}")
+            if json_output:
+                result_data["error"] = str(e)
+                print(json.dumps(result_data, indent=2))
+            else:
+                console.print(f"[red]Error:[/red] {e}")
             return 1
 
-        console.print(f"[blue]Sharing session from: {session_root}[/blue]")
-        console.print()
+        if not json_output:
+            console.print(f"[blue]Sharing session from: {session_root}[/blue]")
+            console.print()
 
         try:
             url = share_session_multi_turn(
@@ -366,22 +419,51 @@ def export_command(args) -> int:
                 console=console,
                 include_workspace=include_workspace,
                 workspace_limit=workspace_limit,
+                dry_run=dry_run,
+                verbose=verbose,
             )
-            console.print()
-            console.print(f"[bold green]Share URL: {url}[/bold green]")
-            console.print()
-            console.print("[dim]Anyone with this link can view the session (no login required).[/dim]")
+
+            result_data["success"] = True
+            result_data["url"] = url
+
+            if json_output:
+                print(json.dumps(result_data, indent=2))
+            else:
+                console.print()
+                if dry_run:
+                    console.print("[yellow]Dry run complete - no gist was created[/yellow]")
+                else:
+                    console.print(f"[bold green]Share URL: {url}[/bold green]")
+                    console.print()
+                    console.print("[dim]Anyone with this link can view the session (no login required).[/dim]")
             return 0
         except ShareError as e:
-            console.print(f"[red]Error:[/red] {e}")
+            if json_output:
+                result_data["error"] = str(e)
+                print(json.dumps(result_data, indent=2))
+            else:
+                console.print(f"[red]Error:[/red] {e}")
             return 1
 
     except FileNotFoundError as e:
-        console.print(f"[red]Error:[/red] {e}")
+        if json_output:
+            result_data["error"] = str(e)
+            print(json.dumps(result_data, indent=2))
+        else:
+            console.print(f"[red]Error:[/red] {e}")
         return 1
     except json.JSONDecodeError as e:
-        console.print(f"[red]Error parsing JSON file:[/red] {e}")
+        error_msg = f"Error parsing JSON file: {e}"
+        if json_output:
+            result_data["error"] = error_msg
+            print(json.dumps(result_data, indent=2))
+        else:
+            console.print(f"[red]{error_msg}[/red]")
         return 1
     except Exception as e:
-        console.print(f"[red]Error:[/red] {e}")
+        if json_output:
+            result_data["error"] = str(e)
+            print(json.dumps(result_data, indent=2))
+        else:
+            console.print(f"[red]Error:[/red] {e}")
         return 1

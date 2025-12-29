@@ -5629,6 +5629,11 @@ def cli_main():
             action="store_true",
             help="Show detailed file listing",
         )
+        export_parser.add_argument(
+            "--json",
+            action="store_true",
+            help="Output result as JSON (useful for scripting)",
+        )
 
         export_args = export_parser.parse_args(sys.argv[2:])
         sys.exit(export_command(export_args))

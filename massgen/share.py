@@ -298,6 +298,9 @@ def collect_files_multi_turn(
             # Skip nested subagent log directories (creates very long paths)
             if ".massgen" in rel_path or "massgen_logs" in rel_path:
                 continue
+            # Skip subagent workspaces entirely - these are nested MassGen sessions
+            if "/subagents/" in rel_path or "subagents/" in rel_path:
+                continue
 
             # Check exclusion patterns
             if should_exclude(file_path, rel_path):
@@ -392,9 +395,12 @@ def collect_workspace_files(
                 if not file_path.is_file():
                     continue
 
-                # Skip nested subagent log directories (very long paths)
+                # Skip nested subagent directories and their log directories (very long paths)
                 rel_to_workspace = str(file_path.relative_to(workspace_dir))
                 if ".massgen" in rel_to_workspace or "massgen_logs" in rel_to_workspace:
+                    continue
+                # Skip subagent workspaces entirely - these are nested MassGen sessions
+                if "subagents/" in rel_to_workspace or "/subagents/" in rel_to_workspace:
                     continue
 
                 # Skip non-allowed extensions
@@ -879,6 +885,8 @@ def share_session_multi_turn(
     console: Optional[Console] = None,
     include_workspace: bool = True,
     workspace_limit: int = 500_000,
+    dry_run: bool = False,
+    verbose: bool = False,
 ) -> str:
     """Upload multi-turn session to GitHub Gist and return viewer URL.
 
@@ -888,9 +896,11 @@ def share_session_multi_turn(
         console: Optional console for status messages
         include_workspace: Whether to include workspace artifacts
         workspace_limit: Maximum workspace size per agent in bytes
+        dry_run: If True, show what would be shared without creating gist
+        verbose: If True, show detailed file listing
 
     Returns:
-        Viewer URL
+        Viewer URL (or "DRY_RUN" if dry_run=True)
 
     Raises:
         ShareError: If sharing fails
@@ -898,6 +908,8 @@ def share_session_multi_turn(
     if console:
         console.print(f"[bold]Session:[/bold] {session_root.name}")
         console.print(f"[bold]Turns:[/bold] {len(turns)}")
+        if dry_run:
+            console.print("[yellow][DRY RUN][/yellow]")
         console.print()
 
     # Show turn-by-turn progress
@@ -938,6 +950,16 @@ def share_session_multi_turn(
 
     total_size = sum(len(c) for c in files.values())
 
+    # Verbose mode: show all files
+    if verbose and console:
+        console.print()
+        console.print("[bold]Files to share:[/bold]")
+        sorted_files = sorted(files.items(), key=lambda x: x[0])
+        for filename, content in sorted_files:
+            size = len(content)
+            console.print(f"  [dim]{filename}[/dim] ({size:,} bytes)")
+        console.print()
+
     # Warn if files were skipped
     if skipped and console:
         console.print(f"[yellow]Skipped {len(skipped)} files (too large or over limit):[/yellow]")
@@ -949,7 +971,10 @@ def share_session_multi_turn(
         console.print()
 
     if console:
-        console.print(f"[dim]Uploading {len(files)} files ({total_size:,} bytes)...[/dim]")
+        if dry_run:
+            console.print(f"[dim]Would upload {len(files)} files ({total_size:,} bytes)[/dim]")
+        else:
+            console.print(f"[dim]Uploading {len(files)} files ({total_size:,} bytes)...[/dim]")
 
     # Create description from manifest
     description = "MassGen Session"
@@ -962,6 +987,13 @@ def share_session_multi_turn(
         description = f"[ERROR] {description}"
     if len(turns) > 1:
         description = f"{description} ({len(turns)} turns)"
+
+    # Dry run: don't actually create the gist
+    if dry_run:
+        if console:
+            console.print()
+            console.print(f"[dim]Description: {description}[/dim]")
+        return "DRY_RUN"
 
     gist_id = create_gist(files, description)
 
