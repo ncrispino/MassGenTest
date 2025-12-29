@@ -310,9 +310,7 @@ class AzureOpenAIBackend(LLMBackend):
 
             # Yield any accumulated tool calls
             if accumulated_tool_calls:
-                tool_calls_list = [
-                    accumulated_tool_calls[i] for i in sorted(accumulated_tool_calls.keys())
-                ]
+                tool_calls_list = [accumulated_tool_calls[i] for i in sorted(accumulated_tool_calls.keys())]
                 log_stream_chunk(
                     "backend.azure_openai",
                     "tool_calls",
@@ -791,7 +789,10 @@ class AzureOpenAIBackend(LLMBackend):
                     # Handle tool calls - yield them as proper tool_calls chunks
                     if hasattr(delta, "tool_calls") and delta.tool_calls:
                         # Return tool_calls chunk - will be accumulated in stream_with_tools()
-                        return StreamChunk(type="tool_calls", tool_calls=delta.tool_calls)
+                        return StreamChunk(
+                            type="tool_calls",
+                            tool_calls=delta.tool_calls,
+                        )
 
                     # Handle finish reason
                     if hasattr(choice, "finish_reason") and choice.finish_reason:
