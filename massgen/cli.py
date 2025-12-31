@@ -2405,6 +2405,25 @@ async def run_single_question(
                     )
                     print(f"{'='*80}\n")
 
+                # Set log attempt BEFORE creating new UI so display gets correct path
+                # orchestrator.current_attempt was already incremented by _reset_for_restart()
+                from massgen.logger_config import set_log_attempt
+
+                set_log_attempt(orchestrator.current_attempt + 1)
+
+                # Save execution metadata for this attempt
+                save_execution_metadata(
+                    query=question,
+                    config_path=None,  # Not available in this scope
+                    config_content=None,  # Not available in this scope
+                    cli_args={
+                        "mode": "coordination_restart",
+                        "attempt": orchestrator.current_attempt + 1,
+                        "session_id": session_id,
+                        "restart_reason": orchestrator.restart_reason,
+                    },
+                )
+
                 # Reset all agent backends to ensure clean state for next attempt
                 for agent_id, agent in orchestrator.agents.items():
                     if hasattr(agent.backend, "reset_state"):

@@ -138,7 +138,8 @@ class TurnInfo:
 
     Attributes:
         turn_number: 1-indexed turn number
-        attempt_number: Attempt within turn (usually 1)
+        attempt_number: Attempt within turn (e.g., 2 if this is the second attempt)
+        total_attempts: Total number of attempts for this turn (e.g., 2 if there are 2 attempts)
         attempt_path: Absolute path to the attempt directory
         status: Turn status - "complete", "error", or "timeout"
         question: The question/prompt for this turn (if available)
@@ -147,6 +148,7 @@ class TurnInfo:
 
     turn_number: int
     attempt_number: int
+    total_attempts: int
     attempt_path: Path
     status: str = "complete"
     question: Optional[str] = None
@@ -157,6 +159,7 @@ class TurnInfo:
         return {
             "turn_number": self.turn_number,
             "attempt_number": self.attempt_number,
+            "total_attempts": self.total_attempts,
             "status": self.status,
             "question": self.question,
             "winner": self.winner,
@@ -386,6 +389,10 @@ def collect_files_multi_turn(
     total_size = 0
     # Track if we've already shown Docker warning (avoid duplicates)
     _docker_warning_shown = False
+    # Track if we've found execution_metadata.yaml (only exists in attempt_1)
+    _found_execution_metadata = False
+    # Track if we've found agent_outputs (only exists in attempt_1)
+    _found_agent_outputs = False
 
     for turn in turns:
         turn_prefix = f"turn_{turn.turn_number}__attempt_{turn.attempt_number}__"
@@ -481,9 +488,56 @@ def collect_files_multi_turn(
                         continue
                     files[flat_name] = content
                     total_size += size
+
+                    # Track if we found key session files
+                    if rel_path == "execution_metadata.yaml":
+                        _found_execution_metadata = True
+                    elif rel_path.startswith("agent_outputs/"):
+                        _found_agent_outputs = True
             except (OSError, UnicodeDecodeError):
                 skipped.append((f"{turn_prefix}{rel_path}", size))
                 continue
+
+    # Fallback: if execution_metadata.yaml or agent_outputs not found in exported turns,
+    # try to get them from turn_1/attempt_1 (where they are created)
+    if not _found_execution_metadata or not _found_agent_outputs:
+        fallback_attempt = session_root / "turn_1" / "attempt_1"
+        if fallback_attempt.exists():
+            # Use first turn's prefix for fallback files
+            fallback_prefix = "turn_1__attempt_1__"
+
+            # Fallback for execution_metadata.yaml
+            if not _found_execution_metadata:
+                exec_meta_path = fallback_attempt / "execution_metadata.yaml"
+                if exec_meta_path.exists():
+                    try:
+                        content = exec_meta_path.read_text(errors="replace")
+                        if content.strip():
+                            flat_name = fallback_prefix + "execution_metadata.yaml"
+                            files[flat_name] = content
+                            total_size += len(content)
+                    except (OSError, UnicodeDecodeError):
+                        pass
+
+            # Fallback for agent_outputs directory
+            if not _found_agent_outputs:
+                agent_outputs_dir = fallback_attempt / "agent_outputs"
+                if agent_outputs_dir.exists():
+                    for output_file in agent_outputs_dir.glob("*.txt"):
+                        # Skip _latest files, system_status, and Unknown agent files
+                        if "_latest" in output_file.name or output_file.name == "system_status.txt":
+                            continue
+                        if "Unknown" in output_file.name:
+                            continue
+                        try:
+                            content = output_file.read_text(errors="replace")
+                            if content.strip():
+                                rel_path = f"agent_outputs/{output_file.name}"
+                                flat_name = fallback_prefix + rel_path.replace("/", "__")
+                                files[flat_name] = content
+                                total_size += len(content)
+                        except (OSError, UnicodeDecodeError):
+                            pass
 
     return files, skipped, warnings
 
@@ -948,10 +1002,16 @@ def create_session_manifest(
             except (json.JSONDecodeError, KeyError):
                 pass
 
+    # Count unique turns (not attempts)
+    unique_turn_numbers = set(turn.turn_number for turn in turns)
+    # Count total attempts across all turns
+    total_attempts = len(turns)
+
     manifest = {
         "version": "2.0",
         "session_id": session_root.name,
-        "turn_count": len(turns),
+        "turn_count": len(unique_turn_numbers),
+        "attempt_count": total_attempts,
         "status": status,
         "question": question,
         "winner": winner,
@@ -1087,14 +1147,31 @@ def share_session_multi_turn(
     # Show turn-by-turn progress
     if console:
         for turn in turns:
-            status_icon = "✓" if turn.status == "complete" else "✗" if turn.status == "error" else "○"
-            status_color = "green" if turn.status == "complete" else "red" if turn.status == "error" else "yellow"
+            # Status icons and colors
+            if turn.status == "complete":
+                status_icon = "✓"
+                status_color = "green"
+            elif turn.status == "restarted":
+                status_icon = "↻"
+                status_color = "yellow"
+            elif turn.status == "error":
+                status_icon = "✗"
+                status_color = "red"
+            else:
+                status_icon = "○"
+                status_color = "yellow"
+
+            # Build label with attempt info if there are multiple attempts
+            attempt_label = ""
+            if turn.total_attempts > 1:
+                attempt_label = f" (attempt {turn.attempt_number}/{turn.total_attempts})"
+
             question_preview = ""
             if turn.question:
                 q = turn.question.replace("\n", " ").strip()
                 question_preview = f" - {q[:40]}..." if len(q) > 40 else f" - {q}"
             console.print(
-                f"  [{status_color}]{status_icon}[/{status_color}] " f"Turn {turn.turn_number}{question_preview}",
+                f"  [{status_color}]{status_icon}[/{status_color}] " f"Turn {turn.turn_number}{attempt_label}{question_preview}",
             )
         console.print()
 

@@ -87,14 +87,16 @@ def find_session_root(log_dir_arg: Optional[str] = None) -> Path:
     return logs[0]
 
 
-def get_session_turns(session_root: Path) -> List[TurnInfo]:
+def get_session_turns(session_root: Path, include_all_attempts: bool = True) -> List[TurnInfo]:
     """Get all turns in a session with metadata.
 
     Args:
         session_root: Path to the session root directory
+        include_all_attempts: If True, include all attempts for each turn.
+                              If False, only include the latest attempt per turn.
 
     Returns:
-        List of TurnInfo objects for each turn, sorted by turn number
+        List of TurnInfo objects for each turn/attempt, sorted by turn number then attempt number
     """
     turns: List[TurnInfo] = []
 
@@ -108,61 +110,70 @@ def get_session_turns(session_root: Path) -> List[TurnInfo]:
             continue
         turn_number = int(match.group(1))
 
-        # Find the latest attempt in this turn
+        # Find all attempts in this turn
         attempts = sorted(turn_dir.glob("attempt_*"))
         if not attempts:
             continue
 
-        attempt_dir = attempts[-1]  # Use latest attempt
-        attempt_match = re.match(r"attempt_(\d+)", attempt_dir.name)
-        attempt_number = int(attempt_match.group(1)) if attempt_match else 1
+        total_attempts = len(attempts)
 
-        # Load status from status.json if available
-        status = "complete"
-        question = None
-        winner = None
+        # Either include all attempts or just the latest
+        attempts_to_process = attempts if include_all_attempts else [attempts[-1]]
 
-        status_file = attempt_dir / "status.json"
-        if status_file.exists():
-            try:
-                status_data = json.loads(status_file.read_text())
+        for attempt_dir in attempts_to_process:
+            attempt_match = re.match(r"attempt_(\d+)", attempt_dir.name)
+            attempt_number = int(attempt_match.group(1)) if attempt_match else 1
 
-                # Get question and winner first
-                meta = status_data.get("meta", {})
-                question = meta.get("question")
-                results = status_data.get("results", {})
-                winner = results.get("winner")
+            # Load status from status.json if available
+            status = "complete"
+            question = None
+            winner = None
 
-                # Check for errors - but if there's a winner, the turn completed successfully
-                # (individual agent errors during coordination don't mean the turn failed)
-                if winner:
-                    status = "complete"
-                else:
-                    rounds = status_data.get("rounds", {}).get("by_outcome", {})
-                    if rounds.get("error", 0) > 0:
-                        status = "error"
-                    elif rounds.get("timeout", 0) > 0:
-                        status = "timeout"
+            status_file = attempt_dir / "status.json"
+            if status_file.exists():
+                try:
+                    status_data = json.loads(status_file.read_text())
 
-            except (json.JSONDecodeError, KeyError):
-                pass
-        else:
-            # No status.json means interrupted session
-            status = "interrupted"
+                    # Get question and winner first
+                    meta = status_data.get("meta", {})
+                    question = meta.get("question")
+                    results = status_data.get("results", {})
+                    winner = results.get("winner")
 
-        turns.append(
-            TurnInfo(
-                turn_number=turn_number,
-                attempt_number=attempt_number,
-                attempt_path=attempt_dir,
-                status=status,
-                question=question,
-                winner=winner,
-            ),
-        )
+                    # Check for errors - but if there's a winner, the turn completed successfully
+                    # (individual agent errors during coordination don't mean the turn failed)
+                    if winner:
+                        status = "complete"
+                    else:
+                        rounds = status_data.get("rounds", {}).get("by_outcome", {})
+                        if rounds.get("error", 0) > 0:
+                            status = "error"
+                        elif rounds.get("timeout", 0) > 0:
+                            status = "timeout"
+                        # Check if this was a restarted attempt (no winner means it was superseded)
+                        if attempt_number < total_attempts:
+                            status = "restarted"
 
-    # Sort by turn number
-    turns.sort(key=lambda t: t.turn_number)
+                except (json.JSONDecodeError, KeyError):
+                    pass
+            else:
+                # No status.json means interrupted session
+                status = "interrupted"
+
+            turns.append(
+                TurnInfo(
+                    turn_number=turn_number,
+                    attempt_number=attempt_number,
+                    total_attempts=total_attempts,
+                    attempt_path=attempt_dir,
+                    status=status,
+                    question=question,
+                    winner=winner,
+                ),
+            )
+
+    # Sort by turn number, then attempt number
+    turns.sort(key=lambda t: (t.turn_number, t.attempt_number))
     return turns
 
 

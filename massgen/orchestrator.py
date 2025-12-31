@@ -2282,8 +2282,15 @@ Your answer:"""
         )
 
         # Set log attempt for directory organization (only if restart feature is enabled)
+        # For restarts (attempt 2+), CLI sets this before creating the UI
+        # For first attempt, we still need to set it here
         if self.config.coordination_config.max_orchestration_restarts > 0:
-            set_log_attempt(self.current_attempt + 1)
+            from massgen.logger_config import _CURRENT_ATTEMPT
+
+            expected_attempt = self.current_attempt + 1
+            # Only set if not already set to the expected value (CLI may have set it for restarts)
+            if _CURRENT_ATTEMPT != expected_attempt:
+                set_log_attempt(expected_attempt)
 
         # Track active coordination state for cleanup
         self._active_streams = {}
