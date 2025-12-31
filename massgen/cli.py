@@ -87,6 +87,40 @@ def load_env_file():
 # Load .env file at module import
 load_env_file()
 
+
+def _setup_logfire_observability() -> bool:
+    """Configure Logfire observability and instrument all LLM providers.
+
+    This sets up structured logging/tracing via Logfire and instruments
+    all supported LLM provider clients (OpenAI, Anthropic, Google GenAI).
+
+    Returns:
+        True if Logfire was successfully configured, False otherwise.
+    """
+    try:
+        import logfire  # noqa: F401 - Check if logfire is installed
+    except ImportError:
+        print(
+            f"{BRIGHT_YELLOW}⚠️  Logfire not installed. " f"Install with: pip install massgen[observability]{RESET}",
+        )
+        return False
+
+    from .logger_config import integrate_logfire_with_loguru
+    from .structured_logging import configure_observability, get_tracer
+
+    success = configure_observability(enabled=True)
+    if not success:
+        return False
+
+    integrate_logfire_with_loguru()
+    # Instrument all LLM providers globally
+    tracer = get_tracer()
+    tracer.instrument_google_genai()  # Gemini
+    tracer.instrument_openai()  # OpenAI-compatible APIs
+    tracer.instrument_anthropic()  # Claude
+    return True
+
+
 # Add project root to path for imports
 project_root = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(project_root))
@@ -637,7 +671,11 @@ def create_backend(backend_type: str, **kwargs) -> Any:
         api_key = kwargs.get("api_key") or os.getenv("FIREWORKS_API_KEY")
         if not api_key:
             raise ConfigurationError(
-                _api_key_error_message("Fireworks AI", "FIREWORKS_API_KEY", config_path),
+                _api_key_error_message(
+                    "Fireworks AI",
+                    "FIREWORKS_API_KEY",
+                    config_path,
+                ),
             )
         if "base_url" not in kwargs:
             kwargs["base_url"] = "https://api.fireworks.ai/inference/v1"
@@ -913,7 +951,7 @@ def create_agents_from_config(
         if config_path:
             backend_config["_config_path"] = config_path
 
-        # Get agent_id for AgentConfig (but don't add to backend_config to avoid duplicate kwargs)
+        # Get agent_id for AgentConfig and backend (needed for MCP tool span correlation)
         agent_id = agent_data.get("id", f"agent{i}")
 
         # Emit progress for this agent
@@ -924,7 +962,8 @@ def create_agents_from_config(
                 f"Backend: {backend_type}",
             )
 
-        backend = create_backend(backend_type, **backend_config)
+        # Pass agent_id to backend for MCP tool span correlation
+        backend = create_backend(backend_type, agent_id=agent_id, **backend_config)
         backend_params = {k: v for k, v in backend_config.items() if k not in ("type", "_config_path")}
 
         backend_type_lower = backend_type.lower()
@@ -1633,7 +1672,9 @@ async def run_question_with_history(
                 persona_guidelines=pg_cfg.get("persona_guidelines"),
                 persist_across_turns=pg_cfg.get("persist_across_turns", False),
             )
-            logger.info(f"[CLI] Created PersonaGeneratorConfig: enabled={persona_generator_config.enabled}")
+            logger.info(
+                f"[CLI] Created PersonaGeneratorConfig: enabled={persona_generator_config.enabled}",
+            )
 
         # Parse subagent_orchestrator config if present
         subagent_orchestrator_config = None
@@ -4982,6 +5023,10 @@ async def main(args):
     # Setup logging (only for actual agent runs, not special commands)
     setup_logging(debug=args.debug)
 
+    # Configure Logfire observability if requested
+    if getattr(args, "logfire", False):
+        _setup_logfire_observability()
+
     if args.debug:
         logger.info("Debug mode enabled")
         logger.debug(f"Command line arguments: {vars(args)}")
@@ -5311,9 +5356,13 @@ async def main(args):
                     model=model_name,
                     log_directory=log_dir_name,
                 )
-                logger.info(f"📝 Registered new session in registry: {memory_session_id}")
+                logger.info(
+                    f"📝 Registered new session in registry: {memory_session_id}",
+                )
             else:
-                logger.debug(f"📝 Skipping session registry (--no-session-registry): {memory_session_id}")
+                logger.debug(
+                    f"📝 Skipping session registry (--no-session-registry): {memory_session_id}",
+                )
 
         agents = create_agents_from_config(
             config,
@@ -5810,6 +5859,11 @@ Environment Variables:
         help="Enable debug mode with verbose logging",
     )
     parser.add_argument(
+        "--logfire",
+        action="store_true",
+        help="Enable Logfire observability for structured tracing of LLM calls, tool executions, and orchestration",
+    )
+    parser.add_argument(
         "--web",
         action="store_true",
         help="Launch web UI server for real-time visualization",
@@ -6110,6 +6164,10 @@ Environment Variables:
 
     # Setup logging for all other commands (actual execution, setup, init, etc.)
     setup_logging(debug=args.debug)
+
+    # Configure Logfire observability if requested
+    if args.logfire:
+        _setup_logfire_observability()
 
     if args.debug:
         logger.info("Debug mode enabled")
