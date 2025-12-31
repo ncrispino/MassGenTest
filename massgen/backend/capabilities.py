@@ -56,7 +56,7 @@ This will verify:
 from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, List, Optional, Set
-
+import os
 
 class Capability(Enum):
     """Enumeration of all possible backend capabilities."""
@@ -685,3 +685,33 @@ def validate_backend_config(backend_type: str, config: Dict) -> List[str]:
         )
 
     return errors
+def get_models_for_backend(backend_type: str) -> List[str]:
+    """
+    Return model list for a backend.
+    Uses authenticated discovery when possible, otherwise falls back to static registry.
+    This is UX-only and does not affect runtime execution.
+    """
+    caps = get_capabilities(backend_type)
+    if not caps:
+        return []
+
+    # Authenticated OpenAI model discovery (optional)
+    if backend_type == "openai" and os.getenv("OPENAI_API_KEY"):
+        try:
+            from openai import OpenAI
+
+            client = OpenAI()
+            models = client.models.list()
+
+            discovered = sorted(
+                [m.id for m in models.data if isinstance(m.id, str)]
+            )
+
+            if discovered:
+                return discovered
+        except Exception:
+            # Silent fallback to static list
+            pass
+
+    return caps.models
+

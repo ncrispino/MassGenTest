@@ -1,3 +1,4 @@
+
 # -*- coding: utf-8 -*-
 """
 Message templates for MassGen framework following input_cases_reference.md
