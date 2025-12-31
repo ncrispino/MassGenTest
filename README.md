@@ -173,15 +173,15 @@ pip install --upgrade massgen
 uv pip install massgen
 
 # Install with observability support (optional)
-pip install "massgen[observability]"
-logfire auth  # Authenticate with Logfire
+uv pip install "massgen[observability]"
+uv run logfire auth  # Authenticate with Logfire
 
 # Enable Logfire observability - comprehensive logging and tracing
-massgen --logfire --config massgen/configs/basic/multi/three_agents_default.yaml \
+uv run massgen --logfire --config massgen/configs/basic/multi/three_agents_default.yaml \
   "What are the benefits of multi-agent AI systems?"
 
 # Or enable via environment variable
-MASSGEN_LOGFIRE_ENABLED=true massgen --config massgen/configs/basic/multi/three_agents_default.yaml \
+MASSGEN_LOGFIRE_ENABLED=true uv run massgen --config massgen/configs/basic/multi/three_agents_default.yaml \
   "Compare different AI architectures"
 ```
 

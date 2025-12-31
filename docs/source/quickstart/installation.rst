@@ -151,10 +151,10 @@ For structured logging and tracing with Logfire:
    uv pip install "massgen[observability]"
 
    # Authenticate with Logfire
-   logfire auth
+   uv run logfire auth
 
    # Run with observability enabled
-   massgen --logfire --config your_config.yaml "Your question"
+   uv run massgen --logfire --config your_config.yaml "Your question"
 
 See :doc:`../user_guide/logging` for detailed Logfire configuration.
 

@@ -785,7 +785,7 @@ Setting Up Logfire
    .. code-block:: bash
 
       # Authenticate (this creates ~/.logfire/credentials.json)
-      logfire auth
+      uv run logfire auth
 
 4. **Alternatively, set the token directly:**
 
