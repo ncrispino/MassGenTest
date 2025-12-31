@@ -671,6 +671,8 @@ class WebDisplay(BaseDisplay):
         content: str,
         answer_id: Optional[str] = None,
         answer_number: int = 1,
+        answer_label: Optional[str] = None,
+        workspace_path: Optional[str] = None,
     ) -> None:
         """Notify about a new answer from an agent.
 
@@ -679,6 +681,8 @@ class WebDisplay(BaseDisplay):
             content: The answer content
             answer_id: Optional unique answer ID
             answer_number: The answer number for this agent (1, 2, etc.)
+            answer_label: Label for this answer (e.g., "agent1.1")
+            workspace_path: Absolute path to the workspace snapshot for this answer
         """
         self._emit(
             "new_answer",
@@ -687,6 +691,8 @@ class WebDisplay(BaseDisplay):
                 "content": content,
                 "answer_id": answer_id or f"{agent_id}-{int(time.time() * 1000)}",
                 "answer_number": answer_number,
+                "answer_label": answer_label,
+                "workspace_path": workspace_path,
             },
         )
 

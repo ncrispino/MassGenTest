@@ -965,6 +965,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
             answer_id?: string;
             answer_number?: number;
             answer_label?: string;  // e.g., "agent2.1" from backend
+            workspace_path?: string;  // Absolute path to workspace snapshot
             timestamp: number;
           };
 
@@ -997,6 +998,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
             // Server sends timestamp in seconds, JavaScript Date expects milliseconds
             timestamp: newAnswerEvent.timestamp < 1e12 ? newAnswerEvent.timestamp * 1000 : newAnswerEvent.timestamp,
             votes: 0,
+            workspacePath: newAnswerEvent.workspace_path,
           });
 
           // Show notification for new answer

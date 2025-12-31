@@ -375,3 +375,88 @@ export interface FileContentResponse {
   language: string;  // For syntax highlighting (e.g., "python", "typescript")
   error?: string;
 }
+
+// ============================================================================
+// Workspace Browser WebSocket Types (for real-time workspace updates)
+// ============================================================================
+
+/**
+ * WebSocket event types for workspace file changes.
+ * These events are pushed from the backend when files are created/modified/deleted.
+ */
+export type WorkspaceWSEventType =
+  | 'workspace_file_change'
+  | 'workspace_connected'
+  | 'workspace_error'
+  | 'workspace_refresh';
+
+/**
+ * Base message for workspace WebSocket communication.
+ */
+export interface WorkspaceWSMessage {
+  type: WorkspaceWSEventType;
+  session_id: string;
+  timestamp: number;
+}
+
+/**
+ * Event sent when a file in the workspace is created, modified, or deleted.
+ */
+export interface WorkspaceFileChangeEvent extends WorkspaceWSMessage {
+  type: 'workspace_file_change';
+  workspace_path: string;
+  file_path: string;  // Relative path within workspace
+  operation: 'create' | 'modify' | 'delete';
+  file_info?: {
+    size: number;
+    modified: number;
+  };
+}
+
+/**
+ * Event sent when WebSocket connection is established.
+ * Includes initial file lists for each watched workspace to avoid separate HTTP fetch.
+ */
+export interface WorkspaceConnectedEvent extends WorkspaceWSMessage {
+  type: 'workspace_connected';
+  watched_paths: string[];
+  /** Initial file lists keyed by workspace path - sent on connect to avoid HTTP fetch */
+  initial_files?: Record<string, WorkspaceFileInfo[]>;
+}
+
+/**
+ * Event sent when an error occurs in workspace monitoring.
+ */
+export interface WorkspaceErrorEvent extends WorkspaceWSMessage {
+  type: 'workspace_error';
+  error: string;
+  workspace_path?: string;
+}
+
+/**
+ * Event sent to request a full workspace refresh (e.g., after reconnect).
+ */
+export interface WorkspaceRefreshEvent extends WorkspaceWSMessage {
+  type: 'workspace_refresh';
+  workspace_path: string;
+  files: WorkspaceFileInfo[];
+}
+
+/**
+ * File metadata for workspace browser.
+ */
+export interface WorkspaceFileInfo {
+  path: string;
+  size: number;
+  modified: number;
+  operation?: 'create' | 'modify' | 'delete';
+}
+
+/**
+ * Union type for all workspace WebSocket events.
+ */
+export type WorkspaceWSEvent =
+  | WorkspaceFileChangeEvent
+  | WorkspaceConnectedEvent
+  | WorkspaceErrorEvent
+  | WorkspaceRefreshEvent;

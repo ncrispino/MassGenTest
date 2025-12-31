@@ -7,14 +7,16 @@
 
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, FileText, User, Clock, ChevronDown, Trophy, Folder, File, ChevronRight, RefreshCw, History, Vote, ArrowRight, Eye, GitBranch, ExternalLink, Bell } from 'lucide-react';
+import { X, FileText, User, Clock, ChevronDown, Trophy, Folder, File, ChevronRight, RefreshCw, History, Vote, ArrowRight, Eye, GitBranch, ExternalLink, Bell, Wifi, WifiOff } from 'lucide-react';
 import { useAgentStore, selectAnswers, selectAgents, selectAgentOrder, selectSelectedAgent, selectFinalAnswer, selectVoteDistribution, resolveAnswerContent } from '../stores/agentStore';
-import type { Answer, AnswerWorkspace, TimelineNode as TimelineNodeType } from '../types';
+import type { Answer, AnswerWorkspace, TimelineNode as TimelineNodeType, WorkspaceFileInfo, WorkspaceFileChangeEvent } from '../types';
 import { ArtifactPreviewModal } from './ArtifactPreviewModal';
 import { InlineArtifactPreview } from './InlineArtifactPreview';
 import { TimelineView } from './timeline';
 import { canPreviewFile } from '../utils/artifactTypes';
-import { clearFileCache } from '../hooks/useFileContent';
+import { clearFileCache, clearFileNotFound } from '../hooks/useFileContent';
+import { useWorkspaceWebSocket } from '../hooks/useWorkspaceWebSocket';
+import { createAbortableFetch, isAbortError } from '../utils/fetchWithAbort';
 
 // Types for workspace API responses
 interface WorkspaceInfo {
@@ -268,7 +270,6 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
   // Workspace state - now fetched from API
   const [workspaces, setWorkspaces] = useState<WorkspacesResponse>({ current: [], historical: [] });
   const [workspaceFiles, setWorkspaceFiles] = useState<FileInfo[]>([]);
-  const [workspaceMtime, setWorkspaceMtime] = useState<number | null>(null);
   const [isLoadingWorkspaces, setIsLoadingWorkspaces] = useState(false);
   const [isLoadingFiles, setIsLoadingFiles] = useState(false);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
@@ -296,12 +297,25 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
 
   // New answer notification state
   const [newAnswerNotification, setNewAnswerNotification] = useState<{
-    show: boolean;
-    answerLabel: string;
+    answerLabel: string;  // Selection label for dropdown (e.g., "agent1.2")
+    displayLabel: string; // Human-readable label (e.g., "Agent 1 Answer 2")
     agentId: string;
-    workspacePath: string;
   } | null>(null);
-  const lastKnownAnswerCountRef = useRef<number>(0);
+  // Track per-agent answer counts for new answer detection
+  const lastKnownAgentAnswerCountRef = useRef<Record<string, number>>({});
+  // Track previous selected agent to detect agent switches
+  const prevSelectedAgentRef = useRef<string | null>(null);
+
+  // AbortController ref for cancelling in-flight fetch requests
+  const fetchAbortRef = useRef<(() => void) | null>(null);
+  // Request ID to prevent stale finally blocks from clearing loading state
+  const fetchRequestIdRef = useRef<number>(0);
+  // Debounce ref to coalesce rapid new_answer events into single fetch
+  const debouncedNewAnswerFetchRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Cache initial files from WebSocket by workspace path (avoids HTTP fetch)
+  const initialFilesCacheRef = useRef<Record<string, FileInfo[]>>({});
+  // Track which workspace paths we've already prefetched to avoid duplicates
+  const prefetchedPathsRef = useRef<Set<string>>(new Set());
 
   // Clear workspace/browser state when session changes to avoid stale paths/files
   useEffect(() => {
@@ -315,9 +329,20 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
     setIsLoadingWorkspaces(false);
     hasAutoPreviewedRef.current = null;
     prevWorkspacePathRef.current = null;
+    initialFilesCacheRef.current = {};
+    prefetchedPathsRef.current = new Set();
     clearFileCache();
     setMissingVersion(null);
   }, [sessionId]);
+
+  // Cleanup debounce timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (debouncedNewAnswerFetchRef.current) {
+        clearTimeout(debouncedNewAnswerFetchRef.current);
+      }
+    };
+  }, []);
 
   // Read ?log_dir override from URL once
   useEffect(() => {
@@ -328,50 +353,92 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
     }
   }, []);
 
-  // Track new answers while on workspace tab
+  // Track new answers while on workspace tab - only for the agent being viewed
+  // This effect detects new answers and sets a flag for workspace refresh
+  // The actual fetch calls happen in a later effect after functions are defined
+  const [pendingNewAnswerRefresh, setPendingNewAnswerRefresh] = useState(false);
+
   useEffect(() => {
-    if (activeTab === 'workspace' && isOpen) {
-      // If we have more answers than before, show notification
-      if (answers.length > lastKnownAnswerCountRef.current && lastKnownAnswerCountRef.current > 0) {
-        // Find the newest answer
-        const newestAnswer = [...answers].sort((a, b) => b.timestamp - a.timestamp)[0];
+    if (activeTab === 'workspace' && isOpen && selectedAgentWorkspace) {
+      // Skip detection if this is a fresh agent selection (agent just changed)
+      // The baseline will be set by the effect that runs right after, and we'll
+      // start detecting from there. This prevents false notifications when switching agents.
+      if (selectedAgentWorkspace !== prevSelectedAgentRef.current) {
+        return;
+      }
+
+      // Filter answers to only the currently viewed agent
+      const agentAnswers = answers.filter(a => a.agentId === selectedAgentWorkspace);
+      const lastKnownCount = lastKnownAgentAnswerCountRef.current[selectedAgentWorkspace] || 0;
+
+      // Check if this agent has NEW answers since we started viewing
+      if (agentAnswers.length > lastKnownCount && lastKnownCount > 0) {
+        // Set flag to trigger workspace refresh in later effect
+        setPendingNewAnswerRefresh(true);
+
+        // Show notification for ALL views (current AND historical) per FR-015
+        // This ensures users are always aware of new answers and can navigate to them
+        const newestAnswer = [...agentAnswers].sort((a, b) => b.timestamp - a.timestamp)[0];
         if (newestAnswer) {
-          const agentIdx = agentOrder.indexOf(newestAnswer.agentId) + 1;
-          const answerLabel = newestAnswer.answerNumber === 0
+          const agentIdx = agentOrder.indexOf(selectedAgentWorkspace) + 1;
+          // Store both display label and selection label (used by version dropdown)
+          const displayLabel = newestAnswer.answerNumber === 0
             ? 'Final Answer'
             : `Agent ${agentIdx} Answer ${newestAnswer.answerNumber}`;
+          const selectionLabel = `agent${agentIdx}.${newestAnswer.answerNumber}`;
 
           setNewAnswerNotification({
-            show: true,
-            answerLabel,
-            agentId: newestAnswer.agentId,
-            workspacePath: '', // Will be populated from answerWorkspaces
+            answerLabel: selectionLabel,
+            displayLabel,
+            agentId: selectedAgentWorkspace,
           });
         }
       }
-      lastKnownAnswerCountRef.current = answers.length;
-    }
-  }, [answers.length, activeTab, isOpen, agentOrder, answers]);
 
-  // Update answer count when switching tabs
+      // Update tracking for this agent
+      lastKnownAgentAnswerCountRef.current[selectedAgentWorkspace] = agentAnswers.length;
+    }
+  }, [answers, activeTab, isOpen, agentOrder, selectedAgentWorkspace, selectedAnswerLabel]);
+
+  // Initialize answer count when agent selection changes
+  // Reset baseline when switching to a different agent to prevent false notifications
   useEffect(() => {
-    if (activeTab === 'workspace') {
-      lastKnownAnswerCountRef.current = answers.length;
+    if (selectedAgentWorkspace && selectedAgentWorkspace !== prevSelectedAgentRef.current) {
+      // Agent changed - establish a new baseline
+      const currentCount = answers.filter(a => a.agentId === selectedAgentWorkspace).length;
+      lastKnownAgentAnswerCountRef.current[selectedAgentWorkspace] = currentCount;
+      prevSelectedAgentRef.current = selectedAgentWorkspace;
     }
-  }, [activeTab, answers.length]);
+  }, [selectedAgentWorkspace, answers]);
 
-  // Handle notification actions
-  const handleViewNewAnswer = useCallback(() => {
+  // Clear notification when user manually changes agent or version selection
+  useEffect(() => {
+    setNewAnswerNotification(null);
+  }, [selectedAgentWorkspace, selectedAnswerLabel]);
+
+  // Handle notification actions - navigate to current workspace or stay in historical
+  const handleMoveToCurrentWorkspace = useCallback(() => {
     if (newAnswerNotification) {
-      // Switch to answers tab
-      setActiveTab('answers');
+      // Navigate to the current workspace (where the new answer was produced)
+      setSelectedAnswerLabel('current');
+      // Clear file selection to trigger auto-preview of new content
+      setSelectedFilePath('');
+      // Dismiss the notification
       setNewAnswerNotification(null);
     }
   }, [newAnswerNotification]);
 
-  const handleDismissNotification = useCallback(() => {
+  const handleStayInHistorical = useCallback(() => {
+    if (newAnswerNotification) {
+      // Navigate to the new historical snapshot (what was "current" before the answer)
+      // This is the workspace state we were viewing before it got cleared
+      setSelectedAnswerLabel(newAnswerNotification.answerLabel);
+      // Clear file selection since we're switching workspaces
+      setSelectedFilePath('');
+    }
+    // Dismiss the notification
     setNewAnswerNotification(null);
-  }, []);
+  }, [newAnswerNotification]);
 
   // Handle file click from workspace browser - sets file for inline preview
   const handleFileClick = useCallback((filePath: string) => {
@@ -412,17 +479,24 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
     }
   }, [answers, agentOrder]);
 
-  // Fetch available workspaces from API
+  // Fetch available workspaces from API (reads status.json - should be instant)
   const fetchWorkspaces = useCallback(async () => {
     setIsLoadingWorkspaces(true);
     setWorkspaceError(null);
+
     try {
       // Pass session_id for fast lookup from status.json
       const url = sessionId
         ? `/api/workspaces?session_id=${encodeURIComponent(sessionId)}`
         : '/api/workspaces';
       const response = await fetch(url);
+
       if (!response.ok) {
+        // Handle status.json unavailable specifically (FR-011, T021)
+        if (response.status === 503) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || 'Workspace info not yet available. Session may still be initializing.');
+        }
         throw new Error(`Failed to fetch workspaces (${response.status})`);
       }
       const data: WorkspacesResponse = await response.json();
@@ -449,30 +523,93 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
     }
   }, [selectedAgentWorkspace, agentOrder, sessionId]);
 
-  // Fetch files for selected workspace
+  // Fetch files for selected workspace with AbortController support (T012)
+  // For historical workspaces, results are cached since they never change
   const fetchWorkspaceFiles = useCallback(async (workspace: WorkspaceInfo) => {
+    // Cancel any in-flight request before starting a new one
+    if (fetchAbortRef.current) {
+      fetchAbortRef.current();
+      fetchAbortRef.current = null;
+    }
+
+    // Increment request ID to track this specific request
+    const requestId = ++fetchRequestIdRef.current;
+
     lastBrowsedPathRef.current = workspace.path;
     setIsLoadingFiles(true);
     setWorkspaceError(null);
+
+    const { promise, abort } = createAbortableFetch<BrowseResponse>(
+      `/api/workspace/browse?path=${encodeURIComponent(workspace.path)}`,
+      { timeout: 30000 }
+    );
+
+    fetchAbortRef.current = abort;
+
     try {
-      const response = await fetch(`/api/workspace/browse?path=${encodeURIComponent(workspace.path)}`);
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        const apiError = (data && data.error) ? `: ${data.error}` : '';
-        throw new Error(`Failed to fetch workspace files (${response.status})${apiError}`);
+      const data = await promise;
+      // Verify this response is for the currently requested workspace
+      if (data.workspace_path !== workspace.path) {
+        // Response is for a different workspace - ignore (stale response)
+        return;
       }
-      const data: BrowseResponse = await response.json();
-      setWorkspaceFiles(data.files || []);
-      if (data.workspace_mtime) {
-        setWorkspaceMtime(data.workspace_mtime);
+      // Only update state if this is still the current request
+      if (requestId === fetchRequestIdRef.current) {
+        setWorkspaceFiles(data.files || []);
+      }
+      // Cache historical workspace files - they never change
+      if (workspace.type === 'historical' && data.files) {
+        initialFilesCacheRef.current[workspace.path] = data.files;
       }
     } catch (err) {
-      setWorkspaceError(err instanceof Error ? err.message : 'Failed to load files');
-      setWorkspaceFiles([]);
+      if (isAbortError(err)) {
+        // Request was cancelled - don't update state
+        return;
+      }
+      // Only update error state if this is still the current request
+      if (requestId === fetchRequestIdRef.current) {
+        setWorkspaceError(err instanceof Error ? err.message : 'Failed to load files');
+      }
+      // T025: Don't clear files on error - preserve last known files for graceful degradation
     } finally {
-      setIsLoadingFiles(false);
+      // Only clear loading state if this is still the current request
+      // This prevents a cancelled request's finally block from clearing loading for the new request
+      if (requestId === fetchRequestIdRef.current) {
+        setIsLoadingFiles(false);
+        fetchAbortRef.current = null;
+      }
     }
   }, []);
+
+  // Background prefetch workspace files (doesn't update UI state, just caches)
+  const prefetchWorkspaceFiles = useCallback(async (workspacePath: string) => {
+    // Skip if already cached
+    if (initialFilesCacheRef.current[workspacePath]) {
+      return;
+    }
+    try {
+      const response = await fetch(`/api/workspace/browse?path=${encodeURIComponent(workspacePath)}`);
+      if (response.ok) {
+        const data: BrowseResponse = await response.json();
+        if (data.files) {
+          initialFilesCacheRef.current[workspacePath] = data.files;
+        }
+      }
+    } catch {
+      // Silent fail for background prefetch
+    }
+  }, []);
+
+  // Background prefetch: when new answers arrive with workspace_path, prefetch files immediately
+  // This ensures clicking "Stay Here" or selecting a historical version is instant
+  useEffect(() => {
+    answers.forEach(answer => {
+      if (answer.workspacePath && !prefetchedPathsRef.current.has(answer.workspacePath)) {
+        prefetchedPathsRef.current.add(answer.workspacePath);
+        prefetchWorkspaceFiles(answer.workspacePath);
+      }
+    });
+  }, [answers, prefetchWorkspaceFiles]);
 
   // Fetch answer-linked workspaces from API
   const fetchAnswerWorkspaces = useCallback(async () => {
@@ -492,6 +629,27 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
       console.error('Failed to fetch answer workspaces:', err);
     }
   }, [logDirOverride]);
+
+  // CRITICAL FIX: Handle pending new answer refresh with debouncing
+  // This effect runs when a new answer is detected and triggers workspace sync
+  // Debouncing coalesces rapid new_answer events into a single fetch to prevent cascade
+  // NOTE: fetchAnswerWorkspaces removed - new answers now include workspace_path via WebSocket
+  useEffect(() => {
+    if (pendingNewAnswerRefresh) {
+      // Reset the flag first to prevent loops
+      setPendingNewAnswerRefresh(false);
+
+      // Debounce to coalesce rapid new_answer events into single fetch
+      if (debouncedNewAnswerFetchRef.current) {
+        clearTimeout(debouncedNewAnswerFetchRef.current);
+      }
+      debouncedNewAnswerFetchRef.current = setTimeout(() => {
+        // Refresh the current workspaces in case they changed
+        fetchWorkspaces();
+      }, 100);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingNewAnswerRefresh]);
 
   // Open workspace in native file browser
   const openWorkspaceInFinder = useCallback(async (workspacePath: string) => {
@@ -542,8 +700,25 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
   const activeWorkspace = useMemo(() => {
     if (!selectedAgentWorkspace) return null;
 
-    // If a historical answer version is selected, use that workspace path from answerWorkspaces
+    // If a historical answer version is selected, get workspace path from answers (instant via WebSocket)
     if (selectedAnswerLabel !== 'current') {
+      // First check answers from agentStore (has workspace_path from new_answer event)
+      const agentIdx = agentOrder.indexOf(selectedAgentWorkspace) + 1;
+      const matchingAnswer = answers.find(a => {
+        const expectedLabel = `agent${agentIdx}.${a.answerNumber}`;
+        return a.agentId === selectedAgentWorkspace && expectedLabel === selectedAnswerLabel;
+      });
+
+      if (matchingAnswer?.workspacePath) {
+        setMissingVersion(null);
+        return {
+          name: selectedAnswerLabel,
+          path: matchingAnswer.workspacePath,
+          type: 'historical' as const,
+        };
+      }
+
+      // Fallback to answerWorkspaces (HTTP-fetched, for older answers without workspace_path)
       const answerWs = answerWorkspaces.find(
         (w) => w.agentId === selectedAgentWorkspace && w.answerLabel === selectedAnswerLabel
       );
@@ -555,6 +730,7 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
           type: 'historical' as const,
         };
       }
+
       // Selected a version but no mapping yet; avoid falling back to current
       setMissingVersion(`Workspace for version "${selectedAnswerLabel}" not available yet`);
       return null;
@@ -563,20 +739,136 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
 
     // Fallback to current workspace for the agent
     return workspacesByAgent[selectedAgentWorkspace]?.current || null;
-  }, [selectedAgentWorkspace, selectedAnswerLabel, answerWorkspaces, workspacesByAgent]);
+  }, [selectedAgentWorkspace, selectedAnswerLabel, answers, answerWorkspaces, workspacesByAgent, agentOrder]);
+
+  // Compute workspace paths to watch via WebSocket
+  // CRITICAL: Use stable dependency to prevent infinite re-render loop (FR-013)
+  // workspaces.current is an array that gets a new reference on every setWorkspaces() call,
+  // causing the useMemo to recalculate and trigger useWorkspaceWebSocket effects repeatedly.
+  // Solution: Serialize paths to a string for stable comparison.
+  const workspacePathsKey = useMemo(
+    () => JSON.stringify(workspaces.current.map((ws) => ws.path).filter(Boolean).sort()),
+    [workspaces]
+  );
+
+  const workspacePaths = useMemo(() => {
+    if (!activeTab || activeTab !== 'workspace') return [];
+    return workspaces.current.map((ws) => ws.path).filter(Boolean);
+  }, [activeTab, workspacePathsKey]);
+
+  // WebSocket hook for real-time file updates (T011, T013, T014)
+  const handleWebSocketFileChange = useCallback((event: WorkspaceFileChangeEvent) => {
+    // Only update if the change is for the currently active workspace
+    if (!activeWorkspace || event.workspace_path !== activeWorkspace.path) {
+      return;
+    }
+
+    const fileInfo: FileInfo = {
+      path: event.file_path,
+      size: event.file_info?.size || 0,
+      modified: event.file_info?.modified || Date.now(),
+      operation: event.operation,
+    };
+
+    // Clear 404 cache when file is created/modified so we can fetch it again
+    if (event.operation === 'create' || event.operation === 'modify') {
+      clearFileNotFound(event.file_path, event.workspace_path);
+    }
+
+    setWorkspaceFiles((prevFiles) => {
+      switch (event.operation) {
+        case 'create':
+          // Add file if not already present
+          if (!prevFiles.some((f) => f.path === fileInfo.path)) {
+            return [...prevFiles, fileInfo];
+          }
+          // Update if it exists (rapid create/modify)
+          return prevFiles.map((f) =>
+            f.path === fileInfo.path ? { ...f, ...fileInfo } : f
+          );
+
+        case 'modify':
+          return prevFiles.map((f) =>
+            f.path === fileInfo.path ? { ...f, ...fileInfo } : f
+          );
+
+        case 'delete':
+          return prevFiles.filter((f) => f.path !== fileInfo.path);
+
+        default:
+          return prevFiles;
+      }
+    });
+  }, [activeWorkspace]);
+
+  // Handle full workspace refresh on WebSocket reconnect (FR-012)
+  const handleWebSocketRefreshNeeded = useCallback((workspacePath: string, files: WorkspaceFileInfo[]) => {
+    if (activeWorkspace && activeWorkspace.path === workspacePath) {
+      setWorkspaceFiles(files);
+      setIsLoadingFiles(false);
+    }
+  }, [activeWorkspace]);
+
+  // Handle initial files from WebSocket connect - eliminates need for HTTP fetch
+  // Caches files by path so they're available when user switches workspaces
+  const handleWebSocketInitialFiles = useCallback((workspacePath: string, files: WorkspaceFileInfo[]) => {
+    // Cache the files for this workspace path
+    initialFilesCacheRef.current[workspacePath] = files;
+
+    // If this is the workspace we're currently viewing, update state immediately
+    if (activeWorkspace && activeWorkspace.path === workspacePath) {
+      setWorkspaceFiles(files);
+      setIsLoadingFiles(false);
+    }
+  }, [activeWorkspace]);
+
+  const {
+    status: wsStatus,
+    reconnectAttempts: wsReconnectAttempts,
+    error: wsError,
+    requestRefresh: wsRequestRefresh,
+  } = useWorkspaceWebSocket({
+    sessionId: sessionId || '',
+    workspacePaths,
+    onFileChange: handleWebSocketFileChange,
+    onInitialFiles: handleWebSocketInitialFiles,
+    onRefreshNeeded: handleWebSocketRefreshNeeded,
+    autoConnect: isOpen && activeTab === 'workspace' && !!sessionId,
+  });
+
+  // Request full refresh on WebSocket reconnect (FR-012)
+  useEffect(() => {
+    if (wsStatus === 'connected' && activeWorkspace && wsReconnectAttempts > 0) {
+      // We just reconnected - request full refresh
+      wsRequestRefresh(activeWorkspace.path);
+    }
+  }, [wsStatus, activeWorkspace, wsReconnectAttempts, wsRequestRefresh]);
 
   // Fetch workspaces when modal opens or tab switches to workspace
+  // Note: fetchWorkspaces excluded from deps to prevent refetch cascade
+  // Answer workspaces are NOT fetched eagerly - they come via WebSocket (new_answer event)
   useEffect(() => {
     if (isOpen && activeTab === 'workspace') {
       fetchWorkspaces();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, activeTab, sessionId]);
+
+  // Lazy fetch answer workspaces only when needed (historical version selected without workspace_path)
+  // Track if we've already fetched to avoid repeated calls
+  const hasFetchedAnswerWorkspacesRef = useRef(false);
+  useEffect(() => {
+    if (missingVersion && !hasFetchedAnswerWorkspacesRef.current && answerWorkspaces.length === 0) {
+      hasFetchedAnswerWorkspacesRef.current = true;
       fetchAnswerWorkspaces();
     }
-  }, [isOpen, activeTab, fetchWorkspaces, fetchAnswerWorkspaces, sessionId]);
+  }, [missingVersion, answerWorkspaces.length, fetchAnswerWorkspaces]);
 
 
   // Track previous workspace path to detect actual changes
-  // Fetch files when workspace is selected
-  // Also clear selected file when workspace changes to avoid showing stale content
+  // Strategy differs for current vs historical workspaces:
+  // - Historical: fetch immediately via HTTP (they never change, no WebSocket)
+  // - Current: use WebSocket cache/initial_files, HTTP as fallback
   useEffect(() => {
     const currentPath = activeWorkspace?.path || null;
     const pathChanged = prevWorkspacePathRef.current !== currentPath;
@@ -587,27 +879,33 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
       setSelectedFilePath('');
       // Reset auto-preview tracking for this new workspace
       hasAutoPreviewedRef.current = null;
-      // Clear workspace files first to show loading state
+
+      // Check if we have cached files from WebSocket initial_files
+      const cachedFiles = initialFilesCacheRef.current[activeWorkspace.path];
+      if (cachedFiles && cachedFiles.length > 0) {
+        // Use cached files immediately - no loading state needed
+        setWorkspaceFiles(cachedFiles);
+        setIsLoadingFiles(false);
+        return;
+      }
+
+      // No cached files - fetch immediately via HTTP
+      // WebSocket will provide real-time updates after initial load
       setWorkspaceFiles([]);
+      setIsLoadingFiles(true);
       fetchWorkspaceFiles(activeWorkspace);
-    } else if (!activeWorkspace && workspaceFiles.length > 0) {
+    } else if (!activeWorkspace && prevWorkspacePathRef.current !== null) {
       // Clear stale files when workspace disappears (e.g., new session)
+      prevWorkspacePathRef.current = null;
       setWorkspaceFiles([]);
       setSelectedFilePath('');
     }
-  }, [activeWorkspace, fetchWorkspaceFiles, workspaceFiles.length]);
+  }, [activeWorkspace, fetchWorkspaceFiles]);
 
-  // If we have an active workspace but no files (and haven't browsed it yet), fetch once
-  useEffect(() => {
-    if (
-      activeWorkspace &&
-      workspaceFiles.length === 0 &&
-      !isLoadingFiles &&
-      lastBrowsedPathRef.current !== activeWorkspace.path
-    ) {
-      fetchWorkspaceFiles(activeWorkspace);
-    }
-  }, [activeWorkspace, workspaceFiles.length, isLoadingFiles, fetchWorkspaceFiles]);
+  // REMOVED: The "fetch if empty" effect was causing infinite loops when WebSocket
+  // delete events cleared the workspace (e.g., during answer snapshot).
+  // The workspace is legitimately empty in this case - no need to refetch.
+  // The above effect already handles initial fetch when workspace path changes.
 
   // Clear selected file when workspace files become empty (prevents stale preview)
   useEffect(() => {
@@ -616,32 +914,8 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
     }
   }, [workspaceFiles.length, selectedFilePath, isLoadingFiles]);
 
-  // Poll workspace mtime to refresh only when files change (lightweight)
-  useEffect(() => {
-    if (!activeWorkspace) return;
-    let cancelled = false;
-
-    const poll = async () => {
-      try {
-        const response = await fetch(`/api/workspace/browse?path=${encodeURIComponent(activeWorkspace.path)}`);
-        if (!response.ok) return;
-        const data: BrowseResponse = await response.json();
-        if (cancelled) return;
-        if (data.workspace_mtime && data.workspace_mtime !== workspaceMtime) {
-          setWorkspaceFiles(data.files || []);
-          setWorkspaceMtime(data.workspace_mtime);
-        }
-      } catch {
-        // ignore polling errors
-      }
-    };
-
-    const id = window.setInterval(poll, 8000); // every 8s
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-    };
-  }, [activeWorkspace?.path, workspaceMtime]);
+  // NOTE: Polling removed - now using WebSocket for real-time updates (T030)
+  // WebSocket provides <2s update latency vs 8s polling
 
   // Auto-preview: Select first previewable file when workspace files are loaded
   useEffect(() => {
@@ -1160,7 +1434,6 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                               setSelectedAnswerLabel('current');
                               setSelectedFilePath(''); // Clear selection for auto-preview
                               fetchWorkspaces();
-                              fetchAnswerWorkspaces();
                             }}
                             className={`px-3 py-1 text-sm rounded transition-colors ${
                               selectedAgentWorkspace === agentId
@@ -1175,7 +1448,7 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                     </div>
                   </div>
 
-                  {/* Answer Version Dropdown */}
+                  {/* Answer Version Dropdown - uses answers from agentStore for immediate updates */}
                   {selectedAgentWorkspace && (
                     <div className="flex items-center gap-2">
                       <History className="w-4 h-4 text-amber-400" />
@@ -1195,13 +1468,19 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                           className="appearance-none bg-gray-700 border border-gray-600 rounded-lg px-3 py-1 pr-8 text-sm text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
                         >
                           <option value="current">Current</option>
-                          {answerWorkspaces
-                            .filter(w => w.agentId === selectedAgentWorkspace)
-                            .map((ws) => (
-                              <option key={ws.answerId} value={ws.answerLabel}>
-                                {ws.answerLabel}
-                              </option>
-                            ))}
+                          {/* Show versions from answers (instant via WebSocket), not answerWorkspaces (requires HTTP) */}
+                          {answers
+                            .filter(a => a.agentId === selectedAgentWorkspace && a.answerNumber > 0)
+                            .sort((a, b) => a.answerNumber - b.answerNumber)
+                            .map((answer) => {
+                              const agentIdx = agentOrder.indexOf(answer.agentId) + 1;
+                              const label = `agent${agentIdx}.${answer.answerNumber}`;
+                              return (
+                                <option key={answer.id} value={label}>
+                                  {label}
+                                </option>
+                              );
+                            })}
                         </select>
                         <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-400 pointer-events-none" />
                       </div>
@@ -1220,11 +1499,47 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                     </button>
                   )}
 
+                  {/* WebSocket Connection Status (T016) */}
+                  <div
+                    className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs ${
+                      wsStatus === 'connected'
+                        ? 'bg-green-900/30 text-green-400'
+                        : wsStatus === 'reconnecting'
+                        ? 'bg-amber-900/30 text-amber-400'
+                        : wsStatus === 'connecting'
+                        ? 'bg-blue-900/30 text-blue-400'
+                        : 'bg-gray-700/50 text-gray-500'
+                    }`}
+                    title={
+                      wsStatus === 'connected'
+                        ? 'Real-time updates active'
+                        : wsStatus === 'reconnecting'
+                        ? `Reconnecting... (attempt ${wsReconnectAttempts})`
+                        : wsStatus === 'connecting'
+                        ? 'Connecting...'
+                        : wsError || 'Disconnected'
+                    }
+                  >
+                    {wsStatus === 'connected' ? (
+                      <Wifi className="w-3 h-3" />
+                    ) : (
+                      <WifiOff className="w-3 h-3" />
+                    )}
+                    <span>
+                      {wsStatus === 'connected'
+                        ? 'Live'
+                        : wsStatus === 'reconnecting'
+                        ? 'Reconnecting...'
+                        : wsStatus === 'connecting'
+                        ? 'Connecting...'
+                        : 'Offline'}
+                    </span>
+                  </div>
+
                   {/* Refresh Button */}
                   <button
                     onClick={() => {
                       fetchWorkspaces();
-                      fetchAnswerWorkspaces();
                       if (activeWorkspace) fetchWorkspaceFiles(activeWorkspace);
                     }}
                     disabled={isLoadingWorkspaces || isLoadingFiles}
@@ -1235,10 +1550,19 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                   </button>
                 </div>
 
-                {/* Error Display */}
+                {/* Error Display with Retry Button (T019) */}
                 {workspaceError && (
-                  <div className="px-6 py-2 bg-red-900/30 border-b border-red-700 text-red-300 text-sm">
-                    {workspaceError}
+                  <div className="px-6 py-2 bg-red-900/30 border-b border-red-700 text-red-300 text-sm flex items-center justify-between">
+                    <span>{workspaceError}</span>
+                    <button
+                      onClick={() => {
+                        fetchWorkspaces();
+                        if (activeWorkspace) fetchWorkspaceFiles(activeWorkspace);
+                      }}
+                      className="ml-4 px-3 py-1 bg-red-800/50 hover:bg-red-700/50 rounded text-red-200 text-xs transition-colors"
+                    >
+                      Retry
+                    </button>
                   </div>
                 )}
                 {missingVersion && (
@@ -1260,56 +1584,82 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                   </div>
                 )}
 
-                {/* New Answer Notification */}
-                <AnimatePresence>
-                  {newAnswerNotification && (
-                    <motion.div
-                      initial={{ opacity: 0, y: -20 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -20 }}
-                      className="mx-4 mt-3 p-3 bg-blue-900/40 border border-blue-600/50 rounded-lg flex items-center justify-between"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="p-2 bg-blue-600/30 rounded-full">
-                          <Bell className="w-4 h-4 text-blue-400" />
-                        </div>
-                        <div>
-                          <p className="text-sm text-blue-200 font-medium">
-                            New answer available
-                          </p>
-                          <p className="text-xs text-blue-300/70">
-                            {newAnswerNotification.answerLabel} has been submitted
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={handleViewNewAnswer}
-                          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-lg transition-colors flex items-center gap-1.5"
+                {/* Split View: File Tree + Preview - wrapped in relative for overlay */}
+                <div className="relative flex-1 flex overflow-hidden">
+                  {/* New Answer Notification - Prominent Modal Overlay */}
+                  <AnimatePresence>
+                    {newAnswerNotification && (
+                      <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="absolute inset-0 bg-black/50 backdrop-blur-[2px] z-20 flex items-center justify-center"
+                      >
+                        <motion.div
+                          initial={{ scale: 0.9, opacity: 0, y: 20 }}
+                          animate={{ scale: 1, opacity: 1, y: 0 }}
+                          exit={{ scale: 0.9, opacity: 0, y: 20 }}
+                          transition={{ type: 'spring', stiffness: 300, damping: 25 }}
+                          className="bg-gray-800 border-2 border-blue-500 rounded-xl p-6 shadow-2xl shadow-blue-500/20 max-w-md mx-4"
                         >
-                          <Eye className="w-3.5 h-3.5" />
-                          View Answer
-                        </button>
-                        <button
-                          onClick={handleDismissNotification}
-                          className="p-1.5 text-blue-300 hover:text-white hover:bg-blue-700/50 rounded-lg transition-colors"
-                          title="Dismiss"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
+                          <div className="flex flex-col items-center gap-4 text-center">
+                            {/* Icon with pulse animation */}
+                            <motion.div
+                              animate={{ scale: [1, 1.1, 1] }}
+                              transition={{ duration: 1.5, repeat: Infinity }}
+                              className="p-3 bg-blue-600/30 rounded-full"
+                            >
+                              <Bell className="w-8 h-8 text-blue-400" />
+                            </motion.div>
 
-                {/* Split View: File Tree + Preview */}
-                <div className="flex-1 flex overflow-hidden">
+                            {/* Title and description */}
+                            <div>
+                              <h3 className="text-xl font-semibold text-blue-300">
+                                New Answer Available
+                              </h3>
+                              <p className="text-gray-400 mt-2">
+                                <span className="text-blue-200 font-medium">
+                                  {newAnswerNotification.displayLabel}
+                                </span>{' '}
+                                has been submitted for{' '}
+                                <span className="text-blue-200 font-medium">
+                                  {newAnswerNotification.agentId}
+                                </span>
+                              </p>
+                              <p className="text-sm text-gray-500 mt-1">
+                                You are currently viewing a historical workspace version.
+                              </p>
+                            </div>
+
+                            {/* Action buttons */}
+                            <div className="flex gap-3 mt-2 w-full">
+                              <button
+                                onClick={handleMoveToCurrentWorkspace}
+                                className="flex-1 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2"
+                              >
+                                <RefreshCw className="w-4 h-4" />
+                                Move to Current
+                              </button>
+                              <button
+                                onClick={handleStayInHistorical}
+                                className="flex-1 px-4 py-2.5 bg-gray-700 hover:bg-gray-600 text-gray-200 font-medium rounded-lg transition-colors flex items-center justify-center gap-2"
+                              >
+                                <History className="w-4 h-4" />
+                                Stay Here
+                              </button>
+                            </div>
+                          </div>
+                        </motion.div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
                   {/* Left: File Tree */}
                   <div className="w-72 shrink-0 border-r border-gray-700 overflow-y-auto custom-scrollbar p-3">
-                    {isLoadingWorkspaces || isLoadingFiles ? (
+                    {/* Only show full loading state on first load (no workspaces yet) */}
+                    {isLoadingWorkspaces && totalWorkspaces === 0 ? (
                       <div className="flex flex-col items-center justify-center h-full text-gray-500">
                         <RefreshCw className="w-6 h-6 mb-3 animate-spin" />
-                        <p className="text-sm">Loading...</p>
+                        <p className="text-sm">Loading workspaces...</p>
                       </div>
                     ) : totalWorkspaces === 0 ? (
                       <div className="flex flex-col items-center justify-center h-full text-gray-500">
@@ -1321,6 +1671,11 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                         <Folder className="w-10 h-10 mb-3 opacity-50" />
                         <p className="text-sm text-center">Select an agent to browse their workspace</p>
                       </div>
+                    ) : isLoadingFiles && workspaceFiles.length === 0 ? (
+                      <div className="flex flex-col items-center justify-center h-full text-gray-500">
+                        <RefreshCw className="w-6 h-6 mb-3 animate-spin" />
+                        <p className="text-sm">Loading files...</p>
+                      </div>
                     ) : workspaceFiles.length === 0 ? (
                       <div className="flex flex-col items-center justify-center h-full text-gray-500">
                         <Folder className="w-10 h-10 mb-3 opacity-50" />
@@ -1328,10 +1683,13 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                       </div>
                     ) : (
                       <div>
-                        <div className="mb-2 text-xs text-gray-500">
-                          {workspaceFiles.length} files
+                        <div className="mb-2 text-xs text-gray-500 flex items-center gap-2">
+                          <span>{workspaceFiles.length} files</span>
                           {selectedAnswerLabel !== 'current' && (
-                            <span className="ml-1 text-amber-400">(historical)</span>
+                            <span className="text-amber-400">(historical)</span>
+                          )}
+                          {isLoadingFiles && (
+                            <RefreshCw className="w-3 h-3 animate-spin text-blue-400" />
                           )}
                         </div>
                         {fileTree.map((node) => (

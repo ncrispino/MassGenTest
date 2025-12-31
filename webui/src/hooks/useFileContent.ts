@@ -17,6 +17,8 @@ interface UseFileContentReturn {
 
 // Simple in-memory cache for file contents
 const fileCache = new Map<string, FileContentResponse>();
+// Track files that returned 404 to avoid repeated fetches
+const notFoundCache = new Set<string>();
 
 export function useFileContent(): UseFileContentReturn {
   const [content, setContent] = useState<FileContentResponse | null>(null);
@@ -34,12 +36,23 @@ export function useFileContent(): UseFileContentReturn {
         setError(null);
         return;
       }
+      // Check if file was not found recently (avoid repeated 404s)
+      if (notFoundCache.has(cacheKey)) {
+        setError('File not found');
+        setContent(null);
+        return;
+      }
     } else {
       fileCache.delete(cacheKey);
+      notFoundCache.delete(cacheKey);
     }
 
     setIsLoading(true);
     setError(null);
+
+    // Add timeout to prevent infinite loading
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
 
     try {
       const params = new URLSearchParams({
@@ -47,19 +60,33 @@ export function useFileContent(): UseFileContentReturn {
         workspace: workspacePath,
       });
 
-      const response = await fetch(`/api/workspace/file?${params}`);
+      const response = await fetch(`/api/workspace/file?${params}`, {
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+
       const data: FileContentResponse = await response.json();
 
       if (!response.ok) {
+        // Cache 404s to avoid repeated fetches
+        if (response.status === 404) {
+          notFoundCache.add(cacheKey);
+        }
         throw new Error(data.error || 'Failed to fetch file');
       }
 
-      // Cache the result
+      // Cache the result and clear any previous 404 cache
       fileCache.set(cacheKey, data);
+      notFoundCache.delete(cacheKey);
 
       setContent(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load file');
+      clearTimeout(timeoutId);
+      if (err instanceof Error && err.name === 'AbortError') {
+        setError('Request timed out. Try again.');
+      } else {
+        setError(err instanceof Error ? err.message : 'Failed to load file');
+      }
       setContent(null);
     } finally {
       setIsLoading(false);
@@ -83,4 +110,13 @@ export function useFileContent(): UseFileContentReturn {
 // Clear cache (useful for testing or when workspaces change)
 export function clearFileCache(): void {
   fileCache.clear();
+  notFoundCache.clear();
+}
+
+// Clear 404 cache for a specific file (call when WebSocket reports file created/modified)
+export function clearFileNotFound(filePath: string, workspacePath: string): void {
+  const cacheKey = `${workspacePath}:${filePath}`;
+  notFoundCache.delete(cacheKey);
+  // Also clear content cache so we fetch fresh content
+  fileCache.delete(cacheKey);
 }
