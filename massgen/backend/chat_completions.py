@@ -198,6 +198,25 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
         async for chunk in self.stream_custom_tool_execution(call):
             yield chunk
 
+    def _customize_api_params(
+        self,
+        api_params: Dict[str, Any],
+        all_params: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Hook for subclasses to modify API params before making the API call.
+
+        Override this method to add provider-specific parameters to the API request.
+        For example, GrokBackend uses this to add Grok Live Search parameters.
+
+        Args:
+            api_params: The API parameters built by the params handler
+            all_params: All configuration parameters including backend config
+
+        Returns:
+            The modified api_params dict
+        """
+        return api_params
+
     async def _stream_with_custom_and_mcp_tools(
         self,
         current_messages: List[Dict[str, Any]],
@@ -236,6 +255,10 @@ class ChatCompletionsBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
             if "tools" not in api_params:
                 api_params["tools"] = []
             api_params["tools"].extend(provider_tools)
+
+        # Hook for subclasses to modify api_params before making the API call
+        # Used by GrokBackend to add Grok Live Search parameters
+        api_params = self._customize_api_params(api_params, all_params)
 
         # Start API call timing
         model = api_params.get("model", "unknown")

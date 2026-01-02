@@ -263,7 +263,11 @@ class MCPClient:
                 return True
 
             except Exception as e:
-                self._circuit_breaker.record_failure(server_name)
+                self._circuit_breaker.record_failure(
+                    server_name,
+                    error_type="connection",
+                    error_message=str(e),
+                )
                 server_client.connection_state = ConnectionState.FAILED
                 logger.error(f"Failed to connect to {server_name}: {e}")
 
@@ -713,6 +717,11 @@ class MCPClient:
 
         except asyncio.TimeoutError:
             # Note: log_tool_execution is NOT called here - parent handles logging
+            # Log the arguments that caused the timeout for debugging
+            logger.error(
+                f"Tool call timed out for {original_tool_name} on {server_name} after {self.timeout_seconds}s. " f"Arguments: {validated_arguments}",
+            )
+
             if self.status_callback:
                 await self.status_callback(
                     "tool_call_timeout",
@@ -721,24 +730,34 @@ class MCPClient:
                         "tool": original_tool_name,
                         "message": f"Tool '{original_tool_name}' timed out after {self.timeout_seconds} seconds",
                         "timeout": self.timeout_seconds,
+                        "arguments": validated_arguments,
                     },
                 )
 
-            # Record failure with circuit breaker
-            self._circuit_breaker.record_failure(server_name)
+            # Record failure with circuit breaker (include arguments for debugging)
+            args_preview = str(validated_arguments)[:500] if validated_arguments else ""
+            self._circuit_breaker.record_failure(
+                server_name,
+                error_type="timeout",
+                error_message=f"Tool '{original_tool_name}' timed out after {self.timeout_seconds}s. Args: {args_preview}",
+            )
 
             raise MCPTimeoutError(
                 f"Tool call timed out after {self.timeout_seconds} seconds",
                 timeout_seconds=self.timeout_seconds,
                 operation=f"call_tool({original_tool_name})",
-                context={"tool_name": original_tool_name, "server_name": server_name},
+                context={"tool_name": original_tool_name, "server_name": server_name, "arguments": validated_arguments},
             )
         except Exception as e:
             # Note: log_tool_execution is NOT called here - parent handles logging
             logger.error(f"Tool call failed for {original_tool_name} on {server_name}: {e}", exc_info=True)
 
             # Record failure with circuit breaker
-            self._circuit_breaker.record_failure(server_name)
+            self._circuit_breaker.record_failure(
+                server_name,
+                error_type="execution",
+                error_message=f"Tool '{original_tool_name}' failed: {e}",
+            )
 
             if self.status_callback:
                 await self.status_callback(
@@ -864,7 +883,11 @@ class MCPClient:
                             break
                     except Exception as e:
                         logger.warning(f"Reconnection attempt {attempt + 1} failed for {server_name}: {e}")
-                        self._circuit_breaker.record_failure(server_name)
+                        self._circuit_breaker.record_failure(
+                            server_name,
+                            error_type="reconnection",
+                            error_message=f"Attempt {attempt + 1} failed: {e}",
+                        )
 
                 reconnect_results[server_name] = success
             else:

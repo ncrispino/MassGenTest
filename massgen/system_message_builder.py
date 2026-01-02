@@ -123,12 +123,14 @@ class SystemMessageBuilder:
         # PRIORITY 1 (CRITICAL): Core Behaviors - HOW to act
         builder.add_section(CoreBehaviorsSection())
 
-        # PRIORITY 4: GPT-5.x Guidance (solution persistence + tool preambles)
-        # Only added for GPT-5.x models based on OpenAI's prompting guides
+        # PRIORITY 4: File Persistence Guidance (solution persistence + tool preambles)
+        # Added for models that tend to output file contents in answers instead of using file tools
+        # GPT-5.x: Based on OpenAI's prompting guides
+        # Grok: Observed behavior of embedding HTML in answers instead of writing to files
         model_name = agent.backend.config.get("model", "").lower()
-        if model_name.startswith("gpt-5"):
+        if model_name.startswith("gpt-5") or model_name.startswith("grok"):
             builder.add_section(GPT5GuidanceSection())
-            logger.info(f"[SystemMessageBuilder] Added GPT-5 guidance section for {agent_id}")
+            logger.info(f"[SystemMessageBuilder] Added file persistence guidance section for {agent_id} (model: {model_name})")
 
         # PRIORITY 1 (HIGH): Output-First Verification - verify outcomes, not implementations
         builder.add_section(OutputFirstVerificationSection())
