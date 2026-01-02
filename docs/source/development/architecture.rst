@@ -486,7 +486,7 @@ compression recovery to preserve partial work when context limits are exceeded.
 
 .. code-block:: text
 
-   API Stream → buffer.add_content() → _streaming_buffer accumulates
+   API Stream → _append_to_streaming_buffer() → _streaming_buffer accumulates
                                               ↓
                               Context error detected
                                               ↓
@@ -539,7 +539,7 @@ compression recovery to preserve partial work when context limits are exceeded.
 **Implementation:**
 
 - ``massgen/backend/_streaming_buffer_mixin.py`` - Mixin class providing buffer methods
-- Buffer methods: ``_clear_streaming_buffer()``, ``_add_to_streaming_buffer()``
+- Buffer methods: ``_clear_streaming_buffer()``, ``_append_to_streaming_buffer()``
 - Buffer respects ``_compression_retry`` flag to avoid clearing during retry
 
 **Adding buffer support to a backend:**

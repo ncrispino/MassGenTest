@@ -19,6 +19,10 @@ from ..structured_logging import log_context_compression
 if TYPE_CHECKING:
     from .base import BackendBase
 
+# Keys to exclude when creating compression backend (no MCP, no tools, no filesystem)
+# Also exclude api_key since it's passed explicitly to create_backend
+COMPRESSION_EXCLUDED_KEYS = {"mcp_servers", "custom_tools", "cwd", "enable_multimodal_tools", "api_key"}
+
 # Conversation summarization prompts
 #
 # Uses a 3-message structure to clearly separate the conversation being summarized
@@ -165,19 +169,31 @@ async def compress_messages_for_recovery(
         logger.info(f"[CompressionUtils] Generated summary: {len(summary)} chars")
 
     except (httpx.HTTPStatusError, httpx.TimeoutException, asyncio.TimeoutError) as e:
-        # Expected network/API errors - fallback to truncation is appropriate
+        # Expected network/API errors - fallback to useful guidance
         logger.warning(
-            f"[CompressionUtils] Summarization failed due to API/network error: {e}. " "Using simple truncation.",
+            f"[CompressionUtils] Summarization failed due to API/network error: {e}. " "Using fallback guidance.",
         )
-        summary = "[Previous conversation content was truncated due to API error during compression. " "Some context may be incomplete.]"
+        summary = """[Context was compressed but summarization failed due to API error]
+
+Your previous work was lost from context. To continue:
+1. Read `tasks/plan.json` to see your task plan and what's completed vs pending
+2. Read `tasks/evolving_skill/SKILL.md` for your workflow (if applicable)
+3. Use `ls -la` to see what files exist in the workspace
+4. Continue working on pending tasks - do NOT call new_answer yet"""
 
     except Exception as e:
         # Unexpected error - log with full stack trace for debugging
         logger.error(
-            f"[CompressionUtils] Unexpected error during summarization: {e}. " "Using simple truncation.",
+            f"[CompressionUtils] Unexpected error during summarization: {e}. " "Using fallback guidance.",
             exc_info=True,
         )
-        summary = "[Previous conversation content was truncated due to context limits]"
+        summary = """[Context was compressed but summarization failed]
+
+Your previous work was lost from context. To continue:
+1. Read `tasks/plan.json` to see your task plan and what's completed vs pending
+2. Read `tasks/evolving_skill/SKILL.md` for your workflow (if applicable)
+3. Use `ls -la` to see what files exist in the workspace
+4. Continue working on pending tasks - do NOT call new_answer yet"""
 
     # Build result: system → user message → summary → any additional recent messages
     # Order matters! Putting summary AFTER user message means the model sees it as
@@ -484,12 +500,26 @@ async def _generate_summary(backend: "BackendBase", conversation_text: str) -> s
         {"role": "user", "content": SUMMARIZER_REQUEST_PROMPT},
     ]
 
-    # Use the backend's stream_with_tools() - works uniformly for all backends
+    # Create a cloned backend for compression to avoid MCP cleanup side effects.
+    # When the original backend's stream_with_tools() completes, __aexit__ calls cleanup_mcp()
+    # which clears _mcp_functions. Using a separate backend prevents this from affecting
+    # the original backend's MCP tools for the retry call.
+    from ..cli import create_backend
+
+    # Build config for compression backend - exclude MCP/tools and let create_backend handle api_key from env
+    compression_config = {k: v for k, v in backend.config.items() if k not in COMPRESSION_EXCLUDED_KEYS}
+    provider_type = backend.get_provider_name().lower()
+    compression_backend = create_backend(
+        provider_type,
+        **compression_config,
+    )
+
+    # Use the cloned backend's stream_with_tools() - works uniformly for all backends
     # Pass _compression_retry=True to prevent recursive compression attempts
     # Collect content chunks into final response
     # Filter out mcp_status chunks (connection messages, tool registration, etc.)
     content_parts = []
-    async for chunk in backend.stream_with_tools(summarizer_messages, tools=[], _compression_retry=True):
+    async for chunk in compression_backend.stream_with_tools(summarizer_messages, tools=[], _compression_retry=True):
         if chunk.content and chunk.type != "mcp_status":
             content_parts.append(chunk.content)
 
@@ -585,5 +615,62 @@ def _save_compression_debug(
     except Exception as e:
         logger.warning(
             f"[CompressionUtils] Failed to save compression debug: {e}",
+            exc_info=True,
+        )
+
+
+def save_retry_input_debug(
+    compressed_messages: List[Dict[str, Any]],
+    tools: List[Any],
+    error: Optional[str] = None,
+) -> None:
+    """Save the retry input after compression to the debug folder.
+
+    This helps debug why retry calls fail even after compression.
+    """
+    try:
+        log_dir = get_log_session_dir()
+        if not log_dir:
+            return
+
+        compression_dir = log_dir / "compression_debug"
+        compression_dir.mkdir(parents=True, exist_ok=True)
+
+        timestamp = int(time.time() * 1000)
+        filename = f"compression_{timestamp}_retry_input.json"
+        filepath = compression_dir / filename
+
+        # Estimate tokens
+        msg_tokens = _estimate_messages_tokens(compressed_messages)
+
+        # Estimate tool tokens (rough - serialize and count)
+        calc = _get_token_calculator()
+        try:
+            tools_json = json.dumps(tools, default=str)
+            tool_tokens = calc.estimate_tokens(tools_json)
+        except Exception:
+            tool_tokens = 0
+
+        data = {
+            "timestamp": timestamp,
+            "compressed_messages": compressed_messages,
+            "compressed_message_count": len(compressed_messages),
+            "compressed_message_tokens": msg_tokens,
+            "tools_count": len(tools),
+            "tools_tokens_estimate": tool_tokens,
+            "total_tokens_estimate": msg_tokens + tool_tokens,
+        }
+
+        if error:
+            data["error"] = error
+
+        with open(filepath, "w") as f:
+            json.dump(data, f, indent=2, default=str)
+
+        logger.info(f"[CompressionUtils] Saved retry input debug: {filepath}")
+
+    except Exception as e:
+        logger.warning(
+            f"[CompressionUtils] Failed to save retry input debug: {e}",
             exc_info=True,
         )

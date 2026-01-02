@@ -203,12 +203,19 @@ class ResponseBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                     buffer_content=buffer_for_compression,
                 )
 
+                # CRITICAL: Remove previous_response_id - it would add all prior context server-side,
+                # making our compression pointless (Response API maintains conversation state)
+                had_prev_id = "previous_response_id" in all_params
+                compression_params = {k: v for k, v in all_params.items() if k != "previous_response_id"}
+                logger.warning(f"[Compression DEBUG _stream_api] Removed previous_response_id from all_params: was_present={had_prev_id}")
+
                 # Rebuild API params with compressed messages
                 api_params = await self.api_params_handler.build_api_params(
                     compressed_messages,
                     tools,
-                    all_params,
+                    compression_params,
                 )
+                logger.warning(f"[Compression DEBUG _stream_api] Final api_params has previous_response_id: {'previous_response_id' in api_params}")
 
                 # Retry with compressed messages
                 stream = await client.responses.create(**api_params)
@@ -366,6 +373,11 @@ class ResponseBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
         # Check for compression retry flag to prevent infinite loops
         _compression_retry = kwargs.get("_compression_retry", False)
 
+        # Debug: ALWAYS log before API call
+        prev_id = api_params.get("previous_response_id")
+        input_count = len(api_params.get("input", []))
+        logger.warning(f"[Response API DEBUG] About to call API: _compression_retry={_compression_retry}, previous_response_id={prev_id}, input_count={input_count}")
+
         # Start streaming with context error handling
         try:
             stream = await client.responses.create(**api_params)
@@ -411,12 +423,19 @@ class ResponseBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                     buffer_content=buffer_for_compression,
                 )
 
+                # CRITICAL: Remove previous_response_id - it would add all prior context server-side,
+                # making our compression pointless (Response API maintains conversation state)
+                had_prev_id = "previous_response_id" in all_params
+                compression_params = {k: v for k, v in all_params.items() if k != "previous_response_id"}
+                logger.warning(f"[Compression DEBUG] Removed previous_response_id from all_params: was_present={had_prev_id}")
+
                 # Rebuild API params with compressed messages
                 api_params = await self.api_params_handler.build_api_params(
                     compressed_messages,
                     tools,
-                    all_params,
+                    compression_params,
                 )
+                logger.warning(f"[Compression DEBUG] Final api_params has previous_response_id: {'previous_response_id' in api_params}")
 
                 # Retry with compressed messages
                 stream = await client.responses.create(**api_params)
@@ -766,8 +785,11 @@ class ResponseBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
                 updated_messages = super()._trim_message_history(updated_messages)
 
                 # Pass response_id for reasoning continuity in recursive call
+                # BUT NOT if we're in compression retry mode - we need to stay stateless
+                # to avoid re-accumulating context that would exceed the window again
                 recursive_kwargs = kwargs.copy()
-                if response_id:
+                _compression_retry = kwargs.get("_compression_retry", False)
+                if response_id and not _compression_retry:
                     recursive_kwargs["previous_response_id"] = response_id
 
                 # Recursive call with updated messages

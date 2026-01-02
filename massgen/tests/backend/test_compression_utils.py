@@ -428,13 +428,16 @@ class TestCompressMessagesForRecovery:
             )
             yield  # Make it a generator
 
-        mock_backend.stream_with_tools = mock_stream_error
+        with patch("massgen.cli.create_backend") as mock_create:
+            mock_compression_backend = MagicMock()
+            mock_compression_backend.stream_with_tools = mock_stream_error
+            mock_create.return_value = mock_compression_backend
 
-        result = await compress_messages_for_recovery(
-            sample_messages,
-            mock_backend,
-            target_ratio=0.2,
-        )
+            result = await compress_messages_for_recovery(
+                sample_messages,
+                mock_backend,
+                target_ratio=0.2,
+            )
 
         # Should still produce a result
         assert len(result) > 0
@@ -449,13 +452,16 @@ class TestCompressMessagesForRecovery:
             raise asyncio.TimeoutError("Request timed out")
             yield  # Make it a generator
 
-        mock_backend.stream_with_tools = mock_stream_timeout
+        with patch("massgen.cli.create_backend") as mock_create:
+            mock_compression_backend = MagicMock()
+            mock_compression_backend.stream_with_tools = mock_stream_timeout
+            mock_create.return_value = mock_compression_backend
 
-        result = await compress_messages_for_recovery(
-            sample_messages,
-            mock_backend,
-            target_ratio=0.2,
-        )
+            result = await compress_messages_for_recovery(
+                sample_messages,
+                mock_backend,
+                target_ratio=0.2,
+            )
 
         # Should still produce a result
         assert len(result) > 0
@@ -480,8 +486,8 @@ class TestCompressMessagesForRecovery:
 
         # Should still produce a result
         assert len(result) > 0
-        # Summary should indicate truncation
-        assert any("truncated" in str(msg.get("content", "")).lower() for msg in result)
+        # Summary should indicate fallback guidance (tells agent how to recover)
+        assert any("summarization failed" in str(msg.get("content", "")).lower() for msg in result)
 
     @pytest.mark.asyncio
     async def test_result_has_valid_message_structure(self, mock_streaming_backend, sample_messages):
@@ -532,16 +538,92 @@ class TestCompressMessagesForRecovery:
         backend = MagicMock()
         backend.get_provider_name.return_value = "test"
         backend.config = {"model": "test-model"}
-        backend.stream_with_tools = mock_stream_with_mcp
+        backend.api_key = "test-key"
 
-        result = await compress_messages_for_recovery(
-            sample_messages,
-            backend,
-            target_ratio=0.2,
-        )
+        with patch("massgen.cli.create_backend") as mock_create:
+            mock_compression_backend = MagicMock()
+            mock_compression_backend.stream_with_tools = mock_stream_with_mcp
+            mock_create.return_value = mock_compression_backend
+
+            result = await compress_messages_for_recovery(
+                sample_messages,
+                backend,
+                target_ratio=0.2,
+            )
 
         # Summary should only contain actual content, not MCP status
         summary_content = result[-1]["content"]
         assert "Connecting to MCP" not in summary_content
         assert "Tool registered" not in summary_content
         assert "Actual summary content" in summary_content
+
+    @pytest.mark.asyncio
+    async def test_compression_uses_cloned_backend(self, sample_messages):
+        """Verify compression creates a cloned backend instead of reusing original.
+
+        Regression test for bug where using the same backend for compression
+        triggered __aexit__ cleanup which cleared _mcp_functions.
+        """
+        backend = MagicMock()
+        backend.config = {"model": "gpt-4", "mcp_servers": ["server1"], "custom_tools": ["tool1"]}
+        backend.get_provider_name.return_value = "OpenAI"
+        backend.api_key = "test-key"
+
+        with patch("massgen.cli.create_backend") as mock_create:
+            # Create mock compression backend
+            mock_compression_backend = MagicMock()
+
+            async def mock_stream(*args, **kwargs):
+                yield StreamChunk(type="content", content="Summary of conversation")
+
+            mock_compression_backend.stream_with_tools = mock_stream
+            mock_create.return_value = mock_compression_backend
+
+            await compress_messages_for_recovery(
+                sample_messages,
+                backend,
+                target_ratio=0.2,
+            )
+
+            # create_backend should be called to clone the backend
+            mock_create.assert_called_once()
+
+            # Verify stripped config - no MCP, no custom tools
+            call_kwargs = mock_create.call_args[1]
+            assert "mcp_servers" not in call_kwargs
+            assert "custom_tools" not in call_kwargs
+
+            # Original backend's stream_with_tools should NOT be called
+            backend.stream_with_tools.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_mcp_tools_preserved_after_compression(self, sample_messages):
+        """Regression test: MCP tools must not be cleared during compression.
+
+        This tests the fix for the bug where compression recovery would clear
+        _mcp_functions on the original backend, causing the retry to lose MCP tools.
+        """
+        backend = MagicMock()
+        backend.config = {"model": "gpt-4"}
+        backend.get_provider_name.return_value = "OpenAI"
+        backend.api_key = "test-key"
+        backend._mcp_functions = {"mcp__filesystem__write_file": MagicMock()}
+
+        with patch("massgen.cli.create_backend") as mock_create:
+            mock_compression_backend = MagicMock()
+
+            async def mock_stream(*args, **kwargs):
+                yield StreamChunk(type="content", content="Summary")
+
+            mock_compression_backend.stream_with_tools = mock_stream
+            mock_create.return_value = mock_compression_backend
+
+            await compress_messages_for_recovery(
+                sample_messages,
+                backend,
+                target_ratio=0.2,
+            )
+
+            # MCP tools should still be present on original backend
+            assert len(backend._mcp_functions) == 1
+            assert "mcp__filesystem__write_file" in backend._mcp_functions

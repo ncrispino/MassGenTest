@@ -3057,7 +3057,11 @@ class CustomToolAndMCPBackend(LLMBackend):
                                 )
 
                                 # Retry with compressed messages (with flag to prevent infinite loops)
+                                # CRITICAL: Remove previous_response_id - it would add all prior context server-side,
+                                # making our compression pointless (Response API maintains conversation state)
                                 retry_kwargs = {**kwargs, "_compression_retry": True}
+                                had_prev_id = retry_kwargs.pop("previous_response_id", None) is not None
+                                logger.warning(f"[Compression DEBUG base] Removed previous_response_id from retry_kwargs: was_present={had_prev_id}")
 
                                 if use_mcp or use_custom_tools:
                                     async for chunk in self._stream_with_custom_and_mcp_tools(
@@ -3080,6 +3084,16 @@ class CustomToolAndMCPBackend(LLMBackend):
                                     f"[{self.get_provider_name()}] Compression recovery successful",
                                 )
                             except Exception as retry_error:
+                                # Save retry input to debug folder for analysis
+                                from ..backend._compression_utils import (
+                                    save_retry_input_debug,
+                                )
+
+                                save_retry_input_debug(
+                                    compressed_messages,
+                                    tools,
+                                    error=str(retry_error),
+                                )
                                 logger.error(
                                     f"Compression recovery failed: {retry_error}",
                                     exc_info=True,
