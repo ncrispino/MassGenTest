@@ -381,9 +381,10 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
 
         except asyncio.TimeoutError:
             execution_time = time.time() - start_time
-            return SubagentResult.create_timeout(
+            # Attempt to recover completed work from workspace
+            return self._create_timeout_result_with_recovery(
                 subagent_id=config.id,
-                workspace_path=str(workspace),
+                workspace=workspace,
                 timeout_seconds=execution_time,
             )
 
@@ -553,9 +554,10 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
             _, subprocess_log_dir = self._parse_subprocess_status(workspace)
             self._write_subprocess_log_reference(config.id, subprocess_log_dir, error="Subagent timed out")
             log_dir = self._get_subagent_log_dir(config.id)
-            return SubagentResult.create_timeout(
+            # Attempt to recover completed work from workspace
+            return self._create_timeout_result_with_recovery(
                 subagent_id=config.id,
-                workspace_path=str(workspace),
+                workspace=workspace,
                 timeout_seconds=config.timeout_seconds or self.default_timeout,
                 log_path=str(log_dir) if log_dir else None,
             )
@@ -573,11 +575,11 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
             _, subprocess_log_dir = self._parse_subprocess_status(workspace)
             self._write_subprocess_log_reference(config.id, subprocess_log_dir, error="Subagent cancelled")
             log_dir = self._get_subagent_log_dir(config.id)
-            return SubagentResult.create_error(
+            # Attempt to recover completed work from workspace
+            return self._create_timeout_result_with_recovery(
                 subagent_id=config.id,
-                error="Subagent cancelled",
-                workspace_path=str(workspace),
-                execution_time_seconds=time.time() - start_time,
+                workspace=workspace,
+                timeout_seconds=time.time() - start_time,
                 log_path=str(log_dir) if log_dir else None,
             )
         except Exception as e:
@@ -927,9 +929,10 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                         timeout=config.timeout_seconds,
                     )
                 except asyncio.TimeoutError:
-                    result = SubagentResult.create_timeout(
+                    # Attempt to recover completed work from workspace
+                    result = self._create_timeout_result_with_recovery(
                         subagent_id=config.id,
-                        workspace_path=str(workspace),
+                        workspace=workspace,
                         timeout_seconds=config.timeout_seconds,
                     )
                     self._write_status(
@@ -1122,9 +1125,10 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                         timeout=config.timeout_seconds,
                     )
                 except asyncio.TimeoutError:
-                    result = SubagentResult.create_timeout(
+                    # Attempt to recover completed work from workspace
+                    result = self._create_timeout_result_with_recovery(
                         subagent_id=config.id,
-                        workspace_path=str(workspace),
+                        workspace=workspace,
                         timeout_seconds=config.timeout_seconds,
                     )
                     self._write_status(
@@ -1438,3 +1442,232 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
             self.cleanup_subagent(subagent_id, remove_workspace=remove_workspaces)
 
         return count
+
+    # =========================================================================
+    # Timeout Recovery Methods
+    # =========================================================================
+
+    def _extract_status_from_workspace(self, workspace: Path) -> Dict[str, Any]:
+        """
+        Extract coordination status from a subagent's workspace.
+
+        Reads the status.json file from the subagent's full_logs directory
+        to determine completion state, winner, and costs.
+
+        Args:
+            workspace: Path to the subagent's workspace directory
+
+        Returns:
+            Dictionary with:
+            - phase: Coordination phase (initial_answer, enforcement, presentation)
+            - completion_percentage: 0-100 progress
+            - winner: Agent ID of winner if selected
+            - votes: Vote counts by agent
+            - has_completed_work: True if any useful work was done
+            - costs: Token usage costs if available
+        """
+        result = {
+            "phase": None,
+            "completion_percentage": None,
+            "winner": None,
+            "votes": {},
+            "has_completed_work": False,
+            "costs": {},
+            "historical_workspaces": {},
+        }
+
+        status_file = workspace / "full_logs" / "status.json"
+        if not status_file.exists():
+            return result
+
+        try:
+            status_data = json.loads(status_file.read_text())
+
+            # Extract coordination phase
+            result["phase"] = status_data.get("coordination.phase")
+            result["completion_percentage"] = status_data.get("coordination.completion_percentage")
+
+            # Extract winner and votes
+            result["winner"] = status_data.get("results.winner")
+            result["votes"] = status_data.get("results.votes", {})
+
+            # Extract historical workspaces for answer lookup
+            result["historical_workspaces"] = status_data.get("historical_workspaces", {})
+
+            # Extract costs
+            if "costs.total_input_tokens" in status_data:
+                result["costs"] = {
+                    "input_tokens": status_data.get("costs.total_input_tokens", 0),
+                    "output_tokens": status_data.get("costs.total_output_tokens", 0),
+                    "estimated_cost": status_data.get("costs.total_estimated_cost", 0.0),
+                }
+
+            # Determine if there's completed work
+            phase = result["phase"]
+            if phase == "presentation":
+                result["has_completed_work"] = True
+            elif phase == "enforcement":
+                # In enforcement phase, we have answers if there are votes or workspaces
+                result["has_completed_work"] = bool(result["votes"]) or bool(result["historical_workspaces"])
+            elif phase == "initial_answer":
+                # In initial phase, check if any workspaces exist
+                result["has_completed_work"] = bool(result["historical_workspaces"])
+
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning(f"[SubagentManager] Failed to read status.json: {e}")
+
+        return result
+
+    def _extract_answer_from_workspace(
+        self,
+        workspace: Path,
+        winner_agent_id: Optional[str] = None,
+        votes: Optional[Dict[str, int]] = None,
+    ) -> Optional[str]:
+        """
+        Extract the best available answer from a subagent's workspace.
+
+        Follows the same selection logic as the orchestrator's graceful timeout:
+        1. If winner_agent_id is set, use that agent's answer
+        2. If votes exist, select agent with most votes (ties broken by registration order)
+        3. Fall back to first registered agent with an answer
+        4. Check answer.txt if no agent workspaces
+
+        Args:
+            workspace: Path to the subagent's workspace
+            winner_agent_id: Agent ID of explicit winner (from status.json)
+            votes: Vote counts by agent (for selection when no winner)
+
+        Returns:
+            Answer text if found, None otherwise
+        """
+        # First check for answer.txt (written by orchestrator on completion)
+        answer_file = workspace / "answer.txt"
+        if answer_file.exists():
+            try:
+                return answer_file.read_text().strip()
+            except OSError:
+                pass
+
+        # Try to get answer from agent workspaces
+        status = self._extract_status_from_workspace(workspace)
+        historical_workspaces = status.get("historical_workspaces", {})
+
+        # If winner specified but not in historical_workspaces, try standard path
+        if winner_agent_id and winner_agent_id not in historical_workspaces:
+            standard_winner_path = workspace / "workspaces" / winner_agent_id
+            if standard_winner_path.exists():
+                historical_workspaces[winner_agent_id] = str(standard_winner_path)
+
+        # If no historical workspaces, try to discover from standard workspaces dir
+        if not historical_workspaces:
+            workspaces_dir = workspace / "workspaces"
+            if workspaces_dir.exists():
+                for agent_dir in workspaces_dir.iterdir():
+                    if agent_dir.is_dir():
+                        historical_workspaces[agent_dir.name] = str(agent_dir)
+
+        if not historical_workspaces:
+            return None
+
+        # Determine which agent's answer to use
+        selected_agent = None
+
+        if winner_agent_id and winner_agent_id in historical_workspaces:
+            selected_agent = winner_agent_id
+        elif votes:
+            # Select by vote count (most votes wins, ties broken by dict order)
+            vote_counts = votes if isinstance(votes, dict) else {}
+            if vote_counts:
+                max_votes = max(vote_counts.values())
+                for agent_id in historical_workspaces.keys():
+                    if vote_counts.get(agent_id, 0) == max_votes:
+                        selected_agent = agent_id
+                        break
+
+        # Fall back to first agent in registration order
+        if not selected_agent and historical_workspaces:
+            selected_agent = next(iter(historical_workspaces.keys()))
+
+        if not selected_agent:
+            return None
+
+        # Read answer from selected agent's workspace
+        agent_workspace = Path(historical_workspaces[selected_agent])
+        for answer_filename in ["answer.md", "answer.txt", "response.md", "response.txt"]:
+            answer_path = agent_workspace / answer_filename
+            if answer_path.exists():
+                try:
+                    return answer_path.read_text().strip()
+                except OSError:
+                    continue
+
+        return None
+
+    def _extract_costs_from_status(self, workspace: Path) -> Dict[str, Any]:
+        """
+        Extract token usage costs from a subagent's status.json.
+
+        Args:
+            workspace: Path to the subagent's workspace
+
+        Returns:
+            Dictionary with input_tokens, output_tokens, estimated_cost
+            Empty dict if no costs available
+        """
+        status = self._extract_status_from_workspace(workspace)
+        return status.get("costs", {})
+
+    def _create_timeout_result_with_recovery(
+        self,
+        subagent_id: str,
+        workspace: Path,
+        timeout_seconds: float,
+        log_path: Optional[str] = None,
+    ) -> SubagentResult:
+        """
+        Create a SubagentResult for a timed-out subagent, recovering any completed work.
+
+        This method attempts to extract useful results from a subagent that
+        timed out but may have completed work before the timeout.
+
+        Args:
+            subagent_id: ID of the subagent
+            workspace: Path to subagent workspace
+            timeout_seconds: How long the subagent ran
+            log_path: Path to log directory
+
+        Returns:
+            SubagentResult with recovered answer and costs if available
+        """
+        # Extract status from workspace
+        status = self._extract_status_from_workspace(workspace)
+
+        # Extract answer
+        recovered_answer = self._extract_answer_from_workspace(
+            workspace,
+            winner_agent_id=status.get("winner"),
+            votes=status.get("votes"),
+        )
+
+        # Extract costs
+        token_usage = status.get("costs", {})
+
+        # Determine if this is partial or complete
+        is_partial = False
+        if recovered_answer is not None:
+            phase = status.get("phase")
+            # Partial if we have an answer but no winner and not in presentation
+            if phase != "presentation" and not status.get("winner"):
+                is_partial = True
+
+        return SubagentResult.create_timeout_with_recovery(
+            subagent_id=subagent_id,
+            workspace_path=str(workspace),
+            timeout_seconds=timeout_seconds,
+            recovered_answer=recovered_answer,
+            completion_percentage=status.get("completion_percentage"),
+            token_usage=token_usage,
+            log_path=log_path,
+            is_partial=is_partial,
+        )

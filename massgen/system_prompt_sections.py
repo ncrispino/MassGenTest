@@ -1794,15 +1794,24 @@ spawn_subagents(
     "results": [
         {{
             "subagent_id": "research_oauth",
-            "status": "completed",
+            "status": "completed",  // or "completed_but_timeout", "partial", "timeout", "error"
             "workspace": "{self.workspace_path}/subagents/research_oauth/workspace",
             "answer": "The subagent's answer with file paths...",
-            "execution_time_seconds": 45.2
+            "execution_time_seconds": 45.2,
+            "completion_percentage": 100,  // Progress when timeout occurred (0-100)
+            "token_usage": {{"input_tokens": 1000, "output_tokens": 500}}
         }}
     ],
     "summary": {{"total": 1, "completed": 1, "failed": 0, "timeout": 0}}
 }}
 ```
+
+**Status values:**
+- `completed`: Normal successful completion
+- `completed_but_timeout`: Timed out but answer was recovered (use it!)
+- `partial`: Some work done, check workspace for partial files
+- `timeout`: No recoverable work, but workspace still accessible
+- `error`: Failed with error
 
 ## Workspace Structure
 

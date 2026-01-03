@@ -212,18 +212,24 @@ class SubagentResult:
 
     Attributes:
         subagent_id: ID of the subagent
-        status: Final status (completed/timeout/error)
+        status: Final status - one of:
+            - completed: Normal successful completion
+            - completed_but_timeout: Work completed but parent timed out (recovered answer)
+            - partial: Partial work available (in voting phase, no winner)
+            - timeout: Timed out with no recoverable work
+            - error: Failed with error
         success: Whether execution was successful
         answer: Final answer text from the subagent (includes relevant file paths)
-        workspace_path: Path to the subagent's workspace
+        workspace_path: Path to the subagent's workspace (always set, even on timeout/error)
         execution_time_seconds: How long the subagent ran
         error: Error message if status is error/timeout
         token_usage: Token usage statistics (if available)
         log_path: Path to subagent log directory (for debugging on failure/timeout)
+        completion_percentage: Coordination completion percentage (0-100) if available
     """
 
     subagent_id: str
-    status: Literal["completed", "timeout", "error"]
+    status: Literal["completed", "completed_but_timeout", "partial", "timeout", "error"]
     success: bool
     answer: Optional[str] = None
     workspace_path: str = ""
@@ -231,6 +237,7 @@ class SubagentResult:
     error: Optional[str] = None
     token_usage: Dict[str, int] = field(default_factory=dict)
     log_path: Optional[str] = None
+    completion_percentage: Optional[int] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert result to dictionary for tool return value."""
@@ -247,6 +254,9 @@ class SubagentResult:
         # Include log_path if available (useful for debugging failed/timed out subagents)
         if self.log_path:
             result["log_path"] = self.log_path
+        # Include completion_percentage if available (for timeout recovery)
+        if self.completion_percentage is not None:
+            result["completion_percentage"] = self.completion_percentage
         return result
 
     @classmethod
@@ -262,6 +272,7 @@ class SubagentResult:
             error=data.get("error"),
             token_usage=data.get("token_usage", {}),
             log_path=data.get("log_path"),
+            completion_percentage=data.get("completion_percentage"),
         )
 
     @classmethod
@@ -325,6 +336,64 @@ class SubagentResult:
             execution_time_seconds=execution_time_seconds,
             error=error,
             log_path=log_path,
+        )
+
+    @classmethod
+    def create_timeout_with_recovery(
+        cls,
+        subagent_id: str,
+        workspace_path: str,
+        timeout_seconds: float,
+        recovered_answer: Optional[str] = None,
+        completion_percentage: Optional[int] = None,
+        token_usage: Optional[Dict[str, Any]] = None,
+        log_path: Optional[str] = None,
+        is_partial: bool = False,
+    ) -> "SubagentResult":
+        """
+        Create a timeout result with recovered work from the workspace.
+
+        This factory method is used when a subagent times out but has completed
+        or partial work that can be recovered from its workspace.
+
+        Args:
+            subagent_id: ID of the subagent
+            workspace_path: Path to subagent workspace (always provided)
+            timeout_seconds: How long the subagent ran before timeout
+            recovered_answer: Answer extracted from workspace (None if no work)
+            completion_percentage: Coordination completion percentage (0-100)
+            token_usage: Token costs extracted from status.json
+            log_path: Path to log directory
+            is_partial: True if work is partial (no winner selected)
+
+        Returns:
+            SubagentResult with appropriate status:
+            - completed_but_timeout: Full answer recovered (success=True)
+            - partial: Partial work recovered (success=False)
+            - timeout: No work recovered (success=False)
+        """
+        if recovered_answer is not None:
+            if is_partial:
+                status = "partial"
+                success = False
+            else:
+                status = "completed_but_timeout"
+                success = True
+        else:
+            status = "timeout"
+            success = False
+
+        return cls(
+            subagent_id=subagent_id,
+            status=status,
+            success=success,
+            answer=recovered_answer,
+            workspace_path=workspace_path,
+            execution_time_seconds=timeout_seconds,
+            error=f"Subagent exceeded timeout of {timeout_seconds} seconds",
+            token_usage=token_usage or {},
+            log_path=log_path,
+            completion_percentage=completion_percentage,
         )
 
 

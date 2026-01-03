@@ -225,10 +225,11 @@ async def create_server() -> fastmcp.FastMCP:
             timeout_seconds: (optional) Max time per subagent, default 300s
 
         TIMEOUT HANDLING:
-        If subagents timeout, check their workspaces anyway - they may have partial work:
-        - Result includes "workspace" path for each subagent
-        - Read files from that path to salvage any completed work
-        - Complete remaining work yourself
+        Subagents that timeout will attempt to recover any completed work:
+        - "completed_but_timeout": Full answer recovered (success=True, use the answer)
+        - "partial": Some work done but incomplete (check workspace for partial files)
+        - "timeout": No recoverable work (check workspace anyway for any files)
+        The "workspace" path is ALWAYS provided, even on timeout/error.
 
         Returns:
             {{
@@ -236,10 +237,12 @@ async def create_server() -> fastmcp.FastMCP:
                 "results": [
                     {{
                         "subagent_id": "...",
-                        "status": "completed" | "timeout" | "error",
-                        "workspace": "/path/to/subagent/workspace",  # CHECK THIS ON TIMEOUT!
-                        "answer": "...",
-                        "execution_time_seconds": float
+                        "status": "completed" | "completed_but_timeout" | "partial" | "timeout" | "error",
+                        "workspace": "/path/to/subagent/workspace",  # ALWAYS provided
+                        "answer": "..." | null,  # May be recovered even on timeout
+                        "execution_time_seconds": float,
+                        "completion_percentage": int | null,  # Progress before timeout (0-100)
+                        "token_usage": {{"input_tokens": N, "output_tokens": N}}
                     }}
                 ],
                 "summary": {{"total": N, "completed": N, "timeout": N}}
