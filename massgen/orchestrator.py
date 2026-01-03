@@ -869,12 +869,18 @@ class Orchestrator(ChatAgent):
         # Get subagent configuration from coordination config
         max_concurrent = 3
         default_timeout = 300
+        min_timeout = 60
+        max_timeout = 600
         subagent_orchestrator_config_json = "{}"
         if hasattr(self.config, "coordination_config"):
             if hasattr(self.config.coordination_config, "subagent_max_concurrent"):
                 max_concurrent = self.config.coordination_config.subagent_max_concurrent
             if hasattr(self.config.coordination_config, "subagent_default_timeout"):
                 default_timeout = self.config.coordination_config.subagent_default_timeout
+            if hasattr(self.config.coordination_config, "subagent_min_timeout"):
+                min_timeout = self.config.coordination_config.subagent_min_timeout
+            if hasattr(self.config.coordination_config, "subagent_max_timeout"):
+                max_timeout = self.config.coordination_config.subagent_max_timeout
             # Get subagent_orchestrator config if present
             if hasattr(self.config.coordination_config, "subagent_orchestrator"):
                 so_config = self.config.coordination_config.subagent_orchestrator
@@ -906,6 +912,10 @@ class Orchestrator(ChatAgent):
             str(max_concurrent),
             "--default-timeout",
             str(default_timeout),
+            "--min-timeout",
+            str(min_timeout),
+            "--max-timeout",
+            str(max_timeout),
             "--orchestrator-config",
             subagent_orchestrator_config_json,
             "--log-directory",

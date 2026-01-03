@@ -151,14 +151,20 @@ class TestWorkspaceStatusParsing:
             logs_dir.mkdir(parents=True)
 
             status_data = {
-                "coordination.phase": "presentation",
-                "coordination.completion_percentage": 100,
-                "coordination.is_final_presentation": True,
-                "results.winner": "agent_1",
-                "results.votes": {"agent_1": 3, "agent_2": 1},
-                "costs.total_input_tokens": 204656,
-                "costs.total_output_tokens": 8419,
-                "costs.total_estimated_cost": 0.048142,
+                "coordination": {
+                    "phase": "presentation",
+                    "completion_percentage": 100,
+                    "is_final_presentation": True,
+                },
+                "results": {
+                    "winner": "agent_1",
+                    "votes": {"agent_1": 3, "agent_2": 1},
+                },
+                "costs": {
+                    "total_input_tokens": 204656,
+                    "total_output_tokens": 8419,
+                    "total_estimated_cost": 0.048142,
+                },
             }
             (logs_dir / "status.json").write_text(json.dumps(status_data))
 
@@ -180,12 +186,18 @@ class TestWorkspaceStatusParsing:
             logs_dir.mkdir(parents=True)
 
             status_data = {
-                "coordination.phase": "enforcement",
-                "coordination.completion_percentage": 75,
-                "results.votes": {"agent_1": 1, "agent_2": 1},  # Tie, no winner
-                "costs.total_input_tokens": 150000,
-                "costs.total_output_tokens": 5000,
-                "costs.total_estimated_cost": 0.035,
+                "coordination": {
+                    "phase": "enforcement",
+                    "completion_percentage": 75,
+                },
+                "results": {
+                    "votes": {"agent_1": 1, "agent_2": 1},  # Tie, no winner
+                },
+                "costs": {
+                    "total_input_tokens": 150000,
+                    "total_output_tokens": 5000,
+                    "total_estimated_cost": 0.035,
+                },
             }
             (logs_dir / "status.json").write_text(json.dumps(status_data))
 
@@ -207,8 +219,10 @@ class TestWorkspaceStatusParsing:
             logs_dir.mkdir(parents=True)
 
             status_data = {
-                "coordination.phase": "initial_answer",
-                "coordination.completion_percentage": 10,
+                "coordination": {
+                    "phase": "initial_answer",
+                    "completion_percentage": 10,
+                },
             }
             (logs_dir / "status.json").write_text(json.dumps(status_data))
 
@@ -364,9 +378,11 @@ class TestTokenUsageExtraction:
             logs_dir.mkdir(parents=True)
 
             status_data = {
-                "costs.total_input_tokens": 204656,
-                "costs.total_output_tokens": 8419,
-                "costs.total_estimated_cost": 0.048142,
+                "costs": {
+                    "total_input_tokens": 204656,
+                    "total_output_tokens": 8419,
+                    "total_estimated_cost": 0.048142,
+                },
             }
             (logs_dir / "status.json").write_text(json.dumps(status_data))
 
@@ -425,13 +441,19 @@ class TestTimeoutRecoveryIntegration:
 
             # Simulate a subagent that completed but parent timed out
             status_data = {
-                "coordination.phase": "presentation",
-                "coordination.completion_percentage": 100,
-                "results.winner": "agent_1",
-                "results.votes": {"agent_1": 3},
-                "costs.total_input_tokens": 204656,
-                "costs.total_output_tokens": 8419,
-                "costs.total_estimated_cost": 0.048142,
+                "coordination": {
+                    "phase": "presentation",
+                    "completion_percentage": 100,
+                },
+                "results": {
+                    "winner": "agent_1",
+                    "votes": {"agent_1": 3},
+                },
+                "costs": {
+                    "total_input_tokens": 204656,
+                    "total_output_tokens": 8419,
+                    "total_estimated_cost": 0.048142,
+                },
             }
             (logs_dir / "status.json").write_text(json.dumps(status_data))
 
@@ -463,15 +485,21 @@ class TestTimeoutRecoveryIntegration:
 
             # Simulate partial completion (in enforcement phase)
             status_data = {
-                "coordination.phase": "enforcement",
-                "coordination.completion_percentage": 60,
-                "results.votes": {"agent_1": 1, "agent_2": 1},
-                "costs.total_input_tokens": 100000,
-                "costs.total_output_tokens": 3000,
-                "costs.total_estimated_cost": 0.025,
-                "historical_workspaces": {
-                    "agent_1": str(workspace / "workspaces" / "agent_1"),
+                "coordination": {
+                    "phase": "enforcement",
+                    "completion_percentage": 60,
                 },
+                "results": {
+                    "votes": {"agent_1": 1, "agent_2": 1},
+                },
+                "costs": {
+                    "total_input_tokens": 100000,
+                    "total_output_tokens": 3000,
+                    "total_estimated_cost": 0.025,
+                },
+                "historical_workspaces": [
+                    {"agentId": "agent_1", "workspacePath": str(workspace / "workspaces" / "agent_1")},
+                ],
             }
             (logs_dir / "status.json").write_text(json.dumps(status_data))
 

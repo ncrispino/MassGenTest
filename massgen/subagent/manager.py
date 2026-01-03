@@ -23,6 +23,8 @@ from massgen.structured_logging import (
 )
 from massgen.subagent.models import (
     SUBAGENT_DEFAULT_TIMEOUT,
+    SUBAGENT_MAX_TIMEOUT,
+    SUBAGENT_MIN_TIMEOUT,
     SubagentConfig,
     SubagentOrchestratorConfig,
     SubagentPointer,
@@ -55,6 +57,8 @@ class SubagentManager:
         parent_agent_configs: List[Dict[str, Any]],
         max_concurrent: int = 3,
         default_timeout: int = SUBAGENT_DEFAULT_TIMEOUT,
+        min_timeout: int = SUBAGENT_MIN_TIMEOUT,
+        max_timeout: int = SUBAGENT_MAX_TIMEOUT,
         subagent_orchestrator_config: Optional[SubagentOrchestratorConfig] = None,
         log_directory: Optional[str] = None,
     ):
@@ -69,6 +73,8 @@ class SubagentManager:
                 Each config should have 'id' and 'backend' keys.
             max_concurrent: Maximum concurrent subagents (default 3)
             default_timeout: Default timeout in seconds (default 300)
+            min_timeout: Minimum allowed timeout in seconds (default 60)
+            max_timeout: Maximum allowed timeout in seconds (default 600)
             subagent_orchestrator_config: Configuration for subagent orchestrator mode.
                 When enabled, subagents use a full Orchestrator with multiple agents
                 instead of a single ConfigurableAgent.
@@ -81,6 +87,8 @@ class SubagentManager:
         self.parent_agent_configs = parent_agent_configs or []
         self.max_concurrent = max_concurrent
         self.default_timeout = default_timeout
+        self.min_timeout = min_timeout
+        self.max_timeout = max_timeout
         self._subagent_orchestrator_config = subagent_orchestrator_config
 
         # Log directory for subagent logs (in main run's log dir)
@@ -105,8 +113,22 @@ class SubagentManager:
 
         logger.info(
             f"[SubagentManager] Initialized for parent {parent_agent_id}, "
-            f"workspace: {self.subagents_base}, max_concurrent: {max_concurrent}" + (f", log_dir: {self._subagent_logs_base}" if self._subagent_logs_base else ""),
+            f"workspace: {self.subagents_base}, max_concurrent: {max_concurrent}, "
+            f"timeout: {default_timeout}s (min: {min_timeout}s, max: {max_timeout}s)" + (f", log_dir: {self._subagent_logs_base}" if self._subagent_logs_base else ""),
         )
+
+    def _clamp_timeout(self, timeout: Optional[int]) -> int:
+        """
+        Clamp timeout to configured min/max range.
+
+        Args:
+            timeout: Requested timeout in seconds (None uses default)
+
+        Returns:
+            Timeout clamped to [min_timeout, max_timeout] range
+        """
+        effective_timeout = timeout if timeout is not None else self.default_timeout
+        return max(self.min_timeout, min(self.max_timeout, effective_timeout))
 
     def _create_workspace(self, subagent_id: str) -> Path:
         """
@@ -152,78 +174,10 @@ class SubagentManager:
         log_dir.mkdir(parents=True, exist_ok=True)
         return log_dir
 
-    def _write_status(
-        self,
-        subagent_id: str,
-        status: str,
-        task: str,
-        progress: Optional[str] = None,
-        error: Optional[str] = None,
-        token_usage: Optional[Dict[str, Any]] = None,
-        answer: Optional[str] = None,
-    ) -> None:
-        """
-        Write or update status.json for a subagent.
-
-        Args:
-            subagent_id: Subagent identifier
-            status: Current status (pending, running, completed, failed, timeout)
-            task: Task description
-            progress: Optional progress message
-            error: Optional error message
-            token_usage: Optional token usage stats
-            answer: Optional final answer (when completed)
-        """
-        log_dir = self._get_subagent_log_dir(subagent_id)
-        if not log_dir:
-            return
-
-        status_file = log_dir / "status.json"
-
-        # Read existing status if it exists
-        existing = {}
-        if status_file.exists():
-            try:
-                existing = json.loads(status_file.read_text())
-            except json.JSONDecodeError:
-                pass
-
-        # Update status
-        now = datetime.now()
-        started_at_str = existing.get("started_at", now.isoformat())
-
-        # Calculate elapsed_seconds
-        try:
-            started_at = datetime.fromisoformat(started_at_str)
-            if status in ("completed", "failed", "timeout"):
-                # Use completed_at if available, otherwise use current time
-                end_time = now
-                elapsed_seconds = (end_time - started_at).total_seconds()
-            else:
-                # For running/pending, calculate from start to now
-                elapsed_seconds = (now - started_at).total_seconds()
-        except (ValueError, TypeError):
-            # If we can't parse the timestamp, default to 0
-            elapsed_seconds = 0.0
-
-        status_data = {
-            "subagent_id": subagent_id,
-            "status": status,
-            "task": task,
-            "started_at": started_at_str,
-            "updated_at": now.isoformat(),
-            "elapsed_seconds": round(elapsed_seconds, 2),
-            "progress": progress,
-            "error": error,
-            "token_usage": token_usage or existing.get("token_usage", {}),
-        }
-
-        if status in ("completed", "failed", "timeout"):
-            status_data["completed_at"] = now.isoformat()
-            if answer:
-                status_data["answer"] = answer
-
-        status_file.write_text(json.dumps(status_data, indent=2))
+    # NOTE: _write_status() was removed as part of status.json consolidation.
+    # The subagent's Orchestrator writes full_logs/status.json which is the single
+    # source of truth. See openspec/changes/fix-subagent-cancellation-recovery/
+    # specs/subagent-status-consolidation/spec.md for details.
 
     def _append_conversation(
         self,
@@ -381,11 +335,13 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
 
         except asyncio.TimeoutError:
             execution_time = time.time() - start_time
+            log_dir = self._get_subagent_log_dir(config.id)
             # Attempt to recover completed work from workspace
             return self._create_timeout_result_with_recovery(
                 subagent_id=config.id,
                 workspace=workspace,
                 timeout_seconds=execution_time,
+                log_path=str(log_dir) if log_dir else None,
             )
 
         except Exception as e:
@@ -483,8 +439,8 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
             # Track the process for potential cancellation
             self._active_processes[config.id] = process
 
-            # Wait with timeout
-            timeout = config.timeout_seconds or self.default_timeout
+            # Wait with timeout (clamped to configured min/max)
+            timeout = self._clamp_timeout(config.timeout_seconds)
             try:
                 stdout, stderr = await asyncio.wait_for(
                     process.communicate(),
@@ -558,7 +514,7 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
             return self._create_timeout_result_with_recovery(
                 subagent_id=config.id,
                 workspace=workspace,
-                timeout_seconds=config.timeout_seconds or self.default_timeout,
+                timeout_seconds=timeout,  # Use the clamped timeout
                 log_path=str(log_dir) if log_dir else None,
             )
         except asyncio.CancelledError:
@@ -660,6 +616,13 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                 "enable_mcp_command_line": fallback_backend.get("enable_mcp_command_line", False),
                 "command_line_execution_mode": fallback_backend.get("command_line_execution_mode", "local"),
             }
+
+            # Handle enable_web_search: orchestrator config > inherit from parent
+            # Note: This is set in YAML config, not by agents at runtime
+            if orch_config and orch_config.enable_web_search is not None:
+                backend_config["enable_web_search"] = orch_config.enable_web_search
+            elif "enable_web_search" in fallback_backend:
+                backend_config["enable_web_search"] = fallback_backend["enable_web_search"]
 
             # Inherit Docker settings if using docker mode
             if backend_config["command_line_execution_mode"] == "docker":
@@ -869,13 +832,14 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         Returns:
             SubagentResult with execution outcome
         """
-        # Create config
+        # Create config with clamped timeout
+        clamped_timeout = self._clamp_timeout(timeout_seconds)
         config = SubagentConfig.create(
             task=task,
             parent_agent_id=self.parent_agent_id,
             subagent_id=subagent_id,
             model=model,
-            timeout_seconds=timeout_seconds or self.default_timeout,
+            timeout_seconds=clamped_timeout,
             context_files=context_files or [],
             system_prompt=system_prompt,
             context=context,
@@ -910,8 +874,7 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         )
         self._subagents[config.id] = state
 
-        # Initialize logging
-        self._write_status(config.id, "running", task, progress="Starting execution...")
+        # Initialize conversation logging (status comes from full_logs/status.json)
         self._append_conversation(config.id, "user", task)
 
         # Execute with semaphore and timeout, wrapped in tracing span
@@ -930,16 +893,12 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                     )
                 except asyncio.TimeoutError:
                     # Attempt to recover completed work from workspace
+                    log_dir = self._get_subagent_log_dir(config.id)
                     result = self._create_timeout_result_with_recovery(
                         subagent_id=config.id,
                         workspace=workspace,
                         timeout_seconds=config.timeout_seconds,
-                    )
-                    self._write_status(
-                        config.id,
-                        "timeout",
-                        task,
-                        error=f"Timed out after {config.timeout_seconds}s",
+                        log_path=str(log_dir) if log_dir else None,
                     )
 
             # Set span attributes based on result
@@ -947,28 +906,19 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
             span.set_attribute("subagent.status", result.status)
             span.set_attribute("subagent.execution_time_seconds", result.execution_time_seconds)
 
-        # Update state
-        state.status = "completed" if result.success else ("timeout" if result.status == "timeout" else "failed")
+        # Update state - use result.status directly for recovered states
+        # Status can be: completed, completed_but_timeout, partial, timeout, error
+        if result.success:
+            state.status = "completed"
+        elif result.status in ("timeout", "completed_but_timeout", "partial"):
+            state.status = result.status
+        else:
+            state.status = "failed"
         state.result = result
 
-        # Log final status
-        if result.success:
-            self._write_status(
-                config.id,
-                "completed",
-                task,
-                token_usage=result.token_usage,
-                answer=result.answer,
-            )
-            if result.answer:
-                self._append_conversation(config.id, "assistant", result.answer)
-        elif result.status != "timeout":  # timeout already logged above
-            self._write_status(
-                config.id,
-                "failed",
-                task,
-                error=result.error,
-            )
+        # Log conversation on success
+        if result.success and result.answer:
+            self._append_conversation(config.id, "assistant", result.answer)
 
         logger.info(
             f"[SubagentManager] Subagent {config.id} finished with status: {result.status}, " f"time: {result.execution_time_seconds:.2f}s",
@@ -1072,13 +1022,14 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         Returns:
             Dictionary with subagent_id and status_file path
         """
-        # Create config
+        # Create config with clamped timeout
+        clamped_timeout = self._clamp_timeout(timeout_seconds)
         config = SubagentConfig.create(
             task=task,
             parent_agent_id=self.parent_agent_id,
             subagent_id=subagent_id,
             model=model,
-            timeout_seconds=timeout_seconds or self.default_timeout,
+            timeout_seconds=clamped_timeout,
             context_files=context_files or [],
             system_prompt=system_prompt,
         )
@@ -1112,8 +1063,7 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         )
         self._subagents[config.id] = state
 
-        # Initialize logging
-        self._write_status(config.id, "running", task, progress="Starting execution...")
+        # Initialize conversation logging (status comes from full_logs/status.json)
         self._append_conversation(config.id, "user", task)
 
         # Create background task
@@ -1126,16 +1076,12 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                     )
                 except asyncio.TimeoutError:
                     # Attempt to recover completed work from workspace
+                    log_dir = self._get_subagent_log_dir(config.id)
                     result = self._create_timeout_result_with_recovery(
                         subagent_id=config.id,
                         workspace=workspace,
                         timeout_seconds=config.timeout_seconds,
-                    )
-                    self._write_status(
-                        config.id,
-                        "timeout",
-                        task,
-                        error=f"Timed out after {config.timeout_seconds}s",
+                        log_path=str(log_dir) if log_dir else None,
                     )
                 except Exception as e:
                     result = SubagentResult.create_error(
@@ -1143,28 +1089,20 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                         error=str(e),
                         workspace_path=str(workspace),
                     )
-                    self._write_status(
-                        config.id,
-                        "failed",
-                        task,
-                        error=str(e),
-                    )
 
-            # Update state
-            state.status = "completed" if result.success else ("timeout" if result.status == "timeout" else "failed")
+            # Update state - use result.status directly for recovered states
+            # Status can be: completed, completed_but_timeout, partial, timeout, error
+            if result.success:
+                state.status = "completed"
+            elif result.status in ("timeout", "completed_but_timeout", "partial"):
+                state.status = result.status
+            else:
+                state.status = "failed"
             state.result = result
 
-            # Log final status
-            if result.success:
-                self._write_status(
-                    config.id,
-                    "completed",
-                    task,
-                    token_usage=result.token_usage,
-                    answer=result.answer,
-                )
-                if result.answer:
-                    self._append_conversation(config.id, "assistant", result.answer)
+            # Log conversation on success
+            if result.success and result.answer:
+                self._append_conversation(config.id, "assistant", result.answer)
 
             logger.info(
                 f"[SubagentManager] Background subagent {config.id} finished with status: {result.status}, " f"time: {result.execution_time_seconds:.2f}s",
@@ -1192,10 +1130,10 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         bg_task = asyncio.create_task(_run_background())
         self._background_tasks[config.id] = bg_task
 
-        # Get status file path
+        # Get status file path (now points to full_logs/status.json)
         status_file = None
         if self._subagent_logs_base:
-            status_file = str(self._subagent_logs_base / config.id / "status.json")
+            status_file = str(self._subagent_logs_base / config.id / "full_logs" / "status.json")
 
         return {
             "subagent_id": config.id,
@@ -1208,33 +1146,100 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         """
         Get the current status of a subagent.
 
+        Reads from full_logs/status.json (written by Orchestrator) and transforms
+        the rich status into a simplified view for MCP consumers.
+
         Args:
             subagent_id: Subagent identifier
 
         Returns:
-            Status dictionary from status.json, or None if not found
+            Simplified status dictionary, or None if not found
         """
-        # First check in-memory state
+        # First check in-memory state exists
         state = self._subagents.get(subagent_id)
         if not state:
             return None
 
-        # Try to read from status file for latest info
+        # Try to read from full_logs/status.json (the single source of truth)
         if self._subagent_logs_base:
-            status_file = self._subagent_logs_base / subagent_id / "status.json"
+            status_file = self._subagent_logs_base / subagent_id / "full_logs" / "status.json"
             if status_file.exists():
                 try:
-                    return json.loads(status_file.read_text())
+                    raw_status = json.loads(status_file.read_text())
+                    return self._transform_orchestrator_status(subagent_id, raw_status, state)
                 except json.JSONDecodeError:
                     pass
 
-        # Fall back to in-memory state
+        # Fall back to in-memory state if file doesn't exist yet
         return {
             "subagent_id": subagent_id,
-            "status": state.status,
+            "status": "pending" if state.status == "running" else state.status,
             "task": state.config.task,
             "workspace": state.workspace_path,
+            "started_at": state.started_at.isoformat() if state.started_at else None,
         }
+
+    def _transform_orchestrator_status(
+        self,
+        subagent_id: str,
+        raw_status: Dict[str, Any],
+        state: SubagentState,
+    ) -> Dict[str, Any]:
+        """
+        Transform Orchestrator's rich status.json into simplified status for MCP.
+
+        Args:
+            subagent_id: Subagent identifier
+            raw_status: Raw status from full_logs/status.json
+            state: In-memory subagent state
+
+        Returns:
+            Simplified status dictionary
+        """
+        # Extract coordination info
+        coordination = raw_status.get("coordination", {})
+        phase = coordination.get("phase")
+        completion_pct = coordination.get("completion_percentage")
+
+        # Derive simple status from phase
+        # If state.result exists, use its status (for completed/timeout cases)
+        if state.result:
+            derived_status = state.result.status
+        elif phase in ("initial_answer", "enforcement", "presentation"):
+            derived_status = "running"
+        else:
+            derived_status = "pending"
+
+        # Extract costs
+        costs = raw_status.get("costs", {})
+        token_usage = {}
+        if costs:
+            token_usage = {
+                "input_tokens": costs.get("total_input_tokens", 0),
+                "output_tokens": costs.get("total_output_tokens", 0),
+                "estimated_cost": costs.get("total_estimated_cost", 0.0),
+            }
+
+        # Extract elapsed time
+        meta = raw_status.get("meta", {})
+        elapsed_seconds = meta.get("elapsed_seconds", 0.0)
+
+        result = {
+            "subagent_id": subagent_id,
+            "status": derived_status,
+            "phase": phase,
+            "completion_percentage": completion_pct,
+            "task": state.config.task,
+            "workspace": state.workspace_path,
+            "elapsed_seconds": elapsed_seconds,
+            "token_usage": token_usage,
+        }
+
+        # Add started_at if available
+        if state.started_at:
+            result["started_at"] = state.started_at.isoformat()
+
+        return result
 
     async def wait_for_subagent(self, subagent_id: str, timeout: Optional[float] = None) -> Optional[SubagentResult]:
         """
@@ -1474,32 +1479,69 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
             "has_completed_work": False,
             "costs": {},
             "historical_workspaces": {},
+            "historical_workspaces_raw": [],  # Raw list with agentId/timestamp for log path lookup
         }
 
+        # Try multiple locations for status.json:
+        # 1. full_logs/status.json in workspace (standard location)
+        # 2. .massgen/.../status.json in workspace (nested orchestrator logs)
         status_file = workspace / "full_logs" / "status.json"
+        if not status_file.exists():
+            # Try to find status.json in nested .massgen logs
+            massgen_logs = workspace / ".massgen" / "massgen_logs"
+            if massgen_logs.exists():
+                # Find most recent log directory
+                log_dirs = sorted(massgen_logs.glob("log_*"), reverse=True)
+                for log_dir in log_dirs:
+                    nested_status = log_dir / "turn_1" / "attempt_1" / "status.json"
+                    if nested_status.exists():
+                        status_file = nested_status
+                        break
+
         if not status_file.exists():
             return result
 
         try:
             status_data = json.loads(status_file.read_text())
 
-            # Extract coordination phase
-            result["phase"] = status_data.get("coordination.phase")
-            result["completion_percentage"] = status_data.get("coordination.completion_percentage")
+            # Extract coordination phase (nested structure)
+            coordination = status_data.get("coordination", {})
+            result["phase"] = coordination.get("phase")
+            result["completion_percentage"] = coordination.get("completion_percentage")
 
-            # Extract winner and votes
-            result["winner"] = status_data.get("results.winner")
-            result["votes"] = status_data.get("results.votes", {})
+            # Extract winner and votes (nested structure)
+            results_data = status_data.get("results", {})
+            result["winner"] = results_data.get("winner")
+            result["votes"] = results_data.get("votes", {})
 
             # Extract historical workspaces for answer lookup
-            result["historical_workspaces"] = status_data.get("historical_workspaces", {})
+            # Key by both answerLabel (for votes) and agentId (for winner)
+            historical_list = status_data.get("historical_workspaces", [])
+            if isinstance(historical_list, list):
+                result["historical_workspaces_raw"] = historical_list  # Keep raw for log path lookup
+                workspaces_dict = {}
+                for i, ws in enumerate(historical_list):
+                    if isinstance(ws, dict) and ws.get("workspacePath"):
+                        path = ws.get("workspacePath", "")
+                        # Key by answerLabel (matches votes dict keys like "agent2.1")
+                        answer_label = ws.get("answerLabel")
+                        if answer_label:
+                            workspaces_dict[answer_label] = path
+                        # Also key by agentId (matches winner field)
+                        agent_id = ws.get("agentId", ws.get("answerId", f"agent_{i}"))
+                        if agent_id:
+                            workspaces_dict[agent_id] = path
+                result["historical_workspaces"] = workspaces_dict
+            else:
+                result["historical_workspaces"] = historical_list
 
-            # Extract costs
-            if "costs.total_input_tokens" in status_data:
+            # Extract costs (nested structure)
+            costs_data = status_data.get("costs", {})
+            if costs_data:
                 result["costs"] = {
-                    "input_tokens": status_data.get("costs.total_input_tokens", 0),
-                    "output_tokens": status_data.get("costs.total_output_tokens", 0),
-                    "estimated_cost": status_data.get("costs.total_estimated_cost", 0.0),
+                    "input_tokens": costs_data.get("total_input_tokens", 0),
+                    "output_tokens": costs_data.get("total_output_tokens", 0),
+                    "estimated_cost": costs_data.get("total_estimated_cost", 0.0),
                 }
 
             # Determine if there's completed work
@@ -1523,6 +1565,9 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         workspace: Path,
         winner_agent_id: Optional[str] = None,
         votes: Optional[Dict[str, int]] = None,
+        historical_workspaces: Optional[Dict[str, str]] = None,
+        historical_workspaces_raw: Optional[List[Dict[str, Any]]] = None,
+        log_path: Optional[Path] = None,
     ) -> Optional[str]:
         """
         Extract the best available answer from a subagent's workspace.
@@ -1537,6 +1582,9 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
             workspace: Path to the subagent's workspace
             winner_agent_id: Agent ID of explicit winner (from status.json)
             votes: Vote counts by agent (for selection when no winner)
+            historical_workspaces: Pre-extracted workspace paths from status.json (optional)
+            historical_workspaces_raw: Raw list from status.json with agentId/timestamp (optional)
+            log_path: Path to log directory for checking full_logs/{agentId}/{timestamp}/answer.txt
 
         Returns:
             Answer text if found, None otherwise
@@ -1549,9 +1597,10 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
             except OSError:
                 pass
 
-        # Try to get answer from agent workspaces
-        status = self._extract_status_from_workspace(workspace)
-        historical_workspaces = status.get("historical_workspaces", {})
+        # Use provided historical_workspaces or try to extract from workspace
+        if historical_workspaces is None:
+            status = self._extract_status_from_workspace(workspace)
+            historical_workspaces = status.get("historical_workspaces", {})
 
         # If winner specified but not in historical_workspaces, try standard path
         if winner_agent_id and winner_agent_id not in historical_workspaces:
@@ -1592,8 +1641,38 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         if not selected_agent:
             return None
 
+        # Try to find answer in log directory first (persisted location)
+        # Check full_logs/{agentId}/{timestamp}/answer.txt
+        if log_path and historical_workspaces_raw:
+            for ws_info in historical_workspaces_raw:
+                agent_id = ws_info.get("agentId")
+                answer_label = ws_info.get("answerLabel")
+                timestamp = ws_info.get("timestamp")
+                # Match by either agentId or answerLabel
+                if (agent_id == selected_agent or answer_label == selected_agent) and timestamp:
+                    log_answer_path = log_path / "full_logs" / agent_id / timestamp / "answer.txt"
+                    if log_answer_path.exists():
+                        try:
+                            return log_answer_path.read_text().strip()
+                        except OSError:
+                            pass
+
         # Read answer from selected agent's workspace
+        # The workspacePath points to the workspace/ subdirectory, but answer.txt
+        # is in the parent directory (the timestamped snapshot directory)
         agent_workspace = Path(historical_workspaces[selected_agent])
+
+        # Check parent directory first (where orchestrator saves answer.txt)
+        parent_dir = agent_workspace.parent
+        for answer_filename in ["answer.txt", "answer.md"]:
+            answer_path = parent_dir / answer_filename
+            if answer_path.exists():
+                try:
+                    return answer_path.read_text().strip()
+                except OSError:
+                    continue
+
+        # Fall back to checking inside workspace
         for answer_filename in ["answer.md", "answer.txt", "response.md", "response.txt"]:
             answer_path = agent_workspace / answer_filename
             if answer_path.exists():
@@ -1640,15 +1719,43 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         Returns:
             SubagentResult with recovered answer and costs if available
         """
-        # Extract status from workspace
-        status = self._extract_status_from_workspace(workspace)
+        # Extract status - prefer log_path/full_logs/status.json if available
+        status = {}
+        if log_path:
+            log_dir = Path(log_path)
+            status = self._extract_status_from_workspace(log_dir)
 
-        # Extract answer
-        recovered_answer = self._extract_answer_from_workspace(
-            workspace,
-            winner_agent_id=status.get("winner"),
-            votes=status.get("votes"),
-        )
+        # Fall back to workspace if no status from log_path
+        if not status.get("phase"):
+            status = self._extract_status_from_workspace(workspace)
+
+        # Extract answer from log workspace first (has answer.txt), then runtime workspace
+        # Pass historical_workspaces from status so we don't re-read from wrong path
+        historical_workspaces = status.get("historical_workspaces", {})
+        historical_workspaces_raw = status.get("historical_workspaces_raw", [])
+        recovered_answer = None
+        if log_path:
+            log_dir = Path(log_path)
+            log_workspace = log_dir / "workspace"
+            if log_workspace.exists():
+                recovered_answer = self._extract_answer_from_workspace(
+                    log_workspace,
+                    winner_agent_id=status.get("winner"),
+                    votes=status.get("votes"),
+                    historical_workspaces=historical_workspaces,
+                    historical_workspaces_raw=historical_workspaces_raw,
+                    log_path=log_dir,
+                )
+
+        if not recovered_answer:
+            recovered_answer = self._extract_answer_from_workspace(
+                workspace,
+                winner_agent_id=status.get("winner"),
+                votes=status.get("votes"),
+                historical_workspaces=historical_workspaces,
+                historical_workspaces_raw=historical_workspaces_raw,
+                log_path=Path(log_path) if log_path else None,
+            )
 
         # Extract costs
         token_usage = status.get("costs", {})

@@ -91,6 +91,8 @@ class CoordinationConfig:
                          agent instances with fresh context and isolated workspaces. Useful for
                          parallel task execution and avoiding context pollution.
         subagent_default_timeout: Default timeout in seconds for subagent execution (default 300).
+        subagent_min_timeout: Minimum allowed timeout in seconds (default 60). Prevents too-short timeouts.
+        subagent_max_timeout: Maximum allowed timeout in seconds (default 600). Prevents runaway subagents.
         subagent_max_concurrent: Maximum number of concurrent subagents an agent can spawn (default 3).
         subagent_orchestrator: Configuration for subagent orchestrator mode. When enabled, subagents
                               use a full Orchestrator with multiple agents. This enables multi-agent coordination within
@@ -120,6 +122,8 @@ class CoordinationConfig:
     persona_generator: PersonaGeneratorConfig = field(default_factory=PersonaGeneratorConfig)
     enable_subagents: bool = False
     subagent_default_timeout: int = 300
+    subagent_min_timeout: int = 60  # Minimum 1 minute
+    subagent_max_timeout: int = 600  # Maximum 10 minutes
     subagent_max_concurrent: int = 3
     subagent_orchestrator: Optional["SubagentOrchestratorConfig"] = None
 

@@ -10,9 +10,10 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
-# Subagent timeout bounds (in seconds)
-SUBAGENT_MIN_TIMEOUT = 300  # 5 minutes
-SUBAGENT_MAX_TIMEOUT = 600  # 10 minutes
+# Subagent timeout defaults (in seconds)
+# These are defaults; actual min/max are configurable via YAML
+SUBAGENT_MIN_TIMEOUT = 60  # 1 minute (default minimum)
+SUBAGENT_MAX_TIMEOUT = 600  # 10 minutes (default maximum)
 SUBAGENT_DEFAULT_TIMEOUT = 300  # 5 minutes
 
 
@@ -26,7 +27,7 @@ class SubagentConfig:
         task: The task/prompt for the subagent to execute
         parent_agent_id: ID of the agent that spawned this subagent
         model: Optional model override (inherits from parent if None)
-        timeout_seconds: Maximum execution time (clamped to 5-10 min range)
+        timeout_seconds: Maximum execution time (clamped to configured min/max range)
         context_files: List of file paths the subagent can READ (read-only access enforced)
         use_docker: Whether to use Docker container (inherits from parent settings)
         system_prompt: Optional custom system prompt for the subagent
@@ -67,7 +68,7 @@ class SubagentConfig:
             parent_agent_id: ID of the parent agent
             subagent_id: Optional custom ID (generates UUID if not provided)
             model: Optional model override
-            timeout_seconds: Execution timeout (clamped to 5-10 min range)
+            timeout_seconds: Execution timeout (clamped at manager level to configured range)
             context_files: File paths subagent can read (read-only, no write access)
             use_docker: Whether to use Docker
             system_prompt: Optional custom system prompt
@@ -77,15 +78,13 @@ class SubagentConfig:
         Returns:
             Configured SubagentConfig instance
         """
-        # Clamp timeout to valid range (5-10 minutes)
-        clamped_timeout = max(SUBAGENT_MIN_TIMEOUT, min(SUBAGENT_MAX_TIMEOUT, timeout_seconds))
-
+        # Note: timeout clamping is done at SubagentManager level with configurable min/max
         return cls(
             id=subagent_id or f"sub_{uuid.uuid4().hex[:8]}",
             task=task,
             parent_agent_id=parent_agent_id,
             model=model,
-            timeout_seconds=clamped_timeout,
+            timeout_seconds=timeout_seconds,
             context_files=context_files or [],
             use_docker=use_docker,
             system_prompt=system_prompt,
@@ -112,16 +111,13 @@ class SubagentConfig:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "SubagentConfig":
         """Create config from dictionary."""
-        # Clamp timeout to valid range (5-10 minutes)
-        raw_timeout = data.get("timeout_seconds", SUBAGENT_DEFAULT_TIMEOUT)
-        clamped_timeout = max(SUBAGENT_MIN_TIMEOUT, min(SUBAGENT_MAX_TIMEOUT, raw_timeout))
-
+        # Note: timeout clamping is done at SubagentManager level with configurable min/max
         return cls(
             id=data["id"],
             task=data["task"],
             parent_agent_id=data["parent_agent_id"],
             model=data.get("model"),
-            timeout_seconds=clamped_timeout,
+            timeout_seconds=data.get("timeout_seconds", SUBAGENT_DEFAULT_TIMEOUT),
             context_files=data.get("context_files", []),
             use_docker=data.get("use_docker", True),
             system_prompt=data.get("system_prompt"),
@@ -148,12 +144,15 @@ class SubagentOrchestratorConfig:
         coordination: Optional coordination config subset (broadcast, planning, etc.)
         max_new_answers: Maximum new answers per agent before forcing consensus.
                         Default 3 for subagents to prevent runaway iterations.
+        enable_web_search: Whether to enable web search for subagents (None = inherit from parent).
+                          This is set in YAML config, not by agents at runtime.
     """
 
     enabled: bool = False
     agents: List[Dict[str, Any]] = field(default_factory=list)
     coordination: Dict[str, Any] = field(default_factory=dict)
     max_new_answers: int = 3  # Conservative default for subagents
+    enable_web_search: Optional[bool] = None  # None = inherit from parent
 
     @property
     def num_agents(self) -> int:
@@ -193,16 +192,20 @@ class SubagentOrchestratorConfig:
             agents=data.get("agents", []),
             coordination=data.get("coordination", {}),
             max_new_answers=data.get("max_new_answers", 3),
+            enable_web_search=data.get("enable_web_search"),
         )
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert config to dictionary for serialization."""
-        return {
+        result = {
             "enabled": self.enabled,
             "agents": [a.copy() for a in self.agents] if self.agents else [],
             "coordination": self.coordination.copy() if self.coordination else {},
             "max_new_answers": self.max_new_answers,
         }
+        if self.enable_web_search is not None:
+            result["enable_web_search"] = self.enable_web_search
+        return result
 
 
 @dataclass
