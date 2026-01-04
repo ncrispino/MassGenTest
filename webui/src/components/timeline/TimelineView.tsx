@@ -259,6 +259,11 @@ export function TimelineView({ onNodeClick }: TimelineViewProps) {
                 // Skip if source doesn't exist or is a vote (votes don't provide context)
                 if (!sourceNode || sourceNode.type === 'vote') return null;
 
+                // IMPORTANT: Only show context arrow if source existed BEFORE target
+                // This filters out incorrect arrows where the API returns all answers
+                // but the agent only had access to earlier ones when creating their answer
+                if (sourceNode.timestamp >= node.timestamp) return null;
+
                 const sourcePos = nodePositions.get(sourceNode.id);
                 if (!sourcePos) return null;
 
@@ -336,10 +341,23 @@ export function TimelineView({ onNodeClick }: TimelineViewProps) {
             // Final nodes are larger for emphasis
             const nodeSize = node.type === 'final' ? NODE_SIZE * 1.4 : NODE_SIZE;
 
+            // Filter contextSources to only include sources that existed BEFORE this node
+            const filteredContextSources = node.contextSources.filter(sourceLabel => {
+              const sourceNode = timelineData.nodes.find(n => n.label === sourceLabel);
+              // Only include if source existed before this node (by timestamp)
+              return sourceNode && sourceNode.timestamp < node.timestamp;
+            });
+
+            // Create a modified node with filtered context sources for display
+            const displayNode = {
+              ...node,
+              contextSources: filteredContextSources,
+            };
+
             return (
               <TimelineNode
                 key={node.id}
-                node={node}
+                node={displayNode}
                 x={pos.x}
                 y={pos.y}
                 size={nodeSize}

@@ -6,7 +6,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Loader2, AlertCircle, Eye, Code, X, Download, Copy, Check, Maximize2 } from 'lucide-react';
+import { Loader2, AlertCircle, Eye, Code, X, Download, Copy, Check, Maximize2, ExternalLink } from 'lucide-react';
 import { codeToHtml } from 'shiki';
 import { useFileContent } from '../hooks/useFileContent';
 import { detectArtifactType, getArtifactConfig, type ArtifactType } from '../utils/artifactTypes';
@@ -348,6 +348,39 @@ export function InlineArtifactPreview({
     URL.revokeObjectURL(url);
   }, [content, filePath]);
 
+  // Handle open in new tab
+  const handleOpenInNewTab = useCallback(() => {
+    if (!content?.content) return;
+
+    // For HTML files, open as rendered HTML
+    if (artifactType === 'html') {
+      const blob = new Blob([content.content], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank');
+      // Note: Can't revoke immediately as it's opened in new tab
+      return;
+    }
+
+    // For images, open the image directly
+    if (artifactType === 'image' && content.binary) {
+      const blob = base64ToBlob(content.content, content.mimeType);
+      if (blob) {
+        const url = URL.createObjectURL(blob);
+        window.open(url, '_blank');
+      }
+      return;
+    }
+
+    // For other files, open as plain text/source
+    const blob = content.binary
+      ? base64ToBlob(content.content, content.mimeType)
+      : new Blob([content.content], { type: content.mimeType || 'text/plain' });
+    if (blob) {
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank');
+    }
+  }, [content, artifactType]);
+
   // Render preview based on artifact type
   const renderPreview = useCallback(() => {
     if (!content) return null;
@@ -570,6 +603,17 @@ export function InlineArtifactPreview({
               title="Download"
             >
               <Download className="w-4 h-4" />
+            </button>
+          )}
+
+          {/* Open in new tab button */}
+          {content && (
+            <button
+              onClick={handleOpenInNewTab}
+              className="p-1.5 text-gray-400 hover:text-gray-200 hover:bg-gray-700 rounded transition-colors"
+              title="Open in new tab"
+            >
+              <ExternalLink className="w-4 h-4" />
             </button>
           )}
 

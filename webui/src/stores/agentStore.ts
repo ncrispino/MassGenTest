@@ -863,6 +863,15 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
           const voteNumber = votingAgent ? votingAgent.voteCount + 1 : 1;
           const agentIndex = get().agentOrder.indexOf(event.voter_id) + 1;
 
+          // Debug: Log vote event
+          console.log('[AgentStore] vote_cast event received:', {
+            voter: event.voter_id,
+            target: event.target_id,
+            currentVoteCount: votingAgent?.voteCount,
+            currentVoteTarget: votingAgent?.voteTarget,
+            currentDistribution: { ...get().voteDistribution },
+          });
+
           // Format vote label like answers: vote{agentIndex}.{voteNumber}
           const voteLabel = `vote${agentIndex}.${voteNumber}`;
 
@@ -874,6 +883,11 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
             event.target_id,
             'reason' in event ? event.reason : ''
           );
+
+          // Debug: Log after recording vote
+          console.log('[AgentStore] After recordVote:', {
+            newDistribution: { ...get().voteDistribution },
+          });
 
           // Show notification for vote
           const voterAgent = get().agents[event.voter_id];
@@ -892,9 +906,12 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
         break;
 
       case 'vote_distribution':
-        if ('votes' in event) {
-          store.updateVoteDistribution(event.votes);
-        }
+        // NOTE: Ignoring vote_distribution events from backend as they may contain
+        // cumulative votes from all rounds. We rely on recordVote instead which
+        // has round-reset logic to only track the current round's votes.
+        // if ('votes' in event) {
+        //   store.updateVoteDistribution(event.votes);
+        // }
         break;
 
       case 'consensus_reached':

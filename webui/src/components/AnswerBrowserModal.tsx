@@ -22,6 +22,7 @@ import { getAgentColor } from '../utils/agentColors';
 import { clearFileCache } from '../hooks/useFileContent';
 import { useModalKeyboardNavigation } from '../hooks/useModalKeyboardNavigation';
 import { ComparisonView } from './ComparisonView';
+import { ResizableSplitPane } from './ResizableSplitPane';
 import { createAbortableFetch, isAbortError } from '../utils/fetchWithAbort';
 import { debugLog } from '../utils/debugLogger';
 
@@ -1819,82 +1820,92 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                       </motion.div>
                     )}
                   </AnimatePresence>
-                  {/* Left: File Tree */}
-                  <div className="w-72 shrink-0 border-r border-gray-700 overflow-y-auto custom-scrollbar p-3">
-                    {/* Only show full loading state on first load (no workspaces yet) */}
-                    {isLoadingWorkspaces && totalWorkspaces === 0 ? (
-                      <div className="flex flex-col items-center justify-center h-full text-gray-500">
-                        <RefreshCw className="w-6 h-6 mb-3 animate-spin" />
-                        <p className="text-sm">Loading workspaces...</p>
-                      </div>
-                    ) : totalWorkspaces === 0 ? (
-                      <EmptyState
-                        icon={Folder}
-                        title={EMPTY_STATES.noWorkspaces.title}
-                        description={EMPTY_STATES.noWorkspaces.description}
-                        hint={EMPTY_STATES.noWorkspaces.hint}
-                        size="sm"
-                      />
-                    ) : !activeWorkspace ? (
-                      <EmptyState
-                        icon={Folder}
-                        title="Select an agent"
-                        description={EMPTY_STATES.noFiles.description}
-                        hint={EMPTY_STATES.noFiles.hint}
-                        size="sm"
-                      />
-                    ) : isLoadingFiles && filteredWorkspaceFiles.length === 0 ? (
-                      <EmptyState
-                        icon={RefreshCw}
-                        title={EMPTY_STATES.loading.title}
-                        description="Fetching workspace files..."
-                        size="sm"
-                      />
-                    ) : filteredWorkspaceFiles.length === 0 ? (
-                      <EmptyState
-                        icon={Folder}
-                        title={EMPTY_STATES.noFiles.title}
-                        description={EMPTY_STATES.noFiles.description}
-                        size="sm"
-                      />
-                    ) : (
-                      <div>
-                        <div className="mb-2 text-xs text-gray-500 flex items-center gap-2">
-                          <span>{filteredWorkspaceFiles.length} files</span>
-                          {selectedAnswerLabel !== 'current' && (
-                            <span className="text-amber-400">(historical)</span>
-                          )}
-                          {isLoadingFiles && (
-                            <RefreshCw className="w-3 h-3 animate-spin text-blue-400" />
-                          )}
-                        </div>
-                        {fileTree.map((node) => (
-                          <FileNode key={node.path} node={node} depth={0} onFileClick={handleFileClick} />
-                        ))}
-                      </div>
-                    )}
-                  </div>
 
-                  {/* Right: Inline Preview */}
-                  <div className="flex-1 overflow-auto p-3">
-                    {selectedFilePath && activeWorkspace ? (
-                      <InlineArtifactPreview
-                        filePath={selectedFilePath}
-                        workspacePath={activeWorkspace.path}
-                        onClose={handleInlinePreviewClose}
-                        onFullscreen={() => setIsPreviewFullscreen(true)}
-                        sessionId={sessionId}
-                        agentId={selectedAgentWorkspace || undefined}
-                        onFileNotFound={() => setSelectedFilePath('')}
-                      />
-                    ) : (
-                      <div className="flex flex-col items-center justify-center h-full text-gray-500 bg-gray-800/30 rounded-lg border border-gray-700">
-                        <Eye className="w-12 h-12 mb-4 opacity-30" />
-                        <p className="text-sm">Select a file to preview</p>
-                        <p className="text-xs text-gray-600 mt-1">Click any file in the tree</p>
+                  {/* Resizable Split: File Tree + Preview */}
+                  <ResizableSplitPane
+                    storageKey="workspace-browser-split"
+                    defaultLeftWidth={35}
+                    minLeftWidth={20}
+                    maxLeftWidth={50}
+                    className="flex-1"
+                    left={
+                      <div className="h-full overflow-y-auto custom-scrollbar p-3">
+                        {/* Only show full loading state on first load (no workspaces yet) */}
+                        {isLoadingWorkspaces && totalWorkspaces === 0 ? (
+                          <div className="flex flex-col items-center justify-center h-full text-gray-500">
+                            <RefreshCw className="w-6 h-6 mb-3 animate-spin" />
+                            <p className="text-sm">Loading workspaces...</p>
+                          </div>
+                        ) : totalWorkspaces === 0 ? (
+                          <EmptyState
+                            icon={Folder}
+                            title={EMPTY_STATES.noWorkspaces.title}
+                            description={EMPTY_STATES.noWorkspaces.description}
+                            hint={EMPTY_STATES.noWorkspaces.hint}
+                            size="sm"
+                          />
+                        ) : !activeWorkspace ? (
+                          <EmptyState
+                            icon={Folder}
+                            title="Select an agent"
+                            description={EMPTY_STATES.noFiles.description}
+                            hint={EMPTY_STATES.noFiles.hint}
+                            size="sm"
+                          />
+                        ) : isLoadingFiles && filteredWorkspaceFiles.length === 0 ? (
+                          <EmptyState
+                            icon={RefreshCw}
+                            title={EMPTY_STATES.loading.title}
+                            description="Fetching workspace files..."
+                            size="sm"
+                          />
+                        ) : filteredWorkspaceFiles.length === 0 ? (
+                          <EmptyState
+                            icon={Folder}
+                            title={EMPTY_STATES.noFiles.title}
+                            description={EMPTY_STATES.noFiles.description}
+                            size="sm"
+                          />
+                        ) : (
+                          <div>
+                            <div className="mb-2 text-xs text-gray-500 flex items-center gap-2">
+                              <span>{filteredWorkspaceFiles.length} files</span>
+                              {selectedAnswerLabel !== 'current' && (
+                                <span className="text-amber-400">(historical)</span>
+                              )}
+                              {isLoadingFiles && (
+                                <RefreshCw className="w-3 h-3 animate-spin text-blue-400" />
+                              )}
+                            </div>
+                            {fileTree.map((node) => (
+                              <FileNode key={node.path} node={node} depth={0} onFileClick={handleFileClick} />
+                            ))}
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
+                    }
+                    right={
+                      <div className="h-full overflow-auto">
+                        {selectedFilePath && activeWorkspace ? (
+                          <InlineArtifactPreview
+                            filePath={selectedFilePath}
+                            workspacePath={activeWorkspace.path}
+                            onClose={handleInlinePreviewClose}
+                            onFullscreen={() => setIsPreviewFullscreen(true)}
+                            sessionId={sessionId}
+                            agentId={selectedAgentWorkspace || undefined}
+                            onFileNotFound={() => setSelectedFilePath('')}
+                          />
+                        ) : (
+                          <div className="flex flex-col items-center justify-center h-full text-gray-500 bg-gray-800/30 rounded-lg border border-gray-700 m-3">
+                            <Eye className="w-12 h-12 mb-4 opacity-30" />
+                            <p className="text-sm">Select a file to preview</p>
+                            <p className="text-xs text-gray-600 mt-1">Click any file in the tree</p>
+                          </div>
+                        )}
+                      </div>
+                    }
+                  />
                 </div>
 
                 {/* Workspace Summary */}
