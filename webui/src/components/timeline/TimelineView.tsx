@@ -13,6 +13,7 @@ import type { TimelineNode as TimelineNodeType, TimelineData } from '../../types
 import { TimelineNode } from './TimelineNode';
 import { TimelineArrow } from './TimelineArrow';
 import { TimelineLegend } from './TimelineLegend';
+import { getAgentColor } from '../../utils/agentColors';
 
 interface TimelineViewProps {
   onNodeClick?: (node: TimelineNodeType) => void;
@@ -214,6 +215,7 @@ export function TimelineView({ onNodeClick }: TimelineViewProps) {
           {timelineData.agents.map((agentId, index) => {
             const x = PADDING + index * COLUMN_WIDTH + COLUMN_WIDTH / 2;
             const agentIndex = index + 1;
+            const agentColor = getAgentColor(agentId, timelineData.agents);
             return (
               <g key={`header-${agentId}`}>
                 <rect
@@ -222,15 +224,16 @@ export function TimelineView({ onNodeClick }: TimelineViewProps) {
                   width={100}
                   height={36}
                   rx={8}
-                  fill="rgba(59, 130, 246, 0.2)"
-                  stroke="rgba(59, 130, 246, 0.5)"
+                  fill={`${agentColor.hex}33`}
+                  stroke={`${agentColor.hex}80`}
                   strokeWidth="1"
                 />
                 <text
                   x={x}
                   y={32}
                   textAnchor="middle"
-                  className="fill-blue-400 text-sm font-medium"
+                  fill={agentColor.hex}
+                  className="text-sm font-medium"
                 >
                   Agent {agentIndex}
                 </text>
@@ -340,6 +343,7 @@ export function TimelineView({ onNodeClick }: TimelineViewProps) {
                 x={pos.x}
                 y={pos.y}
                 size={nodeSize}
+                agentOrder={timelineData.agents}
                 onClick={() => onNodeClick?.(node)}
               />
             );

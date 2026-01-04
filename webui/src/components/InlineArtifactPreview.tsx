@@ -598,7 +598,7 @@ export function InlineArtifactPreview({
       </div>
 
       {/* Preview Content */}
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 overflow-auto">
         {viewMode === 'preview' && artifactConfig.canPreview ? (
           renderPreview()
         ) : (

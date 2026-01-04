@@ -7,15 +7,21 @@
 
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, FileText, User, Clock, ChevronDown, Trophy, Folder, File, ChevronRight, RefreshCw, History, Vote, ArrowRight, Eye, GitBranch, ExternalLink, Bell, Wifi, WifiOff } from 'lucide-react';
+import { X, FileText, User, Clock, ChevronDown, Trophy, Folder, ChevronRight, RefreshCw, History, Vote, ArrowRight, Eye, GitBranch, ExternalLink, Bell, Wifi, WifiOff, File, Columns } from 'lucide-react';
 import { useAgentStore, selectAnswers, selectAgents, selectAgentOrder, selectSelectedAgent, selectFinalAnswer, selectVoteDistribution, resolveAnswerContent } from '../stores/agentStore';
 import { useWorkspaceStore, selectWsStatus, selectWsError } from '../stores/workspaceStore';
 import type { Answer, AnswerWorkspace, TimelineNode as TimelineNodeType } from '../types';
 import { ArtifactPreviewModal } from './ArtifactPreviewModal';
 import { InlineArtifactPreview } from './InlineArtifactPreview';
 import { TimelineView } from './timeline';
+import { ProgressSummaryBar } from './ProgressSummaryBar';
+import { EmptyState, EMPTY_STATES } from './EmptyState';
 import { canPreviewFile } from '../utils/artifactTypes';
+import { getFileIcon } from '../utils/fileIcons';
+import { getAgentColor } from '../utils/agentColors';
 import { clearFileCache } from '../hooks/useFileContent';
+import { useModalKeyboardNavigation } from '../hooks/useModalKeyboardNavigation';
+import { ComparisonView } from './ComparisonView';
 import { createAbortableFetch, isAbortError } from '../utils/fetchWithAbort';
 import { debugLog } from '../utils/debugLogger';
 
@@ -190,6 +196,11 @@ function FileNode({ node, depth, onFileClick }: FileNodeProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const isPreviewable = !node.isDirectory && canPreviewFile(node.name);
 
+  // Get file-type specific icon and color
+  const fileIconConfig = !node.isDirectory ? getFileIcon(node.name) : null;
+  const FileIcon = fileIconConfig?.icon;
+  const fileIconClass = fileIconConfig?.className || 'text-gray-400';
+
   const handleClick = () => {
     if (node.isDirectory) {
       setIsExpanded(!isExpanded);
@@ -224,9 +235,9 @@ function FileNode({ node, depth, onFileClick }: FileNodeProps) {
 
         {node.isDirectory ? (
           <Folder className="w-4 h-4 text-blue-400" />
-        ) : (
-          <File className={`w-4 h-4 ${isPreviewable ? 'text-violet-400' : 'text-gray-400'}`} />
-        )}
+        ) : FileIcon ? (
+          <FileIcon className={`w-4 h-4 ${isPreviewable ? 'text-violet-400' : fileIconClass}`} />
+        ) : null}
 
         <span className="flex-1">{node.name}</span>
 
@@ -328,6 +339,7 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
   const [fileViewerOpen, setFileViewerOpen] = useState(false);
   const [selectedFilePath, setSelectedFilePath] = useState<string>('');
   const [isPreviewFullscreen, setIsPreviewFullscreen] = useState(false);
+  const [isComparisonOpen, setIsComparisonOpen] = useState(false);
 
   // Track if we've auto-previewed for the current workspace
   const hasAutoPreviewedRef = useRef<string | null>(null);
@@ -1157,6 +1169,55 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
   // Count total workspaces
   const totalWorkspaces = workspaces.current.length + answerWorkspaces.length;
 
+  // Compute item counts for keyboard navigation
+  const itemCountByTab = useMemo(() => ({
+    answers: filteredAnswers.length,
+    votes: votes.length,
+    workspace: fileTree.length,
+    timeline: 0, // Timeline uses its own navigation
+  }), [filteredAnswers.length, votes.length, fileTree.length]);
+
+  // Keyboard navigation within modal
+  // Note: selectedIndex and isNavigating can be used for visual highlighting
+  const {
+    selectedIndex: _selectedIndex,
+    isNavigating: _isNavigating,
+    setSelectedIndex: _setSelectedIndex,
+  } = useModalKeyboardNavigation({
+    isOpen,
+    activeTab,
+    itemCount: itemCountByTab[activeTab],
+    onTabChange: setActiveTab,
+    onItemSelect: (index) => {
+      // Handle item selection based on active tab
+      if (activeTab === 'answers' && filteredAnswers[index]) {
+        setExpandedAnswerId(filteredAnswers[index].id);
+      }
+    },
+    onItemActivate: (index) => {
+      // Handle Enter/Space on selected item
+      if (activeTab === 'answers' && filteredAnswers[index]) {
+        const answerId = filteredAnswers[index].id;
+        setExpandedAnswerId(expandedAnswerId === answerId ? null : answerId);
+      }
+    },
+    onClose,
+  });
+
+  // Compute progress summary values
+  const isVoting = useMemo(() => {
+    return votes.length > 0 && !selectedAgent;
+  }, [votes.length, selectedAgent]);
+
+  const isComplete = useMemo(() => {
+    return !!selectedAgent || !!finalAnswer;
+  }, [selectedAgent, finalAnswer]);
+
+  const winnerVotes = useMemo(() => {
+    if (!selectedAgent) return undefined;
+    return voteDistribution[selectedAgent] || 0;
+  }, [selectedAgent, voteDistribution]);
+
   if (!isOpen) return null;
 
   return (
@@ -1178,7 +1239,7 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 20 }}
             transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-            className="fixed inset-4 md:inset-10 lg:inset-20 bg-gray-800 rounded-xl border border-gray-600 shadow-2xl z-50 flex flex-col overflow-hidden"
+            className="fixed inset-4 md:inset-6 lg:inset-8 bg-gray-800 rounded-xl border border-gray-600 shadow-2xl z-50 flex flex-col overflow-hidden"
           >
             {/* Header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700 bg-gray-900/50">
@@ -1249,6 +1310,21 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                 <GitBranch className="w-4 h-4" />
                 Timeline
               </button>
+
+              {/* Progress Summary Bar - right-aligned */}
+              <div className="ml-auto flex items-center pr-4">
+                <ProgressSummaryBar
+                  agentCount={agentOrder.length}
+                  answerCount={answers.length}
+                  voteCount={votes.length}
+                  totalVotesExpected={agentOrder.length}
+                  winnerId={selectedAgent || undefined}
+                  winnerVotes={winnerVotes}
+                  isComplete={isComplete}
+                  isVoting={isVoting}
+                  agentOrder={agentOrder}
+                />
+              </div>
             </div>
 
             {/* Tab Content */}
@@ -1277,11 +1353,12 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                 {/* Answer List */}
                 <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
                   {filteredAnswers.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center h-full text-gray-500">
-                      <FileText className="w-12 h-12 mb-4 opacity-50" />
-                      <p>No answers yet</p>
-                      <p className="text-sm mt-1">Answers will appear here as agents submit them</p>
-                    </div>
+                    <EmptyState
+                      icon={FileText}
+                      title={EMPTY_STATES.noAnswers.title}
+                      description={EMPTY_STATES.noAnswers.description}
+                      hint={EMPTY_STATES.noAnswers.hint}
+                    />
                   ) : (
                     <div className="space-y-3">
                       {filteredAnswers.map((answer) => {
@@ -1419,10 +1496,13 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                     </h3>
 
                     {votes.length === 0 ? (
-                      <div className="text-center py-8 text-gray-500">
-                        <Vote className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                        <p>No votes cast yet</p>
-                      </div>
+                      <EmptyState
+                        icon={Vote}
+                        title={EMPTY_STATES.noVotes.title}
+                        description={EMPTY_STATES.noVotes.description}
+                        hint={EMPTY_STATES.noVotes.hint}
+                        size="sm"
+                      />
                     ) : (
                       <div className="space-y-3">
                         {votes.map((vote) => (
@@ -1494,10 +1574,13 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                     <Folder className="w-4 h-4 text-blue-400" />
                     <span className="text-sm text-gray-400">Agent:</span>
                     <div className="flex gap-1">
-                      {agentOrder.map((agentId) => {
+                      {agentOrder.map((agentId, index) => {
                         const agentData = workspacesByAgent[agentId];
                         const hasWorkspace = agentData?.current || agentData?.historical.length > 0;
                         if (!hasWorkspace) return null;
+
+                        const agentColor = getAgentColor(agentId, agentOrder);
+                        const isSelected = selectedAgentWorkspace === agentId;
 
                         return (
                           <button
@@ -1509,12 +1592,12 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                               fetchWorkspaces();
                             }}
                             className={`px-3 py-1 text-sm rounded transition-colors ${
-                              selectedAgentWorkspace === agentId
-                                ? 'bg-blue-600 text-white'
-                                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                              isSelected
+                                ? `${agentColor.bg} text-white`
+                                : `${agentColor.bgLight} ${agentColor.text} hover:opacity-80`
                             }`}
                           >
-                            {agentId}
+                            Agent {index + 1}
                           </button>
                         );
                       })}
@@ -1566,11 +1649,23 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                     </div>
                   )}
 
+                  {/* Compare Button */}
+                  {totalWorkspaces >= 2 && (
+                    <button
+                      onClick={() => setIsComparisonOpen(true)}
+                      className="ml-auto flex items-center gap-2 px-3 py-1.5 bg-purple-600 hover:bg-purple-500 rounded-lg transition-colors text-white text-sm"
+                      title="Compare workspaces side-by-side"
+                    >
+                      <Columns className="w-4 h-4" />
+                      <span>Compare</span>
+                    </button>
+                  )}
+
                   {/* Open Folder Button */}
                   {activeWorkspace && (
                     <button
                       onClick={() => openWorkspaceInFinder(activeWorkspace.path)}
-                      className="ml-auto flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 rounded-lg transition-colors text-white text-sm"
+                      className={`flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 rounded-lg transition-colors text-white text-sm ${totalWorkspaces < 2 ? 'ml-auto' : ''}`}
                       title="Open workspace in file browser"
                     >
                       <ExternalLink className="w-4 h-4" />
@@ -1655,19 +1750,6 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                   </div>
                 )}
 
-                {/* Active workspace path */}
-                {activeWorkspace && (
-                  <div className="px-6 py-2 border-b border-gray-700 text-xs text-gray-400 flex items-center gap-2">
-                    <span className="font-semibold text-gray-300">Workspace path:</span>
-                    <span className="truncate" title={activeWorkspace.path}>
-                      {activeWorkspace.path}
-                    </span>
-                    {selectedAnswerLabel !== 'current' && (
-                      <span className="text-amber-400">(version: {selectedAnswerLabel})</span>
-                    )}
-                  </div>
-                )}
-
                 {/* Split View: File Tree + Preview - wrapped in relative for overlay */}
                 <div className="relative flex-1 flex overflow-hidden">
                   {/* New Answer Notification - Prominent Modal Overlay */}
@@ -1746,25 +1828,35 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                         <p className="text-sm">Loading workspaces...</p>
                       </div>
                     ) : totalWorkspaces === 0 ? (
-                      <div className="flex flex-col items-center justify-center h-full text-gray-500">
-                        <Folder className="w-10 h-10 mb-3 opacity-50" />
-                        <p className="text-sm">No workspaces found</p>
-                      </div>
+                      <EmptyState
+                        icon={Folder}
+                        title={EMPTY_STATES.noWorkspaces.title}
+                        description={EMPTY_STATES.noWorkspaces.description}
+                        hint={EMPTY_STATES.noWorkspaces.hint}
+                        size="sm"
+                      />
                     ) : !activeWorkspace ? (
-                      <div className="flex flex-col items-center justify-center h-full text-gray-500">
-                        <Folder className="w-10 h-10 mb-3 opacity-50" />
-                        <p className="text-sm text-center">Select an agent to browse their workspace</p>
-                      </div>
+                      <EmptyState
+                        icon={Folder}
+                        title="Select an agent"
+                        description={EMPTY_STATES.noFiles.description}
+                        hint={EMPTY_STATES.noFiles.hint}
+                        size="sm"
+                      />
                     ) : isLoadingFiles && filteredWorkspaceFiles.length === 0 ? (
-                      <div className="flex flex-col items-center justify-center h-full text-gray-500">
-                        <RefreshCw className="w-6 h-6 mb-3 animate-spin" />
-                        <p className="text-sm">Loading files...</p>
-                      </div>
+                      <EmptyState
+                        icon={RefreshCw}
+                        title={EMPTY_STATES.loading.title}
+                        description="Fetching workspace files..."
+                        size="sm"
+                      />
                     ) : filteredWorkspaceFiles.length === 0 ? (
-                      <div className="flex flex-col items-center justify-center h-full text-gray-500">
-                        <Folder className="w-10 h-10 mb-3 opacity-50" />
-                        <p className="text-sm">No files</p>
-                      </div>
+                      <EmptyState
+                        icon={Folder}
+                        title={EMPTY_STATES.noFiles.title}
+                        description={EMPTY_STATES.noFiles.description}
+                        size="sm"
+                      />
                     ) : (
                       <div>
                         <div className="mb-2 text-xs text-gray-500 flex items-center gap-2">
@@ -1784,7 +1876,7 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                   </div>
 
                   {/* Right: Inline Preview */}
-                  <div className="flex-1 overflow-hidden p-3">
+                  <div className="flex-1 overflow-auto p-3">
                     {selectedFilePath && activeWorkspace ? (
                       <InlineArtifactPreview
                         filePath={selectedFilePath}
@@ -1822,20 +1914,6 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                 <TimelineView onNodeClick={handleTimelineNodeClick} />
               </div>
             ) : null}
-
-            {/* Footer with stats */}
-            <div className="px-6 py-3 border-t border-gray-700 bg-gray-900/50 flex items-center justify-between text-sm">
-              <div className="flex items-center gap-4 text-gray-400">
-                <span>Total: {answers.length} answers</span>
-                <span>Agents: {Object.keys(answersByAgent).length}</span>
-              </div>
-              {selectedAgent && (
-                <div className="flex items-center gap-2 text-yellow-400">
-                  <Trophy className="w-4 h-4" />
-                  <span>Winner: {selectedAgent}</span>
-                </div>
-              )}
-            </div>
           </motion.div>
         </>
       )}
@@ -1879,7 +1957,7 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
               </button>
             </div>
             {/* Fullscreen preview content */}
-            <div className="flex-1 overflow-hidden p-4">
+            <div className="flex-1 overflow-auto p-4">
               <InlineArtifactPreview
                 filePath={selectedFilePath}
                 workspacePath={activeWorkspace.path}
@@ -1895,6 +1973,17 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
           </motion.div>
         </motion.div>
       )}
+
+      {/* Side-by-Side Comparison View */}
+      <ComparisonView
+        isOpen={isComparisonOpen}
+        onClose={() => setIsComparisonOpen(false)}
+        agentWorkspaces={workspacesByAgent}
+        answerWorkspaces={answerWorkspaces}
+        agentOrder={agentOrder}
+        sessionId={sessionId}
+        initialFile={selectedFilePath}
+      />
     </AnimatePresence>
   );
 }
