@@ -176,23 +176,23 @@ ${processedContent}
       </div>
 
       {/* Preview iframe - use src for live preview, srcDoc for inline */}
-      {useLivePreview ? (
-        <iframe
-          src={livePreviewUrl!}
-          sandbox="allow-scripts allow-same-origin"
-          title={`Preview: ${fileName}`}
-          className="flex-1 w-full bg-white rounded-b-lg border-0"
-          style={{ minHeight: '400px' }}
-        />
-      ) : (
-        <iframe
-          srcDoc={preparedContent}
-          sandbox="allow-scripts"
-          title={`Preview: ${fileName}`}
-          className="flex-1 w-full bg-white rounded-b-lg border-0"
-          style={{ minHeight: '400px' }}
-        />
-      )}
+      <div className="flex-1 min-h-0 overflow-hidden">
+        {useLivePreview ? (
+          <iframe
+            src={livePreviewUrl!}
+            sandbox="allow-scripts allow-same-origin"
+            title={`Preview: ${fileName}`}
+            className="w-full h-full bg-white rounded-b-lg border-0"
+          />
+        ) : (
+          <iframe
+            srcDoc={preparedContent}
+            sandbox="allow-scripts"
+            title={`Preview: ${fileName}`}
+            className="w-full h-full bg-white rounded-b-lg border-0"
+          />
+        )}
+      </div>
     </div>
   );
 }

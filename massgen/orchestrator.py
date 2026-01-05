@@ -2207,7 +2207,15 @@ Your answer:"""
                 log_session_dir = get_log_session_dir()
                 if log_session_dir:
                     try:
-                        self.coordination_tracker.save_status_file(log_session_dir, orchestrator=self)
+                        # Run synchronous save_status_file in thread pool to avoid blocking event loop
+                        # This prevents delays in WebSocket broadcasts and other async operations
+                        loop = asyncio.get_running_loop()
+                        await loop.run_in_executor(
+                            None,  # Use default thread pool executor
+                            self.coordination_tracker.save_status_file,
+                            log_session_dir,
+                            self,
+                        )
                     except Exception as e:
                         logger.debug(f"Failed to update status file in background: {e}")
         except asyncio.CancelledError:
@@ -2589,13 +2597,15 @@ Your answer:"""
                             agent_id,
                         )
 
-                        # Emit agent completion status immediately upon result
-                        yield StreamChunk(
-                            type="agent_status",
-                            source=agent_id,
-                            status="completed",
-                            content="",
-                        )
+                        # Only emit "completed" status for votes - agents are truly done
+                        # after voting. For answers, they still need to vote.
+                        if result_type == "vote":
+                            yield StreamChunk(
+                                type="agent_status",
+                                source=agent_id,
+                                status="completed",
+                                content="",
+                            )
                         await self._close_agent_stream(agent_id, active_streams)
 
                         if result_type == "answer":
@@ -2627,13 +2637,34 @@ Your answer:"""
                             if hasattr(self, "coordination_ui") and self.coordination_ui:
                                 display = getattr(self.coordination_ui, "display", None)
                                 if display and hasattr(display, "send_new_answer"):
-                                    # Get answer count for this agent
+                                    # Get answer count and label for this agent
                                     agent_answers = self.coordination_tracker.answers_by_agent.get(agent_id, [])
                                     answer_number = len(agent_answers)
+                                    agent_num = self.coordination_tracker._get_agent_number(agent_id)
+                                    answer_label = f"agent{agent_num}.{answer_number}"
+
+                                    # Get workspace path from snapshot mapping
+                                    workspace_path = None
+                                    snapshot_mapping = self.coordination_tracker.snapshot_mappings.get(answer_label)
+                                    if snapshot_mapping:
+                                        # Build absolute workspace path from mapping
+                                        log_session_dir = get_log_session_dir()
+                                        if log_session_dir and snapshot_mapping.get("path"):
+                                            # path is like "agent_a/20251230_123456/answer.txt"
+                                            # workspace is at "agent_a/20251230_123456/workspace"
+                                            snapshot_path = snapshot_mapping["path"]
+                                            if snapshot_path.endswith("/answer.txt"):
+                                                workspace_rel = snapshot_path[: -len("/answer.txt")] + "/workspace"
+                                            else:
+                                                workspace_rel = f"{agent_id}/{answer_timestamp}/workspace"
+                                            workspace_path = str(Path(log_session_dir) / workspace_rel)
+
                                     display.send_new_answer(
                                         agent_id=agent_id,
                                         content=result_data,
                                         answer_number=answer_number,
+                                        answer_label=answer_label,
+                                        workspace_path=workspace_path,
                                     )
                                 # Record answer with context for timeline visualization
                                 if display and hasattr(display, "record_answer_with_context"):
@@ -2650,9 +2681,16 @@ Your answer:"""
                                         round_num=answer_number,
                                     )
                             # Update status file for real-time monitoring
+                            # Run in executor to avoid blocking event loop
                             log_session_dir = get_log_session_dir()
                             if log_session_dir:
-                                self.coordination_tracker.save_status_file(log_session_dir, orchestrator=self)
+                                loop = asyncio.get_running_loop()
+                                await loop.run_in_executor(
+                                    None,
+                                    self.coordination_tracker.save_status_file,
+                                    log_session_dir,
+                                    self,
+                                )
                             restart_triggered_id = agent_id  # Last agent to provide new answer
                             reset_signal = True
                             log_stream_chunk(
@@ -2743,17 +2781,31 @@ Your answer:"""
                                         # Use format like "vote1.1" (matches answer format "agent1.1")
                                         vote_label = f"vote{agent_num}.{vote_number}"
                                         available_answers = self.coordination_tracker.iteration_available_labels.copy()
+                                        # Get the answer label that was voted for (e.g., "agent2.3")
+                                        voted_for_agent = result_data.get("agent_id", "")
+                                        voted_for_label = self.coordination_tracker.get_voted_for_label(
+                                            agent_id,
+                                            voted_for_agent,
+                                        )
                                         display.record_vote_with_context(
                                             voter_id=agent_id,
                                             vote_label=vote_label,
-                                            voted_for=result_data.get("agent_id", ""),
+                                            voted_for=voted_for_label or voted_for_agent,
                                             available_answers=available_answers,
+                                            voting_round=self.coordination_tracker.current_iteration,
                                         )
                                 # Update status file for real-time monitoring
+                                # Run in executor to avoid blocking event loop
                                 log_session_dir = get_log_session_dir()
                                 logger.debug(f"Log session dir: {log_session_dir}")
                                 if log_session_dir:
-                                    self.coordination_tracker.save_status_file(log_session_dir, orchestrator=self)
+                                    loop = asyncio.get_running_loop()
+                                    await loop.run_in_executor(
+                                        None,
+                                        self.coordination_tracker.save_status_file,
+                                        log_session_dir,
+                                        self,
+                                    )
 
                                 # Track new vote event
                                 voted_for = result_data.get("agent_id", "<unknown>")
@@ -2809,19 +2861,19 @@ Your answer:"""
                         yield StreamChunk(type=mcp_type, content=mcp_message, source=agent_id)
 
                     elif chunk_type == "done":
-                        # Stream completed - emit completion status for frontend
-                        # End round token tracking with "restarted" outcome (done without result typically means restart)
+                        # Stream completed - this is just an end-of-stream marker
+                        # DON'T emit "completed" status here - that's handled by the "result" handler
+                        # when the agent actually provides an answer/vote.
+                        # The "done" chunk just means the backend stream ended, which happens
+                        # after every turn (including the first turn before any answer).
                         agent = self.agents.get(agent_id)
                         if agent and hasattr(agent.backend, "end_round_tracking"):
                             agent.backend.end_round_tracking("restarted")
                         completed_agent_ids.add(agent_id)
                         log_stream_chunk("orchestrator", "done", None, agent_id)
-                        yield StreamChunk(
-                            type="agent_status",
-                            source=agent_id,
-                            status="completed",
-                            content="",
-                        )
+                        # Note: Removed agent_status: completed emission here - it was causing
+                        # agents to show "Done" immediately before they've done any work.
+                        # Status updates are properly handled by the "result" handler.
                         await self._close_agent_stream(agent_id, active_streams)
 
                 except Exception as e:
@@ -4968,9 +5020,16 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
 
         self.coordination_tracker.set_final_agent(selected_agent_id, voting_summary, all_answers)
         # Update status file for real-time monitoring
+        # Run in executor to avoid blocking event loop
         log_session_dir = get_log_session_dir()
         if log_session_dir:
-            self.coordination_tracker.save_status_file(log_session_dir, orchestrator=self)
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(
+                None,
+                self.coordination_tracker.save_status_file,
+                log_session_dir,
+                self,
+            )
 
         # Create conversation with system and user messages
         presentation_messages = [

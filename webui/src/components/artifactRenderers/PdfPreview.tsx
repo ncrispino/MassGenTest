@@ -19,18 +19,42 @@ export function PdfPreview({ content, fileName }: PdfPreviewProps) {
 
   // Convert base64 to Blob URL for better large file handling
   useEffect(() => {
-    console.log('PdfPreview received content:', {
-      fileName,
-      contentLength: content?.length,
-      contentPreview: content?.substring(0, 100),
-      startsWithData: content?.startsWith('data:'),
-    });
+    if (import.meta.env.DEV) {
+      console.log('PdfPreview received content:', {
+        fileName,
+        contentLength: content?.length,
+        contentPreview: content?.substring(0, 100),
+        startsWithData: content?.startsWith('data:'),
+      });
+    }
+
+    // Validate content before attempting to decode
+    if (!content || content.length === 0) {
+      setError('No content received for PDF preview');
+      setBlobUrl(null);
+      return;
+    }
 
     try {
       // Extract base64 data
       let base64Data = content;
       if (content.startsWith('data:')) {
         base64Data = content.split(',')[1] || content;
+      }
+
+      // Validate base64 format (should only contain valid base64 chars)
+      // Remove any whitespace first
+      base64Data = base64Data.replace(/\s/g, '');
+
+      // Check if it looks like base64 (only contains valid chars)
+      if (!/^[A-Za-z0-9+/]*={0,2}$/.test(base64Data)) {
+        console.error('PdfPreview: Content does not look like valid base64:', {
+          firstChars: base64Data.substring(0, 50),
+          lastChars: base64Data.substring(base64Data.length - 50),
+        });
+        setError('Invalid PDF data format - content is not valid base64');
+        setBlobUrl(null);
+        return;
       }
 
       // Decode base64 to binary
@@ -43,7 +67,9 @@ export function PdfPreview({ content, fileName }: PdfPreviewProps) {
       // Create Blob and URL
       const blob = new Blob([bytes], { type: 'application/pdf' });
       const url = URL.createObjectURL(blob);
-      console.log('PdfPreview created blob URL, size:', blob.size);
+      if (import.meta.env.DEV) {
+        console.log('PdfPreview created blob URL, size:', blob.size);
+      }
       setBlobUrl(url);
       setError(null);
 

@@ -2,35 +2,38 @@
  * TimelineNode Component
  *
  * Renders a single node on the timeline (answer, vote, or final).
- * Color-coded by type with hover effects and tooltips.
+ * Color-coded by agent (for answers) or type (for votes/final) with hover effects and tooltips.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import type { TimelineNode as TimelineNodeType } from '../../types';
+import { getAgentColor } from '../../utils/agentColors';
 
 interface TimelineNodeProps {
   node: TimelineNodeType;
   x: number;
   y: number;
   size: number;
+  agentOrder?: string[];
+  isSuperseded?: boolean;  // For vote nodes: true if this vote was superseded by a new answer
   onClick?: () => void;
 }
 
 // Track which nodes have been animated to prevent re-animation
 const animatedNodes = new Set<string>();
 
-// Node colors by type
+// Node colors by type (for votes and final)
 const nodeColors = {
-  answer: {
-    fill: 'url(#answerGradient)',
-    stroke: '#60A5FA',
-    glow: 'rgba(59, 130, 246, 0.4)',
-  },
   vote: {
     fill: 'url(#voteGradient)',
     stroke: '#FBBF24',
     glow: 'rgba(245, 158, 11, 0.4)',
+  },
+  voteSuperseded: {
+    fill: 'url(#voteSupersededGradient)',
+    stroke: '#6B7280',
+    glow: 'rgba(107, 114, 128, 0.3)',
   },
   final: {
     fill: 'url(#finalGradient)',
@@ -39,10 +42,28 @@ const nodeColors = {
   },
 };
 
-export function TimelineNode({ node, x, y, size, onClick }: TimelineNodeProps) {
+export function TimelineNode({ node, x, y, size, agentOrder = [], isSuperseded = false, onClick }: TimelineNodeProps) {
   const [isHovered, setIsHovered] = useState(false);
-  const colors = nodeColors[node.type];
   const radius = size / 2;
+
+  // Get agent-specific color for answer nodes
+  const colors = useMemo(() => {
+    if (node.type === 'answer') {
+      const agentColor = getAgentColor(node.agentId, agentOrder);
+      return {
+        fill: `url(#agent-${node.agentId}-gradient)`,
+        stroke: agentColor.hexLight,
+        glow: `${agentColor.hex}66`,
+        hex: agentColor.hex,
+        hexLight: agentColor.hexLight,
+      };
+    }
+    // Use superseded colors for invalidated votes
+    if (node.type === 'vote' && isSuperseded) {
+      return nodeColors.voteSuperseded;
+    }
+    return nodeColors[node.type];
+  }, [node.type, node.agentId, agentOrder, isSuperseded]);
 
   // Only animate nodes that haven't been seen before
   const shouldAnimate = !animatedNodes.has(node.id);
@@ -66,13 +87,20 @@ export function TimelineNode({ node, x, y, size, onClick }: TimelineNodeProps) {
     >
       {/* Gradient definitions */}
       <defs>
-        <linearGradient id="answerGradient" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stopColor="#3B82F6" />
-          <stop offset="100%" stopColor="#2563EB" />
-        </linearGradient>
+        {/* Agent-specific gradient for answer nodes */}
+        {node.type === 'answer' && 'hex' in colors && (
+          <linearGradient id={`agent-${node.agentId}-gradient`} x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stopColor={colors.hexLight} />
+            <stop offset="100%" stopColor={colors.hex} />
+          </linearGradient>
+        )}
         <linearGradient id="voteGradient" x1="0%" y1="0%" x2="100%" y2="100%">
           <stop offset="0%" stopColor="#F59E0B" />
           <stop offset="100%" stopColor="#D97706" />
+        </linearGradient>
+        <linearGradient id="voteSupersededGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stopColor="#6B7280" />
+          <stop offset="100%" stopColor="#4B5563" />
         </linearGradient>
         <linearGradient id="finalGradient" x1="0%" y1="0%" x2="100%" y2="100%">
           <stop offset="0%" stopColor="#EAB308" />
@@ -130,9 +158,9 @@ export function TimelineNode({ node, x, y, size, onClick }: TimelineNodeProps) {
         x={x}
         y={y + radius + 14}
         textAnchor="middle"
-        className="fill-gray-400 text-xs font-medium select-none pointer-events-none"
+        className={`text-xs font-medium select-none pointer-events-none ${isSuperseded ? 'fill-gray-600' : 'fill-gray-400'}`}
       >
-        {node.label}
+        {node.label}{isSuperseded ? ' ✗' : ''}
       </text>
 
       {/* Tooltip on hover */}
