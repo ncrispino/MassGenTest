@@ -1,4 +1,12 @@
 # -*- coding: utf-8 -*-
+"""
+Model routing for the MassGen HTTP server.
+
+Supports:
+- massgen/path:<path> - Use a specific config file
+- massgen/<example> - Use a built-in example config (e.g., massgen/basic_multi)
+- massgen - Use the default config
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -7,31 +15,39 @@ from typing import Optional
 
 @dataclass(frozen=True)
 class ResolvedModel:
+    """Resolved model routing result."""
+
     raw_model: str
     config_path: Optional[str] = None
-    override_model: Optional[str] = None
 
 
-def resolve_model(raw_model: str, *, default_config: Optional[str], default_model: Optional[str]) -> ResolvedModel:
+def resolve_model(raw_model: str, *, default_config: Optional[str]) -> ResolvedModel:
     """
-    Minimal model routing:
-    - massgen/path:<path> -> config_path=<path>
-    - massgen/model:<model> -> override_model=<model>
-    - otherwise:
-        - if default_config is set -> use it (and optionally override_model with raw_model if default_model is not set)
-        - else treat raw_model as override_model (single-agent quick override)
+    Route model string to config path.
+
+    Model string formats:
+    - "massgen/path:<path>" -> Use explicit config file path
+    - "massgen/<example>" -> Use built-in example (e.g., "massgen/basic_multi" -> "@examples/basic_multi")
+    - "massgen" or other -> Use default_config
+
+    Args:
+        raw_model: The model string from the request
+        default_config: Default config path from server settings
+
+    Returns:
+        ResolvedModel with config_path set
     """
+    # Explicit config path: massgen/path:/some/config.yaml
     if raw_model.startswith("massgen/path:"):
-        return ResolvedModel(raw_model=raw_model, config_path=raw_model[len("massgen/path:") :].strip() or None)
-    if raw_model.startswith("massgen/model:"):
-        return ResolvedModel(raw_model=raw_model, config_path=default_config, override_model=raw_model[len("massgen/model:") :].strip() or None)
+        path = raw_model[len("massgen/path:") :].strip()
+        return ResolvedModel(raw_model=raw_model, config_path=path or default_config)
 
-    # Generic model strings
-    if default_config:
-        # Config-as-Authority:
-        # If a config is loaded, we ignore the client's requested model string (e.g. "gpt-4")
-        # and use the config's defined agents.
-        # The only way to override is via explicit "massgen/model:<model>" prefix above.
-        return ResolvedModel(raw_model=raw_model, config_path=default_config, override_model=None)
+    # Built-in example: massgen/basic_multi -> @examples/basic_multi
+    if raw_model.startswith("massgen/") and raw_model != "massgen/":
+        example_name = raw_model[len("massgen/") :]
+        # Don't treat "massgen/path:" as an example (already handled above)
+        if example_name and not example_name.startswith("path:"):
+            return ResolvedModel(raw_model=raw_model, config_path=f"@examples/{example_name}")
 
-    return ResolvedModel(raw_model=raw_model, config_path=None, override_model=raw_model or None)
+    # Default: use the server's default config
+    return ResolvedModel(raw_model=raw_model, config_path=default_config)

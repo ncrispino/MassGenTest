@@ -1,20 +1,23 @@
 # -*- coding: utf-8 -*-
+"""
+OpenAI-compatible API routes for MassGen HTTP server.
+
+Provides /v1/chat/completions endpoint that uses massgen.run() for full feature parity.
+"""
 from __future__ import annotations
 
 import uuid
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Request
-from starlette.responses import JSONResponse, StreamingResponse
+from starlette.responses import JSONResponse
 
 from massgen.tool.workflow_toolkits.base import WORKFLOW_TOOL_NAMES
 
 from ..engine import Engine, MassGenEngine
 from ..settings import ServerSettings
-from .adapter import accumulate_stream_to_response, stream_to_sse_frames
 from .model_router import resolve_model
 from .schema import ChatCompletionRequest
-from .sse import SSE_HEADERS, format_done, format_sse
 
 
 def _extract_client_tool_names(tools: Optional[List[Dict[str, Any]]]) -> List[str]:
@@ -34,7 +37,7 @@ def _extract_client_tool_names(tools: Optional[List[Dict[str, Any]]]) -> List[st
 def build_router(*, engine: Optional[Engine] = None, settings: Optional[ServerSettings] = None) -> APIRouter:
     router = APIRouter()
     settings = settings or ServerSettings.from_env()
-    engine = engine or MassGenEngine(default_config=settings.default_config, default_model=settings.default_model)
+    engine = engine or MassGenEngine(default_config=settings.default_config)
 
     @router.get("/health")
     async def health() -> Dict[str, Any]:
@@ -56,31 +59,29 @@ def build_router(*, engine: Optional[Engine] = None, settings: Optional[ServerSe
                 },
             )
 
+        # Streaming is not yet supported - return error if requested
+        if req.stream:
+            raise HTTPException(
+                status_code=501,
+                detail={
+                    "error": "Streaming is not yet supported. Please set stream=false.",
+                    "hint": "Streaming support is planned for a future release.",
+                },
+            )
+
         resolved = resolve_model(
             req.model or "massgen",
             default_config=settings.default_config,
-            default_model=settings.default_model,
         )
 
         request_id = request.headers.get("x-request-id") or f"req_{uuid.uuid4().hex}"
-        model_for_response = resolved.override_model or (settings.default_model or req.model or "massgen")
 
-        async def _stream():
-            response_id = f"chatcmpl_{uuid.uuid4().hex}"
-            stream_it = engine.stream_chat(req, resolved, request_id=request_id)
-            async for frame in stream_to_sse_frames(stream_it, model=model_for_response, response_id=response_id):
-                yield format_sse(frame)
-            yield format_done()
-
-        if req.stream:
-            return StreamingResponse(
-                _stream(),
-                media_type="text/event-stream",
-                headers=SSE_HEADERS,
-            )
-
-        stream_it = engine.stream_chat(req, resolved, request_id=request_id)
-        resp, _finish = await accumulate_stream_to_response(stream_it, model=model_for_response)
-        return JSONResponse(resp)
+        try:
+            response = await engine.completion(req, resolved, request_id=request_id)
+            return JSONResponse(response)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail={"error": str(e)})
+        except Exception as e:
+            raise HTTPException(status_code=500, detail={"error": f"Internal server error: {str(e)}"})
 
     return router

@@ -87,31 +87,31 @@ Quick Start Examples
          # Start an OpenAI-compatible HTTP server (defaults: 0.0.0.0:4000)
          uv run massgen serve
 
-         # With a default config + default model override
-         uv run massgen serve --config path/to/config.yaml --default-model gpt-5
+         # With a specific config
+         uv run massgen serve --config @examples/basic/multi/three_agents_default
 
          # Health check
          curl http://localhost:4000/health
 
-         # OpenAI-compatible Chat Completions (non-streaming)
+         # OpenAI-compatible Chat Completions
          curl http://localhost:4000/v1/chat/completions \
            -H "Content-Type: application/json" \
-           -d '{"model":"massgen","messages":[{"role":"user","content":"hi"}],"stream":false}'
-
-         # Streaming via SSE
-         curl -N http://localhost:4000/v1/chat/completions \
-           -H "Content-Type: application/json" \
-           -d '{"model":"massgen","messages":[{"role":"user","content":"hi"}],"stream":true}'
+           -d '{"model":"massgen","messages":[{"role":"user","content":"Analyze renewable energy"}]}'
 
       OpenAI-compatible HTTP API for integrating MassGen into existing clients and server workflows.
 
       .. note::
 
-         **Config-as-Authority:** When running with ``--config``, the ``model`` parameter in client requests is ignored.
-         The server uses the agent team defined in your YAML. To force an override, use ``model="massgen/model:<model_id>"``.
+         **Config Selection:** Use the ``model`` parameter to select configs:
 
-         **Response Format:** The response includes a ``reasoning_content`` field containing agent coordination traces
-         (status updates, reasoning, votes). The ``content`` field contains only the final synthesized answer.
+         - ``model="massgen"`` - Use the default config (from ``--config`` or auto-discovered)
+         - ``model="massgen/basic_multi"`` - Use a built-in example config
+         - ``model="massgen/path:/path/to/config.yaml"`` - Use a specific config file
+
+         **Full Parity:** The HTTP server uses ``massgen.run()`` internally, providing identical behavior
+         to CLI, WebUI, and LiteLLM modes - including logging to ``.massgen/massgen_logs/``, metrics,
+         and session management. The ``massgen_metadata`` field in responses contains the same data
+         as ``massgen.run()`` returns.
 
 CLI Usage
 ---------

@@ -40,19 +40,13 @@ Quick Start
        api_key="not-needed"  # Local server doesn't require auth
    )
 
-   # Non-streaming request
    response = client.chat.completions.create(
        model="massgen",
        messages=[{"role": "user", "content": "Analyze renewable energy trends"}],
-       stream=False
    )
 
    # Final answer
    print(response.choices[0].message.content)
-
-   # Coordination traces (optional)
-   if hasattr(response.choices[0].message, "reasoning_content"):
-       print(response.choices[0].message.reasoning_content)
 
 **cURL alternative:**
 
@@ -61,35 +55,6 @@ Quick Start
    curl http://localhost:4000/v1/chat/completions \
      -H "Content-Type: application/json" \
      -d '{"model":"massgen","messages":[{"role":"user","content":"Hello!"}]}'
-
-Streaming Example
------------------
-
-.. code-block:: python
-
-   from openai import OpenAI
-
-   client = OpenAI(
-       base_url="http://localhost:4000/v1",
-       api_key="not-needed"
-   )
-
-   stream = client.chat.completions.create(
-       model="massgen",
-       messages=[{"role": "user", "content": "What is 25 * 4?"}],
-       stream=True
-   )
-
-   for chunk in stream:
-       delta = chunk.choices[0].delta
-
-       # Coordination traces come first (optional)
-       if hasattr(delta, "reasoning_content") and delta.reasoning_content:
-           print(f"[TRACE] {delta.reasoning_content}")
-
-       # Final answer content
-       if delta.content:
-           print(delta.content, end="", flush=True)
 
 Endpoints
 ---------
@@ -103,39 +68,80 @@ Endpoints
    * - ``GET /health``
      - Health check (returns ``{"status": "ok"}``)
    * - ``POST /v1/chat/completions``
-     - Chat completions (supports ``stream: true`` for SSE)
+     - Chat completions endpoint
 
 Response Format
 ---------------
 
-The server returns OpenAI-compatible responses with an additional ``reasoning_content`` field:
+The server returns OpenAI-compatible responses with MassGen metadata:
 
 .. code-block:: json
 
    {
+     "id": "chatcmpl-req_abc123",
+     "object": "chat.completion",
+     "created": 1704067200,
+     "model": "massgen",
      "choices": [{
+       "index": 0,
        "message": {
          "role": "assistant",
-         "content": "The final coordinated answer from the agent team.",
-         "reasoning_content": "[agent_1] Analyzing...\n[agent_2] Voting...\n[orchestrator] Selected agent_1"
+         "content": "The final coordinated answer from the agent team."
        },
        "finish_reason": "stop"
-     }]
+     }],
+     "usage": {
+       "prompt_tokens": 0,
+       "completion_tokens": 0,
+       "total_tokens": 0
+     },
+     "massgen_metadata": {
+       "session_id": "api_session_20260104_213901",
+       "config_used": "/path/to/config.yaml",
+       "log_directory": ".massgen/massgen_logs/log_20260104_213901_326713",
+       "final_answer_path": ".massgen/massgen_logs/log_20260104_213901_326713/turn_1/final",
+       "selected_agent": "agent_a",
+       "vote_results": {
+         "vote_counts": {"agent_a": 2, "agent_b": 1},
+         "winner": "agent_a",
+         "is_tie": false
+       },
+       "answers": [
+         {"label": "answer1.1", "agent_id": "agent_a", "content": "..."},
+         {"label": "answer2.1", "agent_id": "agent_b", "content": "..."}
+       ],
+       "agent_mapping": {"agent1": "agent_a", "agent2": "agent_b"}
+     }
    }
 
-* ``content`` - The final synthesized answer (what you show to users)
-* ``reasoning_content`` - Internal coordination traces (optional, for debugging)
+The ``massgen_metadata`` field contains the same information returned by ``massgen.run()``:
 
-Config-as-Authority
--------------------
+* ``session_id`` - Unique session identifier
+* ``config_used`` - Path to the config file used
+* ``log_directory`` - Root log directory for this session
+* ``final_answer_path`` - Path to the final answer directory
+* ``selected_agent`` - ID of the winning agent
+* ``vote_results`` - Voting details (counts, winner, tie status)
+* ``answers`` - All submitted answers with labels and content
+* ``agent_mapping`` - Mapping from anonymous names to agent IDs
 
-When running with ``--config``, the server operates in "Config-as-Authority" mode:
+Config Selection
+----------------
 
-* The ``model`` parameter in client requests is **ignored by default**
-* The server uses the agent team defined in your YAML configuration
-* To force a model override, use ``model="massgen/model:<model_id>"``
+Use the ``model`` parameter to select which config to use:
 
-This ensures your carefully tuned multi-agent configuration is respected regardless of what the client sends.
+.. list-table::
+   :header-rows: 1
+   :widths: 40 60
+
+   * - Model String
+     - Description
+   * - ``massgen``
+     - Use the server's default config (from ``--config`` or auto-discovered)
+   * - ``massgen/basic_multi``
+     - Use a built-in example config (e.g., ``@examples/basic_multi``)
+   * - ``massgen/path:/path/to/config.yaml``
+     - Use a specific config file path
 
 CLI Options
 -----------
@@ -151,13 +157,18 @@ CLI Options
    * - Option
      - Description
    * - ``--config PATH``
-     - Path to YAML configuration file
+     - Path to YAML configuration file (supports ``@examples/`` syntax)
    * - ``--host HOST``
      - Bind address (default: ``0.0.0.0``)
    * - ``--port PORT``
      - Port number (default: ``4000``)
-   * - ``--default-model MODEL``
-     - Default model to use if no config is provided
+   * - ``--reload``
+     - Enable auto-reload (development only)
+
+If no ``--config`` is provided, the server auto-discovers configs in order:
+
+1. ``.massgen/config.yaml`` (project-level)
+2. ``~/.config/massgen/config.yaml`` (user-level)
 
 Environment Variables
 ---------------------
@@ -174,8 +185,26 @@ Environment Variables
      - Port (default: ``4000``)
    * - ``MASSGEN_SERVER_DEFAULT_CONFIG``
      - Default config file path
-   * - ``MASSGEN_SERVER_DEFAULT_MODEL``
-     - Default model override
+
+Full Feature Parity
+-------------------
+
+The HTTP server uses ``massgen.run()`` internally, providing **identical behavior** to CLI, WebUI, and LiteLLM modes:
+
+* **Logging** - Creates logs in ``.massgen/massgen_logs/``
+* **Metrics** - Saves ``metrics_summary.json`` and ``execution_metadata.yaml``
+* **Session Management** - Full session tracking with coordination history
+* **Agent Outputs** - Saves individual agent outputs to ``agent_outputs/``
+
+This means you can use ``massgen logs`` to view server session logs, and all debugging/analysis tools work the same way.
+
+Streaming Support
+-----------------
+
+.. note::
+
+   Streaming (``stream: true``) is not yet supported. Set ``stream: false`` in requests.
+   Streaming support is planned for a future release.
 
 Use Cases
 ---------
@@ -192,4 +221,4 @@ See Also
 
 * :doc:`/quickstart/running-massgen` - Quick start with all modes
 * :doc:`/reference/cli` - Full CLI reference
-* :doc:`python_api` - Direct Python API for more control
+* :doc:`python_api` - Direct Python API (same return values as HTTP server)

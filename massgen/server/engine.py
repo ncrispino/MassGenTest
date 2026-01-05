@@ -1,138 +1,177 @@
 # -*- coding: utf-8 -*-
+"""
+MassGen HTTP Server Engine
+
+This module provides the engine that powers the OpenAI-compatible HTTP server.
+It uses massgen.run() to ensure full feature parity with CLI, WebUI, and LiteLLM modes,
+including proper logging, metrics, and session management.
+"""
 from __future__ import annotations
 
-import copy
-import uuid
-from typing import Any, AsyncGenerator, AsyncIterator, Dict, Optional, Protocol
-
-from massgen.agent_config import AgentConfig
-from massgen.backend.base import StreamChunk
-from massgen.cli import create_agents_from_config, load_config_file
-from massgen.orchestrator import Orchestrator
-from massgen.token_manager import TokenUsage
+import time
+from typing import Any, Dict, List, Optional, Protocol
 
 from .openai.model_router import ResolvedModel
 from .openai.schema import ChatCompletionRequest
 
 
 class Engine(Protocol):
-    async def stream_chat(
+    """Protocol for MassGen server engines."""
+
+    async def completion(
         self,
         req: ChatCompletionRequest,
         resolved: ResolvedModel,
         *,
         request_id: str,
-    ) -> AsyncIterator[StreamChunk]:
+    ) -> Dict[str, Any]:
+        """Execute a chat completion request and return OpenAI-compatible response."""
         ...
 
 
 class MassGenEngine:
     """
-    Default engine that reuses MassGen's existing orchestrator + StreamChunk streaming.
+    Default engine that uses massgen.run() for full feature parity.
 
-    This is intentionally conservative: it supports loading a config file and streaming
-    orchestrator output. Tests inject a FakeEngine instead.
+    This ensures the HTTP server has the same capabilities as CLI, WebUI, and LiteLLM:
+    - Proper logging to .massgen/massgen_logs/
+    - Metrics collection and saving
+    - Session management
+    - Full orchestrator features
     """
 
     def __init__(
         self,
         *,
         default_config: Optional[str] = None,
-        default_model: Optional[str] = None,
-        enable_rate_limit: bool = False,
     ):
         self._default_config = default_config
-        self._default_model = default_model
-        self._enable_rate_limit = enable_rate_limit
 
-    def _load_config(self, resolved: ResolvedModel) -> Dict[str, Any]:
-        config_path = resolved.config_path or self._default_config
-        if not config_path:
-            # Extremely minimal fallback: build a 1-agent quick config is out-of-scope here.
-            # Fail clearly so operators can set MASSGEN_SERVER_DEFAULT_CONFIG.
-            raise ValueError("No config provided. Set MASSGEN_SERVER_DEFAULT_CONFIG or use model='massgen/path:<path>'.")
-        return load_config_file(config_path)
+    def _extract_query(self, messages: List[Dict[str, Any]]) -> str:
+        """Extract query from messages list (last user message)."""
+        for msg in reversed(messages):
+            if msg.get("role") == "user":
+                content = msg.get("content", "")
+                # Handle both string and list content (multimodal)
+                if isinstance(content, list):
+                    for part in content:
+                        if isinstance(part, dict) and part.get("type") == "text":
+                            return part.get("text", "")
+                    return ""
+                return content
+        return ""
 
-    def _apply_model_override(self, config: Dict[str, Any], override_model: Optional[str]) -> Dict[str, Any]:
-        if not override_model:
-            return config
-        cfg = copy.deepcopy(config)
-        if "agent" in cfg:
-            cfg["agent"].setdefault("backend", {})
-            cfg["agent"]["backend"]["model"] = override_model
-        if "agents" in cfg and isinstance(cfg["agents"], list):
-            for agent in cfg["agents"]:
-                if isinstance(agent, dict):
-                    agent.setdefault("backend", {})
-                    agent["backend"]["model"] = override_model
-        return cfg
+    def _extract_conversation_history(self, messages: List[Dict[str, Any]]) -> Optional[List[Dict[str, str]]]:
+        """Extract conversation history from messages (excluding last user message)."""
+        if len(messages) <= 1:
+            return None
 
-    async def stream_chat(
+        history = []
+        for msg in messages[:-1]:
+            role = msg.get("role", "")
+            content = msg.get("content", "")
+
+            # Handle multimodal content
+            if isinstance(content, list):
+                text_parts = []
+                for part in content:
+                    if isinstance(part, dict) and part.get("type") == "text":
+                        text_parts.append(part.get("text", ""))
+                content = " ".join(text_parts)
+
+            if role in ("user", "assistant") and content:
+                history.append({"role": role, "content": content})
+
+        return history if history else None
+
+    async def completion(
         self,
         req: ChatCompletionRequest,
         resolved: ResolvedModel,
         *,
         request_id: str,
-    ) -> AsyncGenerator[StreamChunk, None]:
-        config = self._load_config(resolved)
-        override_model = resolved.override_model or self._default_model
-        config = self._apply_model_override(config, override_model)
+    ) -> Dict[str, Any]:
+        """
+        Execute a chat completion using massgen.run().
 
-        orchestrator_cfg = config.get("orchestrator", {}) if isinstance(config, dict) else {}
-        agents = create_agents_from_config(
-            config,
-            orchestrator_cfg if isinstance(orchestrator_cfg, dict) else None,
-            enable_rate_limit=self._enable_rate_limit,
-            config_path=resolved.config_path or self._default_config,
+        This provides full feature parity with CLI/WebUI/LiteLLM modes.
+        """
+        from massgen import run
+
+        # Extract query and conversation history
+        query = self._extract_query(req.messages)
+        conversation_history = self._extract_conversation_history(req.messages)
+
+        # Determine config path
+        config_path = resolved.config_path or self._default_config
+        if not config_path:
+            raise ValueError(
+                "No config provided. Set MASSGEN_SERVER_DEFAULT_CONFIG, " "use --config flag, or specify model='massgen/path:<path>'.",
+            )
+
+        # Build run kwargs
+        run_kwargs = {
+            "query": query,
+            "config": config_path,
+            "enable_logging": True,  # Always enable logging for server requests
+            "verbose": False,  # Quiet mode for server
+        }
+
+        # Add conversation history for multi-turn
+        if conversation_history:
+            run_kwargs["conversation_history"] = conversation_history
+
+        # Run MassGen
+        result = await run(**run_kwargs)
+
+        # Build OpenAI-compatible response
+        return self._build_openai_response(
+            result=result,
+            model=req.model or "massgen",
+            request_id=request_id,
         )
 
-        # Construct a minimal AgentConfig for orchestrator behavior.
-        # We keep most defaults; orchestration behavior is controlled by the YAML agent configs.
-        orch_config = AgentConfig.create_openai_config()
-        orch = Orchestrator(
-            agents=agents,
-            config=orch_config,
-            session_id=f"server_{uuid.uuid4().hex[:8]}",
-            enable_rate_limit=self._enable_rate_limit,
-            trace_classification="strict",
-        )
+    def _build_openai_response(
+        self,
+        result: Dict[str, Any],
+        model: str,
+        request_id: str,
+    ) -> Dict[str, Any]:
+        """Build an OpenAI-compatible chat completion response."""
+        response_id = f"chatcmpl-{request_id}"
 
-        # Preserve OpenAI-style tool messages in req.messages (Orchestrator will be updated to retain role=tool).
-        async for chunk in orch.chat(req.messages, tools=req.tools):
-            # Attach a source if missing (useful for adapter filtering)
-            if chunk.source is None:
-                chunk.source = "orchestrator"
-            if str(chunk.type) == "done":
-                usage = self._collect_usage_totals(orch)
-                if usage:
-                    yield StreamChunk(type="usage", usage=usage, source="orchestrator")
-            yield chunk
-
-    def _collect_usage_totals(self, orch: Orchestrator) -> Optional[Dict[str, int]]:
-        """Aggregate prompt/completion/total tokens across all agents."""
-
-        total_usage = TokenUsage()
-
-        for agent in orch.agents.values():
-            backend = getattr(agent, "backend", None)
-            token_usage = getattr(backend, "token_usage", None) if backend else None
-            if not backend or token_usage is None:
-                continue
-
-            if hasattr(backend, "finalize_token_tracking"):
-                backend.finalize_token_tracking()
-
-            total_usage.add(token_usage)
-
-        prompt_tokens = total_usage.input_tokens + total_usage.cached_input_tokens + total_usage.cache_creation_tokens
-        completion_tokens = total_usage.output_tokens + total_usage.reasoning_tokens
-        total_tokens = prompt_tokens + completion_tokens
-
-        if total_tokens <= 0:
-            return None
+        # Extract usage from result (populated by orchestrator)
+        usage = result.get("usage") or {}
 
         return {
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "total_tokens": total_tokens,
+            "id": response_id,
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": model,
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": result.get("final_answer", ""),
+                    },
+                    "finish_reason": "stop",
+                },
+            ],
+            "usage": {
+                "prompt_tokens": usage.get("prompt_tokens", 0),
+                "completion_tokens": usage.get("completion_tokens", 0),
+                "total_tokens": usage.get("total_tokens", 0),
+            },
+            # MassGen-specific metadata (same structure as massgen.run() result)
+            "massgen_metadata": {
+                "session_id": result.get("session_id"),
+                "config_used": result.get("config_used"),
+                "log_directory": result.get("log_directory"),
+                "final_answer_path": result.get("final_answer_path"),
+                "selected_agent": result.get("selected_agent"),
+                "vote_results": result.get("vote_results"),
+                "answers": result.get("answers"),
+                "agent_mapping": result.get("agent_mapping"),
+            },
         }

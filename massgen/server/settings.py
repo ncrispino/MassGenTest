@@ -1,4 +1,7 @@
 # -*- coding: utf-8 -*-
+"""
+Server settings for MassGen HTTP server.
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -8,14 +11,17 @@ from typing import Optional
 
 @dataclass(frozen=True)
 class ServerSettings:
+    """Settings for the MassGen HTTP server."""
+
     host: str = "0.0.0.0"
     port: int = 4000
     default_config: Optional[str] = None
-    default_model: Optional[str] = None
     debug: bool = False
 
     @classmethod
     def from_env(cls) -> "ServerSettings":
+        """Load settings from environment variables."""
+
         def _get_bool(name: str, default: bool = False) -> bool:
             v = getenv(name)
             if v is None:
@@ -26,11 +32,10 @@ class ServerSettings:
         port_s = getenv("MASSGEN_SERVER_PORT")
         port = int(port_s) if port_s else cls.port
         default_config = getenv("MASSGEN_SERVER_DEFAULT_CONFIG", cls.default_config or "")
-        default_model = getenv("MASSGEN_SERVER_DEFAULT_MODEL", cls.default_model or "")
+
         return cls(
             host=host,
             port=port,
             default_config=default_config or None,
-            default_model=default_model or None,
             debug=_get_bool("MASSGEN_SERVER_DEBUG", cls.debug),
         )

@@ -5691,7 +5691,6 @@ def cli_main():
         serve_parser.add_argument("--host", type=str, default=None, help="Host to bind (default: 0.0.0.0)")
         serve_parser.add_argument("--port", type=int, default=None, help="Port to bind (default: 4000)")
         serve_parser.add_argument("--config", type=str, default=None, help="Default MassGen config file path")
-        serve_parser.add_argument("--default-model", type=str, default=None, help="Default model override (optional)")
         serve_parser.add_argument("--reload", action="store_true", help="Enable auto-reload (dev only)")
 
         serve_args = serve_parser.parse_args(sys.argv[2:])
@@ -5699,13 +5698,23 @@ def cli_main():
         # Reload env in case the user expects serve to pick up .env changes.
         load_env_file()
 
+        # Resolve config path using same logic as main command
+        # If --config provided, use it; otherwise auto-discover default config
+        resolved_config = None
+        if serve_args.config:
+            resolved_config = resolve_config_path(serve_args.config)
+        else:
+            # Auto-discover: .massgen/config.yaml or ~/.config/massgen/config.yaml
+            resolved_config = resolve_config_path(None)
+            if resolved_config:
+                print(f"📁 Using default config: {resolved_config}")
+
         settings = ServerSettings.from_env()
         if serve_args.host:
             settings = ServerSettings(
                 host=serve_args.host,
                 port=settings.port,
                 default_config=settings.default_config,
-                default_model=settings.default_model,
                 debug=settings.debug,
             )
         if serve_args.port:
@@ -5713,23 +5722,13 @@ def cli_main():
                 host=settings.host,
                 port=serve_args.port,
                 default_config=settings.default_config,
-                default_model=settings.default_model,
                 debug=settings.debug,
             )
-        if serve_args.config:
+        if resolved_config:
             settings = ServerSettings(
                 host=settings.host,
                 port=settings.port,
-                default_config=serve_args.config,
-                default_model=settings.default_model,
-                debug=settings.debug,
-            )
-        if serve_args.default_model:
-            settings = ServerSettings(
-                host=settings.host,
-                port=settings.port,
-                default_config=settings.default_config,
-                default_model=serve_args.default_model,
+                default_config=str(resolved_config),
                 debug=settings.debug,
             )
 

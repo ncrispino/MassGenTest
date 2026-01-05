@@ -5733,6 +5733,28 @@ Then call either submit(confirmed=True) if the answer is satisfactory, or restar
         # Get vote results
         vote_results = self._get_vote_results()
 
+        # Aggregate token usage across all agents
+        total_usage = {
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+        }
+        for agent in self.agents.values():
+            backend = getattr(agent, "backend", None)
+            if backend and hasattr(backend, "token_usage") and backend.token_usage:
+                # Finalize tracking if available
+                if hasattr(backend, "finalize_token_tracking"):
+                    try:
+                        backend.finalize_token_tracking()
+                    except Exception:
+                        pass
+                tu = backend.token_usage
+                prompt = tu.input_tokens + tu.cached_input_tokens + tu.cache_creation_tokens
+                completion = tu.output_tokens + tu.reasoning_tokens
+                total_usage["prompt_tokens"] += prompt
+                total_usage["completion_tokens"] += completion
+                total_usage["total_tokens"] += prompt + completion
+
         return {
             "final_answer": self._final_presentation_content or "",
             "selected_agent": self._selected_agent,
@@ -5740,6 +5762,7 @@ Then call either submit(confirmed=True) if the answer is satisfactory, or restar
             "final_answer_path": str(final_path) if final_path else None,
             "answers": answers,
             "vote_results": vote_results,
+            "usage": total_usage,
         }
 
     def get_status(self) -> Dict[str, Any]:
