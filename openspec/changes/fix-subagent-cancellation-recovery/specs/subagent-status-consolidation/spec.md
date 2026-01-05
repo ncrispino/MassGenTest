@@ -89,6 +89,7 @@ When returning status to models, the system SHALL transform the rich Orchestrato
 - **GIVEN** the inner status has `coordination.phase`
 - **WHEN** deriving the simplified `status` field
 - **THEN** the mapping SHALL be:
+
   | coordination.phase | Derived status |
   |-------------------|----------------|
   | `initial_answer` | `running` |
@@ -147,7 +148,7 @@ The subagent log directory structure SHALL be simplified.
 - **GIVEN** a subagent executes
 - **WHEN** logs are written
 - **THEN** the structure SHALL be:
-  ```
+  ```text
   subagents/{id}/
   ├── conversation.jsonl          # Conversation history (unchanged)
   ├── workspace/                   # Symlink to runtime workspace (unchanged)

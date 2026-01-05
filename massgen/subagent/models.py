@@ -490,7 +490,7 @@ class SubagentState:
     """
 
     config: SubagentConfig
-    status: Literal["pending", "running", "completed", "failed", "timeout"] = "pending"
+    status: Literal["pending", "running", "completed", "completed_but_timeout", "partial", "failed", "timeout"] = "pending"
     workspace_path: str = ""
     started_at: Optional[datetime] = None
     result: Optional[SubagentResult] = None

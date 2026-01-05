@@ -1805,11 +1805,13 @@ class Orchestrator(ChatAgent):
         subagent_details = []
 
         # Find all status.json files in subagent directories
+        # Status file is at full_logs/status.json (written by subagent's Orchestrator)
         for subagent_path in subagents_dir.iterdir():
             if not subagent_path.is_dir():
                 continue
 
-            status_file = subagent_path / "status.json"
+            # Read from full_logs/status.json (the single source of truth)
+            status_file = subagent_path / "full_logs" / "status.json"
             if not status_file.exists():
                 continue
 
@@ -1818,11 +1820,19 @@ class Orchestrator(ChatAgent):
                 with open(status_file, "r", encoding="utf-8") as f:
                     status_data = json.load(f)
 
-                token_usage = status_data.get("token_usage", {})
-                input_tokens = token_usage.get("input_tokens", 0)
-                output_tokens = token_usage.get("output_tokens", 0)
-                cost = token_usage.get("estimated_cost", 0.0)
-                elapsed_seconds = status_data.get("elapsed_seconds", 0.0)
+                # Extract costs from the new structure
+                costs = status_data.get("costs", {})
+                input_tokens = costs.get("total_input_tokens", 0)
+                output_tokens = costs.get("total_output_tokens", 0)
+                cost = costs.get("total_estimated_cost", 0.0)
+
+                # Extract timing from meta
+                meta = status_data.get("meta", {})
+                elapsed_seconds = meta.get("elapsed_seconds", 0.0)
+
+                # Extract coordination info
+                coordination = status_data.get("coordination", {})
+                phase = coordination.get("phase", "unknown")
 
                 total_input_tokens += input_tokens
                 total_output_tokens += output_tokens
@@ -1830,13 +1840,13 @@ class Orchestrator(ChatAgent):
 
                 # Initialize subagent detail entry
                 subagent_detail = {
-                    "subagent_id": status_data.get("subagent_id", subagent_path.name),
-                    "status": status_data.get("status", "unknown"),
+                    "subagent_id": subagent_path.name,
+                    "status": phase,
                     "input_tokens": input_tokens,
                     "output_tokens": output_tokens,
                     "estimated_cost": round(cost, 6),
                     "elapsed_seconds": elapsed_seconds,
-                    "task": status_data.get("task", "")[:100],
+                    "task": meta.get("question", "")[:100],
                 }
 
                 # Try to read subprocess metrics for API timing data
