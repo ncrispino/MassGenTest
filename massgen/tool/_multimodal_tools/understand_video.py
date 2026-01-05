@@ -22,6 +22,7 @@ from typing import List, Optional
 
 from dotenv import load_dotenv
 
+from massgen.context.task_context import format_prompt_with_context
 from massgen.logger_config import logger
 from massgen.tool._multimodal_tools.backend_selector import get_backend
 from massgen.tool._result import ExecutionResult, TextContent
@@ -476,6 +477,9 @@ async def understand_video(
                       to priority list.
         allowed_paths: List of allowed base paths for validation (optional)
         agent_cwd: Agent's current working directory (automatically injected, optional)
+        task_context: Context string or key used to augment the prompt (Optional[str])
+                  - Accepts named contexts (e.g., "short_summary", "detailed_analysis") or raw context text.
+                  - If None (default), no context-based augmentation is applied.
 
     Returns:
         ExecutionResult containing:
@@ -576,8 +580,6 @@ async def understand_video(
             )
 
         # Inject task context into prompt if available
-        from massgen.context.task_context import format_prompt_with_context
-
         augmented_prompt = format_prompt_with_context(prompt, task_context)
 
         # Process video with the selected backend
