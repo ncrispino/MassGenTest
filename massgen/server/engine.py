@@ -164,6 +164,7 @@ class MassGenEngine:
                 "total_tokens": usage.get("total_tokens", 0),
             },
             # MassGen-specific metadata (same structure as massgen.run() result)
+            # Note: agent_mapping is inside vote_results (vote_results.agent_mapping)
             "massgen_metadata": {
                 "session_id": result.get("session_id"),
                 "config_used": result.get("config_used"),
@@ -172,6 +173,5 @@ class MassGenEngine:
                 "selected_agent": result.get("selected_agent"),
                 "vote_results": result.get("vote_results"),
                 "answers": result.get("answers"),
-                "agent_mapping": result.get("agent_mapping"),
             },
         }

@@ -521,8 +521,8 @@ async def run(
         result["answers"] = coordination_result.get("answers")  # List with label, agent_id, answer_path, content
         result["log_directory"] = coordination_result.get("log_directory")
         result["final_answer_path"] = coordination_result.get("final_answer_path")
-        result["agent_mapping"] = coordination_result.get("agent_mapping")  # Maps agent_a -> real_id
         result["usage"] = coordination_result.get("usage")  # Token usage stats
+        # Note: agent_mapping is inside vote_results (vote_results.agent_mapping)
     elif enable_logging:
         # Fallback: add log directory even without full coordination result
         try:
