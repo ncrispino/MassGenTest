@@ -224,8 +224,13 @@ Run MassGen as an OpenAI-compatible HTTP API (FastAPI + Uvicorn).
 
 **Endpoints:**
 
-* ``GET /health``
-* ``POST /v1/chat/completions`` (supports ``stream: true`` via SSE and OpenAI-style tool calling)
+* ``GET /health`` - Health check endpoint
+* ``POST /v1/chat/completions`` - OpenAI-compatible chat completions (non-streaming only)
+
+.. note::
+
+   Streaming (``stream: true``) is not yet supported. The server will return HTTP 501
+   if streaming is requested. Use ``stream: false`` for all requests.
 
 .. code-block:: bash
 
@@ -235,27 +240,21 @@ Run MassGen as an OpenAI-compatible HTTP API (FastAPI + Uvicorn).
    # Custom bind
    massgen serve --host 127.0.0.1 --port 4000
 
-   # Provide a default config + model override used by requests
-   massgen serve --config path/to/config.yaml --default-model gpt-5
+   # Provide a default config
+   massgen serve --config path/to/config.yaml
+
+   # Enable auto-reload for development
+   massgen serve --reload
 
    # Health check
    curl http://localhost:4000/health
 
-   # OpenAI-compatible Chat Completions (non-streaming)
-   # Note: When running with --config, the "model" parameter is ignored by default
+   # OpenAI-compatible Chat Completions
+   # Note: When running with --config, the "model" parameter is ignored
    # to ensure the server uses the agent team defined in your YAML.
    curl http://localhost:4000/v1/chat/completions \
      -H "Content-Type: application/json" \
      -d '{"model":"massgen","messages":[{"role":"user","content":"hi"}],"stream":false}'
-
-   # Streaming via SSE
-   curl -N http://localhost:4000/v1/chat/completions \
-     -H "Content-Type: application/json" \
-     -d '{"model":"massgen","messages":[{"role":"user","content":"hi"}],"stream":true}'
-
-**Config-as-Authority:**
-
-When ``--config`` is provided, the server operates in "Config-as-Authority" mode. The ``model`` parameter in client requests is ignored unless explicitly overridden using the ``massgen/model:<model_id>`` syntax. This ensures that your carefully tuned multi-agent configuration is respected regardless of the client's default model setting.
 
 **Response Format:**
 
@@ -274,14 +273,11 @@ The server returns responses with the final synthesized answer in ``content`` an
      }]
    }
 
-For streaming responses, ``reasoning_content`` is emitted as a single chunk before the ``content`` chunks.
-
 **Environment variables (optional):**
 
 * ``MASSGEN_SERVER_HOST`` (default: ``0.0.0.0``)
 * ``MASSGEN_SERVER_PORT`` (default: ``4000``)
 * ``MASSGEN_SERVER_DEFAULT_CONFIG`` (default: unset)
-* ``MASSGEN_SERVER_DEFAULT_MODEL`` (default: unset)
 * ``MASSGEN_SERVER_DEBUG`` (default: ``false``)
 
 Output to File

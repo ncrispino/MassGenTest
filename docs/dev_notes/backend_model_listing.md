@@ -92,6 +92,7 @@ When `sort_by_created=True`:
 - `massgen/utils/model_catalog.py` - Core discovery logic
 - `massgen/utils/model_matcher.py` - Provider list for dynamic discovery
 - `massgen/frontend/web/server.py` - WebUI API endpoint
+- `massgen/backend/capabilities.py` - Static provider manifests (fallback model lists)
 
 ---
 

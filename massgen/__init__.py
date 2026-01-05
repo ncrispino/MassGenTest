@@ -87,8 +87,6 @@ except Exception:  # pragma: no cover - environment-specific import side effects
 from .message_templates import MessageTemplates, get_templates
 from .orchestrator import Orchestrator, create_orchestrator
 
-LITELLM_AVAILABLE = True
-
 __version__ = "0.1.34"
 __author__ = "MassGen Contributors"
 

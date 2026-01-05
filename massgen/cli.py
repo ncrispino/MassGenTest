@@ -5701,36 +5701,32 @@ def cli_main():
         # Resolve config path using same logic as main command
         # If --config provided, use it; otherwise auto-discover default config
         resolved_config = None
-        if serve_args.config:
-            resolved_config = resolve_config_path(serve_args.config)
-        else:
-            # Auto-discover: .massgen/config.yaml or ~/.config/massgen/config.yaml
-            resolved_config = resolve_config_path(None)
-            if resolved_config:
-                print(f"📁 Using default config: {resolved_config}")
+        try:
+            if serve_args.config:
+                resolved_config = resolve_config_path(serve_args.config)
+            else:
+                # Auto-discover: .massgen/config.yaml or ~/.config/massgen/config.yaml
+                resolved_config = resolve_config_path(None)
+                if resolved_config:
+                    print(f"📁 Using default config: {resolved_config}")
+        except ConfigurationError as e:
+            print(f"❌ Configuration error: {e}", flush=True)
+            sys.exit(EXIT_CONFIG_ERROR)
+
+        # Build settings from env, then apply CLI overrides using replace()
+        # to preserve any future env-derived fields
+        from dataclasses import replace
 
         settings = ServerSettings.from_env()
+        overrides = {}
         if serve_args.host:
-            settings = ServerSettings(
-                host=serve_args.host,
-                port=settings.port,
-                default_config=settings.default_config,
-                debug=settings.debug,
-            )
+            overrides["host"] = serve_args.host
         if serve_args.port:
-            settings = ServerSettings(
-                host=settings.host,
-                port=serve_args.port,
-                default_config=settings.default_config,
-                debug=settings.debug,
-            )
+            overrides["port"] = serve_args.port
         if resolved_config:
-            settings = ServerSettings(
-                host=settings.host,
-                port=settings.port,
-                default_config=str(resolved_config),
-                debug=settings.debug,
-            )
+            overrides["default_config"] = str(resolved_config)
+        if overrides:
+            settings = replace(settings, **overrides)
 
         app = create_app(settings=settings)
         uvicorn.run(app, host=settings.host, port=settings.port, reload=serve_args.reload)

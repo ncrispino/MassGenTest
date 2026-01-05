@@ -519,7 +519,6 @@ class WebDisplay(BaseDisplay):
             voting_round: The iteration/round number when this vote was cast
         """
         # Use vote_label in ID to allow multiple votes from same agent (superseded votes)
-        print(f"[DEBUG] record_vote_with_context: voter={voter_id}, label={vote_label}, round={voting_round}")
         self._timeline_events.append(
             {
                 "id": f"{voter_id}-{vote_label}",
