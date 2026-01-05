@@ -6,7 +6,7 @@
  */
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { Loader2, AlertCircle, Eye, Code, X, Download, Copy, Check, Maximize2 } from 'lucide-react';
+import { Loader2, AlertCircle, Eye, Code, X, Download, Copy, Check, Maximize2, ExternalLink } from 'lucide-react';
 import { codeToHtml } from 'shiki';
 import { useFileContent } from '../hooks/useFileContent';
 import { detectArtifactType, getArtifactConfig, type ArtifactType } from '../utils/artifactTypes';
@@ -33,6 +33,8 @@ interface InlineArtifactPreviewProps {
   // Optional: Enable live HTML preview with working relative links
   sessionId?: string;
   agentId?: string;
+  // Optional: Called when file is not found (404) - parent can clear selection
+  onFileNotFound?: () => void;
 }
 
 type ViewMode = 'preview' | 'source';
@@ -121,6 +123,7 @@ export function InlineArtifactPreview({
   onFullscreen,
   sessionId,
   agentId,
+  onFileNotFound,
 }: InlineArtifactPreviewProps) {
   const { content, isLoading, error, fetchFile, clearContent } = useFileContent();
   const [viewMode, setViewMode] = useState<ViewMode>('preview');
@@ -128,6 +131,9 @@ export function InlineArtifactPreview({
   const [highlightedHtml, setHighlightedHtml] = useState<string>('');
   const [isHighlighting, setIsHighlighting] = useState(false);
   const [relatedFiles, setRelatedFiles] = useState<Record<string, string>>({});
+
+  // Track scheduled 404 callbacks to prevent stale 404s from clearing selection
+  const scheduledNotFoundRef = useRef<string | null>(null);
 
   // Detect artifact type
   const artifactType = useMemo((): ArtifactType => {
@@ -165,6 +171,12 @@ export function InlineArtifactPreview({
       setCopied(false);
       setRelatedFiles({});
 
+      // Cancel any pending 404 callbacks from previous workspace
+      // This prevents stale 404s from clearing the new workspace's file selection
+      if (workspaceChanged) {
+        scheduledNotFoundRef.current = null;
+      }
+
       // Skip cache if workspace changed to ensure fresh data
       fetchFile(filePath, workspacePath, workspaceChanged);
       setViewMode('preview');
@@ -185,58 +197,91 @@ export function InlineArtifactPreview({
     }
   }, [filePath, clearContent]);
 
+  // AbortController for canceling web asset fetches when file changes
+  const webAssetAbortRef = useRef<AbortController | null>(null);
+
   // Fetch CSS/JS/image files for HTML previews
   useEffect(() => {
+    // Cancel any previous web asset fetches
+    if (webAssetAbortRef.current) {
+      webAssetAbortRef.current.abort();
+    }
+
     async function fetchAllWebAssets() {
       if (!content?.content || artifactType !== 'html') {
         return;
       }
 
-      const allFiles = await fetchWorkspaceFiles(workspacePath);
-      const webAssets = allFiles.filter(isWebAsset);
-      const imageAssets = allFiles.filter(isImageFile);
+      const controller = new AbortController();
+      webAssetAbortRef.current = controller;
 
-      if (webAssets.length === 0 && imageAssets.length === 0) return;
+      try {
+        const allFiles = await fetchWorkspaceFiles(workspacePath);
+        if (controller.signal.aborted) return;
 
-      const fileMap: Record<string, string> = {};
+        const webAssets = allFiles.filter(isWebAsset);
+        const imageAssets = allFiles.filter(isImageFile);
 
-      // Fetch CSS/JS files (text content)
-      await Promise.all(
-        webAssets.map(async (assetPath) => {
-          const fileData = await fetchSingleFile(assetPath, workspacePath);
-          if (fileData?.content) {
-            const fileName = assetPath.split('/').pop() || assetPath;
-            fileMap[assetPath] = fileData.content;
-            fileMap[fileName] = fileData.content;
-            const cleanPath = assetPath.replace(/^\.?\//, '');
-            fileMap[cleanPath] = fileData.content;
-          }
-        })
-      );
+        if (webAssets.length === 0 && imageAssets.length === 0) return;
 
-      // Fetch image files (binary content as base64 data URLs)
-      await Promise.all(
-        imageAssets.map(async (assetPath) => {
-          const fileData = await fetchSingleFile(assetPath, workspacePath);
-          if (fileData?.content && fileData.binary) {
-            const fileName = assetPath.split('/').pop() || assetPath;
-            const mimeType = fileData.mimeType || 'image/png';
-            const dataUrl = `data:${mimeType};base64,${fileData.content}`;
-            // Store as data URL for all path variations
-            fileMap[assetPath] = dataUrl;
-            fileMap[fileName] = dataUrl;
-            fileMap[`./${assetPath}`] = dataUrl;
-            fileMap[`./${fileName}`] = dataUrl;
-            const cleanPath = assetPath.replace(/^\.?\//, '');
-            fileMap[cleanPath] = dataUrl;
-          }
-        })
-      );
+        const fileMap: Record<string, string> = {};
 
-      setRelatedFiles(fileMap);
+        // Fetch CSS/JS files (text content)
+        await Promise.all(
+          webAssets.map(async (assetPath) => {
+            if (controller.signal.aborted) return;
+            const fileData = await fetchSingleFile(assetPath, workspacePath);
+            if (controller.signal.aborted) return;
+            if (fileData?.content) {
+              const fileName = assetPath.split('/').pop() || assetPath;
+              fileMap[assetPath] = fileData.content;
+              fileMap[fileName] = fileData.content;
+              const cleanPath = assetPath.replace(/^\.?\//, '');
+              fileMap[cleanPath] = fileData.content;
+            }
+          })
+        );
+
+        if (controller.signal.aborted) return;
+
+        // Fetch image files (binary content as base64 data URLs)
+        await Promise.all(
+          imageAssets.map(async (assetPath) => {
+            if (controller.signal.aborted) return;
+            const fileData = await fetchSingleFile(assetPath, workspacePath);
+            if (controller.signal.aborted) return;
+            if (fileData?.content && fileData.binary) {
+              const fileName = assetPath.split('/').pop() || assetPath;
+              const mimeType = fileData.mimeType || 'image/png';
+              const dataUrl = `data:${mimeType};base64,${fileData.content}`;
+              // Store as data URL for all path variations
+              fileMap[assetPath] = dataUrl;
+              fileMap[fileName] = dataUrl;
+              fileMap[`./${assetPath}`] = dataUrl;
+              fileMap[`./${fileName}`] = dataUrl;
+              const cleanPath = assetPath.replace(/^\.?\//, '');
+              fileMap[cleanPath] = dataUrl;
+            }
+          })
+        );
+
+        if (controller.signal.aborted) return;
+        setRelatedFiles(fileMap);
+      } catch (err) {
+        // Ignore abort errors
+        if (err instanceof Error && err.name === 'AbortError') return;
+        console.error('Failed to fetch web assets:', err);
+      }
     }
 
     fetchAllWebAssets();
+
+    // Cleanup on unmount or when dependencies change
+    return () => {
+      if (webAssetAbortRef.current) {
+        webAssetAbortRef.current.abort();
+      }
+    };
   }, [content, artifactType, workspacePath]);
 
   // Apply syntax highlighting for source view
@@ -302,6 +347,39 @@ export function InlineArtifactPreview({
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   }, [content, filePath]);
+
+  // Handle open in new tab
+  const handleOpenInNewTab = useCallback(() => {
+    if (!content?.content) return;
+
+    // For HTML files, open as rendered HTML
+    if (artifactType === 'html') {
+      const blob = new Blob([content.content], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank');
+      // Note: Can't revoke immediately as it's opened in new tab
+      return;
+    }
+
+    // For images, open the image directly
+    if (artifactType === 'image' && content.binary) {
+      const blob = base64ToBlob(content.content, content.mimeType);
+      if (blob) {
+        const url = URL.createObjectURL(blob);
+        window.open(url, '_blank');
+      }
+      return;
+    }
+
+    // For other files, open as plain text/source
+    const blob = content.binary
+      ? base64ToBlob(content.content, content.mimeType)
+      : new Blob([content.content], { type: content.mimeType || 'text/plain' });
+    if (blob) {
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank');
+    }
+  }, [content, artifactType]);
 
   // Render preview based on artifact type
   const renderPreview = useCallback(() => {
@@ -407,12 +485,43 @@ export function InlineArtifactPreview({
     );
   }
 
-  // Error state
+  // Error state - silently recover from 404s, show error for other failures
   if (error) {
+    const is404 = error.toLowerCase().includes('not found') || error.includes('404');
+
+    // For 404s: silently clear selection and show empty state
+    // This handles race conditions where file was deleted after appearing in list
+    if (is404 && onFileNotFound) {
+      // Only schedule callback if we haven't already for this file+workspace combo
+      // This prevents stale 404s from clearing selection when workspace is changing
+      const currentKey = `${workspacePath}:${filePath}`;
+      if (scheduledNotFoundRef.current !== currentKey) {
+        scheduledNotFoundRef.current = currentKey;
+        // Call the callback to clear selection in parent
+        // Use setTimeout to avoid state update during render
+        setTimeout(() => {
+          // Double-check the error is still for this same file/workspace
+          // If workspace changed, don't clear selection
+          if (scheduledNotFoundRef.current === currentKey) {
+            onFileNotFound();
+          }
+          scheduledNotFoundRef.current = null;
+        }, 0);
+      }
+      // Return empty state while parent updates
+      return (
+        <div className="flex flex-col items-center justify-center h-full text-gray-500">
+          <Eye className="w-12 h-12 mb-4 opacity-50" />
+          <span>Select a file to preview</span>
+        </div>
+      );
+    }
+
+    // For other errors, show error UI
     return (
-      <div className="flex flex-col items-center justify-center h-full text-red-400">
-        <AlertCircle className="w-8 h-8 mb-3" />
-        <span className="font-medium">Failed to load file</span>
+      <div className="flex flex-col items-center justify-center h-full text-gray-400">
+        <AlertCircle className="w-8 h-8 mb-3 text-red-400" />
+        <span className="font-medium text-red-400">Failed to load file</span>
         <span className="text-sm text-gray-500 mt-1">{error}</span>
       </div>
     );
@@ -497,6 +606,17 @@ export function InlineArtifactPreview({
             </button>
           )}
 
+          {/* Open in new tab button */}
+          {content && (
+            <button
+              onClick={handleOpenInNewTab}
+              className="p-1.5 text-gray-400 hover:text-gray-200 hover:bg-gray-700 rounded transition-colors"
+              title="Open in new tab"
+            >
+              <ExternalLink className="w-4 h-4" />
+            </button>
+          )}
+
           {/* Fullscreen button */}
           {onFullscreen && (
             <button
@@ -522,7 +642,7 @@ export function InlineArtifactPreview({
       </div>
 
       {/* Preview Content */}
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 overflow-auto">
         {viewMode === 'preview' && artifactConfig.canPreview ? (
           renderPreview()
         ) : (

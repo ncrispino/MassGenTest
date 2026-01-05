@@ -13,6 +13,7 @@ import type { TimelineNode as TimelineNodeType, TimelineData } from '../../types
 import { TimelineNode } from './TimelineNode';
 import { TimelineArrow } from './TimelineArrow';
 import { TimelineLegend } from './TimelineLegend';
+import { getAgentColor } from '../../utils/agentColors';
 
 interface TimelineViewProps {
   onNodeClick?: (node: TimelineNodeType) => void;
@@ -214,6 +215,7 @@ export function TimelineView({ onNodeClick }: TimelineViewProps) {
           {timelineData.agents.map((agentId, index) => {
             const x = PADDING + index * COLUMN_WIDTH + COLUMN_WIDTH / 2;
             const agentIndex = index + 1;
+            const agentColor = getAgentColor(agentId, timelineData.agents);
             return (
               <g key={`header-${agentId}`}>
                 <rect
@@ -222,15 +224,16 @@ export function TimelineView({ onNodeClick }: TimelineViewProps) {
                   width={100}
                   height={36}
                   rx={8}
-                  fill="rgba(59, 130, 246, 0.2)"
-                  stroke="rgba(59, 130, 246, 0.5)"
+                  fill={`${agentColor.hex}33`}
+                  stroke={`${agentColor.hex}80`}
                   strokeWidth="1"
                 />
                 <text
                   x={x}
                   y={32}
                   textAnchor="middle"
-                  className="fill-blue-400 text-sm font-medium"
+                  fill={agentColor.hex}
+                  className="text-sm font-medium"
                 >
                   Agent {agentIndex}
                 </text>
@@ -256,6 +259,11 @@ export function TimelineView({ onNodeClick }: TimelineViewProps) {
                 // Skip if source doesn't exist or is a vote (votes don't provide context)
                 if (!sourceNode || sourceNode.type === 'vote') return null;
 
+                // IMPORTANT: Only show context arrow if source existed BEFORE target
+                // This filters out incorrect arrows where the API returns all answers
+                // but the agent only had access to earlier ones when creating their answer
+                if (sourceNode.timestamp >= node.timestamp) return null;
+
                 const sourcePos = nodePositions.get(sourceNode.id);
                 if (!sourcePos) return null;
 
@@ -277,15 +285,30 @@ export function TimelineView({ onNodeClick }: TimelineViewProps) {
               const nodePos = nodePositions.get(node.id);
               if (!nodePos || !node.votedFor) return null;
 
-              // Find the voted-for agent's latest answer node
-              const targetAnswer = timelineData.nodes.find(
-                n => n.type === 'answer' && n.agentId === node.votedFor
+              // votedFor can be either an answer label (e.g., "agent2.3") or an agent ID (e.g., "agent_b")
+              // Try to find by answer label first, then fall back to agent ID
+              let targetAnswer = timelineData.nodes.find(
+                n => n.type === 'answer' && n.label === node.votedFor
               );
 
+              // Fallback: try matching by agent ID (old format)
               if (!targetAnswer) {
-                // Fallback: point to the agent's column if no answer node found
-                const targetAgentIndex = timelineData.agents.indexOf(node.votedFor);
-                if (targetAgentIndex === -1) return null;
+                targetAnswer = timelineData.nodes.find(
+                  n => n.type === 'answer' && n.agentId === node.votedFor
+                );
+              }
+
+              if (!targetAnswer) {
+                // Final fallback: point to the agent's column if no answer node found
+                // Extract agent from label like "agent2.3" -> find agent at index 1 (agent2)
+                const labelMatch = node.votedFor.match(/agent(\d+)/);
+                let targetAgentIndex = -1;
+                if (labelMatch) {
+                  targetAgentIndex = parseInt(labelMatch[1], 10) - 1;
+                } else {
+                  targetAgentIndex = timelineData.agents.indexOf(node.votedFor);
+                }
+                if (targetAgentIndex === -1 || targetAgentIndex >= timelineData.agents.length) return null;
                 const targetX = PADDING + targetAgentIndex * COLUMN_WIDTH + COLUMN_WIDTH / 2;
                 return (
                   <TimelineArrow
@@ -311,24 +334,58 @@ export function TimelineView({ onNodeClick }: TimelineViewProps) {
             })}
 
           {/* Draw nodes */}
-          {timelineData.nodes.map(node => {
-            const pos = nodePositions.get(node.id);
-            if (!pos) return null;
+          {(() => {
+            // Find the most recent vote for each agent (by timestamp)
+            // Only the most recent vote per agent is valid; earlier ones are superseded
+            const latestVoteByAgent = new Map<string, number>();
+            timelineData.nodes
+              .filter(n => n.type === 'vote')
+              .forEach(node => {
+                const existing = latestVoteByAgent.get(node.agentId);
+                if (!existing || node.timestamp > existing) {
+                  latestVoteByAgent.set(node.agentId, node.timestamp);
+                }
+              });
 
-            // Final nodes are larger for emphasis
-            const nodeSize = node.type === 'final' ? NODE_SIZE * 1.4 : NODE_SIZE;
+            return timelineData.nodes.map(node => {
+              const pos = nodePositions.get(node.id);
+              if (!pos) return null;
 
-            return (
-              <TimelineNode
-                key={node.id}
-                node={node}
-                x={pos.x}
-                y={pos.y}
-                size={nodeSize}
-                onClick={() => onNodeClick?.(node)}
-              />
-            );
-          })}
+              // Final nodes are larger for emphasis
+              const nodeSize = node.type === 'final' ? NODE_SIZE * 1.4 : NODE_SIZE;
+
+              // Filter contextSources to only include sources that existed BEFORE this node
+              const filteredContextSources = node.contextSources.filter(sourceLabel => {
+                const sourceNode = timelineData.nodes.find(n => n.label === sourceLabel);
+                // Only include if source existed before this node (by timestamp)
+                return sourceNode && sourceNode.timestamp < node.timestamp;
+              });
+
+              // Create a modified node with filtered context sources for display
+              const displayNode = {
+                ...node,
+                contextSources: filteredContextSources,
+              };
+
+              // Determine if this vote is superseded
+              // A vote is superseded if it's not the most recent vote from that agent
+              const isSuperseded = node.type === 'vote' &&
+                node.timestamp !== latestVoteByAgent.get(node.agentId);
+
+              return (
+                <TimelineNode
+                  key={node.id}
+                  node={displayNode}
+                  x={pos.x}
+                  y={pos.y}
+                  size={nodeSize}
+                  agentOrder={timelineData.agents}
+                  isSuperseded={isSuperseded}
+                  onClick={() => onNodeClick?.(node)}
+                />
+              );
+            });
+          })()}
         </svg>
       </div>
     </div>

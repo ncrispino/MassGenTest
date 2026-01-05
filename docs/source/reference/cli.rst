@@ -217,6 +217,69 @@ WebUI Mode
    # Combine with debug mode
    massgen --web --debug --config my_config.yaml
 
+OpenAI-Compatible HTTP Server (``massgen serve``)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Run MassGen as an OpenAI-compatible HTTP API (FastAPI + Uvicorn).
+
+**Endpoints:**
+
+* ``GET /health`` - Health check endpoint
+* ``POST /v1/chat/completions`` - OpenAI-compatible chat completions (non-streaming only)
+
+.. note::
+
+   Streaming (``stream: true``) is not yet supported. The server will return HTTP 501
+   if streaming is requested. Use ``stream: false`` for all requests.
+
+.. code-block:: bash
+
+   # Start server (defaults: host 0.0.0.0, port 4000)
+   massgen serve
+
+   # Custom bind
+   massgen serve --host 127.0.0.1 --port 4000
+
+   # Provide a default config
+   massgen serve --config path/to/config.yaml
+
+   # Enable auto-reload for development
+   massgen serve --reload
+
+   # Health check
+   curl http://localhost:4000/health
+
+   # OpenAI-compatible Chat Completions
+   # Note: When running with --config, the "model" parameter is ignored
+   # to ensure the server uses the agent team defined in your YAML.
+   curl http://localhost:4000/v1/chat/completions \
+     -H "Content-Type: application/json" \
+     -d '{"model":"massgen","messages":[{"role":"user","content":"hi"}],"stream":false}'
+
+**Response Format:**
+
+The server returns responses with the final synthesized answer in ``content`` and all agent traces in ``reasoning_content``:
+
+.. code-block:: json
+
+   {
+     "choices": [{
+       "message": {
+         "role": "assistant",
+         "content": "The final answer from the agent team.",
+         "reasoning_content": "[system] Starting coordination...\n[agent_1] Analyzing...\n[orchestrator] Vote: agent_1"
+       },
+       "finish_reason": "stop"
+     }]
+   }
+
+**Environment variables (optional):**
+
+* ``MASSGEN_SERVER_HOST`` (default: ``0.0.0.0``)
+* ``MASSGEN_SERVER_PORT`` (default: ``4000``)
+* ``MASSGEN_SERVER_DEFAULT_CONFIG`` (default: unset)
+* ``MASSGEN_SERVER_DEBUG`` (default: ``false``)
+
 Output to File
 ~~~~~~~~~~~~~~
 
