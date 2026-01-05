@@ -130,6 +130,27 @@ class CoordinationConfig:
     def __post_init__(self):
         """Validate configuration after initialization."""
         self._validate_broadcast_config()
+        self._validate_timeout_config()
+
+    def _validate_timeout_config(self):
+        """Validate subagent timeout configuration."""
+        logger = logging.getLogger(__name__)
+
+        if self.subagent_min_timeout <= 0:
+            raise ValueError(f"subagent_min_timeout must be positive, got {self.subagent_min_timeout}")
+
+        if self.subagent_max_timeout <= 0:
+            raise ValueError(f"subagent_max_timeout must be positive, got {self.subagent_max_timeout}")
+
+        if self.subagent_min_timeout > self.subagent_max_timeout:
+            raise ValueError(
+                f"subagent_min_timeout ({self.subagent_min_timeout}) must be <= " f"subagent_max_timeout ({self.subagent_max_timeout})",
+            )
+
+        if not (self.subagent_min_timeout <= self.subagent_default_timeout <= self.subagent_max_timeout):
+            logger.warning(
+                f"subagent_default_timeout ({self.subagent_default_timeout}) is outside the " f"range [{self.subagent_min_timeout}, {self.subagent_max_timeout}]. " f"It will be clamped at runtime.",
+            )
 
     def _validate_broadcast_config(self):
         """Validate broadcast configuration settings."""

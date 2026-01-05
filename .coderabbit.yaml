@@ -17,11 +17,48 @@ reviews:
     Title should be concise (<= 80 chars).
 
   path_filters:
-    - "!**/*.json"
+    # Lock and config files
     - "!**/*.lock"
+    - "!**/package-lock.json"
+    - "!**/pnpm-lock.yaml"
+    - "!**/yarn.lock"
+    - "!uv.lock"
+
+    # Build artifacts and caches
     - "!**/node_modules/**"
-    - "!docs/_build/**"
     - "!**/__pycache__/**"
+    - "!**/.pytest_cache/**"
+    - "!**/.mypy_cache/**"
+    - "!**/.ruff_cache/**"
+    - "!**/dist/**"
+    - "!**/build/**"
+    - "!docs/_build/**"
+    - "!docs/build/**"
+
+    # Generated/bundled frontend assets
+    - "!massgen/frontend/web/static/assets/**"
+    - "!**/*.min.js"
+    - "!**/*.min.css"
+    - "!**/*.map"
+
+    # Binary/media files
+    - "!**/*.png"
+    - "!**/*.jpg"
+    - "!**/*.jpeg"
+    - "!**/*.gif"
+    - "!**/*.ico"
+    - "!**/*.svg"
+    - "!**/*.woff"
+    - "!**/*.woff2"
+    - "!**/*.ttf"
+    - "!**/*.eot"
+
+    # MassGen runtime logs and workspaces (agent-generated content)
+    - "!.massgen/**"
+    - "!massgen_logs/**"
+
+    # Website static images
+    - "!website/images/**"
 
   path_instructions:
     # Core Python code
@@ -159,52 +196,50 @@ reviews:
         - Check workflow steps are clear and actionable
         - Ensure reference files are accurate
 
-  ignore_title_keywords:
-    - "WIP"
-    - "DO NOT MERGE"
-    - "[skip ci]"
-    - "[skip review]"
-
-  drafts: false
-
   auto_review:
     enabled: true
     auto_incremental_review: true
+    drafts: false
+    ignore_title_keywords:
+      - "WIP"
+      - "DO NOT MERGE"
+      - "[skip ci]"
+      - "[skip review]"
 
-pre_merge_checks:
-  custom_checks:
-    - name: "Documentation Updated"
-      mode: "warning"
-      instructions: |
-        Verify appropriate documentation is included for the changes:
+  pre_merge_checks:
+    custom_checks:
+      - name: "Documentation Updated"
+        mode: "warning"
+        instructions: |
+          Verify appropriate documentation is included for the changes:
 
-        User-facing changes:
-        - New features → docs/source/user_guide/ RST updates
-        - New YAML params → docs/source/reference/yaml_schema.rst
-        - New models → massgen/backend/capabilities.py (and token_manager.py if pricing needed)
-        - Breaking changes → migration guide in docs
+          User-facing changes:
+          - New features → docs/source/user_guide/ RST updates
+          - New YAML params → docs/source/reference/yaml_schema.rst
+          - New models → massgen/backend/capabilities.py (and token_manager.py if pricing needed)
+          - Breaking changes → migration guide in docs
 
-        Internal/architectural changes:
-        - Complex features → design doc in docs/dev_notes/
-        - New/changed functions → Google-style docstrings
-        - New config options → example YAML in massgen/configs/
+          Internal/architectural changes:
+          - Complex features → design doc in docs/dev_notes/
+          - New/changed functions → Google-style docstrings
+          - New config options → example YAML in massgen/configs/
 
-        Note: README.md and CHANGELOG.md are only updated in release PRs (dev/v0.1.X branches).
+          Note: README.md and CHANGELOG.md are only updated in release PRs (dev/v0.1.X branches).
 
-    - name: "Capabilities Registry Check"
-      mode: "warning"
-      instructions: |
-        If backend or model changes are detected:
-        1. Check massgen/backend/capabilities.py is updated with new models/capabilities
-        2. Check massgen/token_manager/token_manager.py if pricing needed
-        3. Run: uv run pytest massgen/tests/test_backend_capabilities.py -v
+      - name: "Capabilities Registry Check"
+        mode: "warning"
+        instructions: |
+          If backend or model changes are detected:
+          1. Check massgen/backend/capabilities.py is updated with new models/capabilities
+          2. Check massgen/token_manager/token_manager.py if pricing needed
+          3. Run: uv run pytest massgen/tests/test_backend_capabilities.py -v
 
-    - name: "Config Parameter Sync"
-      mode: "warning"
-      instructions: |
-        If new YAML parameters are added, verify BOTH files are updated:
-        1. massgen/backend/base.py → get_base_excluded_config_params()
-        2. massgen/api_params_handler/_api_params_handler_base.py → get_base_excluded_config_params()
+      - name: "Config Parameter Sync"
+        mode: "warning"
+        instructions: |
+          If new YAML parameters are added, verify BOTH files are updated:
+          1. massgen/backend/base.py → get_base_excluded_config_params()
+          2. massgen/api_params_handler/_api_params_handler_base.py → get_base_excluded_config_params()
 
 knowledge_base:
   code_guidelines:

@@ -293,12 +293,13 @@ When a subagent times out:
      "token_usage": {"input_tokens": 50000, "output_tokens": 3000, "estimated_cost": 0.05}
    }
 
-The ``completion_percentage`` field indicates how far the subagent progressed:
+The ``completion_percentage`` field indicates progress (0-100) based on how many agents
+have submitted answers and cast votes. With N agents, each answer contributes ~(50/N)%
+and each vote contributes ~(50/N)%. Approximate phase milestones:
 
-* **100%**: Task completed (may still timeout during final presentation)
-* **50%**: Initial answers submitted, waiting for voting
-* **25%**: Agents still working on initial answers
 * **0%**: Just started
+* **~50%**: All initial answers submitted, waiting for voting
+* **100%**: Task completed (may still timeout during final presentation)
 
 Handling Different Status Values
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -347,10 +348,33 @@ When spawn_subagents returns mixed results:
    {
      "success": false,
      "results": [
-       {"subagent_id": "research", "status": "completed", "success": true, "answer": "..."},
-       {"subagent_id": "analysis", "status": "completed_but_timeout", "success": true, "answer": "..."},
-       {"subagent_id": "synthesis", "status": "timeout", "success": false, "answer": null}
-     ]
+       {
+         "subagent_id": "research",
+         "status": "completed",
+         "answer": "Research findings...",
+         "workspace": "/path/to/subagents/research/workspace",
+         "execution_time_seconds": 45.2,
+         "token_usage": {"input_tokens": 5000, "output_tokens": 1200}
+       },
+       {
+         "subagent_id": "analysis",
+         "status": "completed_but_timeout",
+         "answer": "Analysis results...",
+         "workspace": "/path/to/subagents/analysis/workspace",
+         "execution_time_seconds": 300.0,
+         "completion_percentage": 100,
+         "token_usage": {"input_tokens": 8000, "output_tokens": 2000}
+       },
+       {
+         "subagent_id": "synthesis",
+         "status": "timeout",
+         "answer": null,
+         "workspace": "/path/to/subagents/synthesis/workspace",
+         "execution_time_seconds": 300.0,
+         "completion_percentage": 45
+       }
+     ],
+     "summary": {"total": 3, "completed": 2, "timeout": 1}
    }
 
 The parent agent should:
@@ -447,6 +471,9 @@ When you query status via ``check_subagent_status``, this is transformed into a 
      "status": "running",
      "phase": "enforcement",
      "completion_percentage": 75,
+     "task": "Write a biography of Bob Dylan...",
+     "workspace": "/path/to/subagents/biography/workspace",
+     "started_at": "2026-01-02T10:30:45",
      "elapsed_seconds": 145.3,
      "token_usage": {"input_tokens": 50000, "output_tokens": 3000, "estimated_cost": 0.05}
    }

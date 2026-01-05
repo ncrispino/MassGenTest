@@ -7,14 +7,24 @@
 
 import { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, FileText, User, Clock, ChevronDown, Trophy, Folder, File, ChevronRight, RefreshCw, History, Vote, ArrowRight, Eye, GitBranch, ExternalLink, Bell } from 'lucide-react';
-import { useAgentStore, selectAnswers, selectAgents, selectAgentOrder, selectSelectedAgent, selectFinalAnswer, selectVoteDistribution, resolveAnswerContent } from '../stores/agentStore';
+import { X, FileText, User, Clock, ChevronDown, Trophy, Folder, ChevronRight, RefreshCw, History, Vote, ArrowRight, Eye, GitBranch, ExternalLink, Bell, Wifi, WifiOff, File, Columns } from 'lucide-react';
+import { useAgentStore, selectAnswers, selectAgents, selectAgentOrder, selectSelectedAgent, selectFinalAnswer, selectVoteDistribution, selectVoteHistory, selectCurrentVotingRound, resolveAnswerContent } from '../stores/agentStore';
+import { useWorkspaceStore, selectWsStatus, selectWsError } from '../stores/workspaceStore';
 import type { Answer, AnswerWorkspace, TimelineNode as TimelineNodeType } from '../types';
 import { ArtifactPreviewModal } from './ArtifactPreviewModal';
 import { InlineArtifactPreview } from './InlineArtifactPreview';
 import { TimelineView } from './timeline';
+import { ProgressSummaryBar } from './ProgressSummaryBar';
+import { EmptyState, EMPTY_STATES } from './EmptyState';
 import { canPreviewFile } from '../utils/artifactTypes';
+import { getFileIcon } from '../utils/fileIcons';
+import { getAgentColor } from '../utils/agentColors';
 import { clearFileCache } from '../hooks/useFileContent';
+import { useModalKeyboardNavigation } from '../hooks/useModalKeyboardNavigation';
+import { ComparisonView } from './ComparisonView';
+import { ResizableSplitPane } from './ResizableSplitPane';
+import { createAbortableFetch, isAbortError } from '../utils/fetchWithAbort';
+import { debugLog } from '../utils/debugLogger';
 
 // Types for workspace API responses
 interface WorkspaceInfo {
@@ -95,6 +105,36 @@ interface FileTreeNode {
   modified?: number;
 }
 
+// Patterns for files/directories to hide in the workspace browser
+const HIDDEN_FILE_PATTERNS = [
+  /^\.mcp\//,           // MCP server config
+  /^\.mcp$/,
+  /^server\//,          // Backend server code
+  /^servers\//,         // MCP servers directory
+  /^servers$/,
+  /^custom_tools\//,    // Custom tools directory
+  /^custom_tools$/,
+  /^massgen\//,         // MassGen internal directory
+  /^massgen$/,
+  /^node_modules\//,    // Node dependencies
+  /^__pycache__\//,     // Python cache
+  /^\.git\//,           // Git internals
+  /^\.venv\//,          // Python virtual env
+  /^venv\//,
+  /^\.env$/,            // Environment files
+  /^\.env\./,
+  /\.pyc$/,             // Compiled Python
+  /\.tmp$/,             // Temporary files
+  /\.tmp\./,            // Temp files with extensions
+];
+
+// Filter out hidden/internal files from workspace
+function filterHiddenFiles(files: FileInfo[]): FileInfo[] {
+  return files.filter(file => {
+    return !HIDDEN_FILE_PATTERNS.some(pattern => pattern.test(file.path));
+  });
+}
+
 function buildFileTree(files: FileInfo[]): FileTreeNode[] {
   const root: FileTreeNode[] = [];
 
@@ -157,6 +197,11 @@ function FileNode({ node, depth, onFileClick }: FileNodeProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const isPreviewable = !node.isDirectory && canPreviewFile(node.name);
 
+  // Get file-type specific icon and color
+  const fileIconConfig = !node.isDirectory ? getFileIcon(node.name) : null;
+  const FileIcon = fileIconConfig?.icon;
+  const fileIconClass = fileIconConfig?.className || 'text-gray-400';
+
   const handleClick = () => {
     if (node.isDirectory) {
       setIsExpanded(!isExpanded);
@@ -191,9 +236,9 @@ function FileNode({ node, depth, onFileClick }: FileNodeProps) {
 
         {node.isDirectory ? (
           <Folder className="w-4 h-4 text-blue-400" />
-        ) : (
-          <File className={`w-4 h-4 ${isPreviewable ? 'text-violet-400' : 'text-gray-400'}`} />
-        )}
+        ) : FileIcon ? (
+          <FileIcon className={`w-4 h-4 ${isPreviewable ? 'text-violet-400' : fileIconClass}`} />
+        ) : null}
 
         <span className="flex-1">{node.name}</span>
 
@@ -241,7 +286,20 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
   const selectedAgent = useAgentStore(selectSelectedAgent);
   const finalAnswer = useAgentStore(selectFinalAnswer);
   const voteDistribution = useAgentStore(selectVoteDistribution);
+  const voteHistory = useAgentStore(selectVoteHistory);
+  const currentVotingRound = useAgentStore(selectCurrentVotingRound);
   const sessionId = useAgentStore((s) => s.sessionId);
+
+  // Workspace store - always-on WebSocket provides real-time file updates
+  const wsStatus = useWorkspaceStore(selectWsStatus);
+  const wsError = useWorkspaceStore(selectWsError);
+  const wsReconnectAttempts = useWorkspaceStore((s) => s.reconnectAttempts);
+  const allWorkspaces = useWorkspaceStore((s) => s.workspaces);
+  const historicalSnapshots = useWorkspaceStore((s) => s.historicalSnapshots);
+  const getWorkspaceFiles = useWorkspaceStore((s) => s.getWorkspaceFiles);
+  const getHistoricalFiles = useWorkspaceStore((s) => s.getHistoricalFiles);
+  const setSnapshotFiles = useWorkspaceStore((s) => s.setSnapshotFiles);
+  const refreshSessionFn = useWorkspaceStore((s) => s.refreshSessionFn);
 
   const [activeTab, setActiveTab] = useState<TabType>(initialTab);
 
@@ -265,12 +323,10 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
     }
   }, [isOpen, activeTab, answers, expandedAnswerId]);
 
-  // Workspace state - now fetched from API
+  // Workspace state - API provides workspace info, store provides files
   const [workspaces, setWorkspaces] = useState<WorkspacesResponse>({ current: [], historical: [] });
-  const [workspaceFiles, setWorkspaceFiles] = useState<FileInfo[]>([]);
-  const [workspaceMtime, setWorkspaceMtime] = useState<number | null>(null);
   const [isLoadingWorkspaces, setIsLoadingWorkspaces] = useState(false);
-  const [isLoadingFiles, setIsLoadingFiles] = useState(false);
+  const [isLoadingHistoricalFiles, setIsLoadingHistoricalFiles] = useState(false);
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [missingVersion, setMissingVersion] = useState<string | null>(null);
   const [logDirOverride, setLogDirOverride] = useState<string | null>(null);
@@ -286,38 +342,101 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
   const [fileViewerOpen, setFileViewerOpen] = useState(false);
   const [selectedFilePath, setSelectedFilePath] = useState<string>('');
   const [isPreviewFullscreen, setIsPreviewFullscreen] = useState(false);
+  const [isComparisonOpen, setIsComparisonOpen] = useState(false);
 
   // Track if we've auto-previewed for the current workspace
   const hasAutoPreviewedRef = useRef<string | null>(null);
   // Track previous workspace path to detect changes
   const prevWorkspacePathRef = useRef<string | null>(null);
-  // Track last browsed workspace path to avoid repeated empty fetch loops
-  const lastBrowsedPathRef = useRef<string | null>(null);
 
   // New answer notification state
   const [newAnswerNotification, setNewAnswerNotification] = useState<{
-    show: boolean;
-    answerLabel: string;
+    answerLabel: string;  // Selection label for dropdown (e.g., "agent1.2")
+    displayLabel: string; // Human-readable label (e.g., "Agent 1 Answer 2")
     agentId: string;
-    workspacePath: string;
   } | null>(null);
-  const lastKnownAnswerCountRef = useRef<number>(0);
+  // Track per-agent answer counts for new answer detection
+  // Value of -1 means "not yet initialized" (different from 0 answers)
+  const lastKnownAgentAnswerCountRef = useRef<Record<string, number>>({});
+  // Track previous selected agent to detect agent switches
+  const prevSelectedAgentRef = useRef<string | null>(null);
+
+  // AbortController ref for cancelling in-flight fetch requests (historical workspaces)
+  const fetchAbortRef = useRef<(() => void) | null>(null);
+  // Request ID to prevent stale finally blocks from clearing loading state
+  const fetchRequestIdRef = useRef<number>(0);
+  // Debounce ref to coalesce rapid new_answer events into single fetch
+  const debouncedNewAnswerFetchRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Clear workspace/browser state when session changes to avoid stale paths/files
+  // Note: workspaceStore is cleared by useWorkspaceConnection when session changes
   useEffect(() => {
     setWorkspaces({ current: [], historical: [] });
-    setWorkspaceFiles([]);
     setSelectedAgentWorkspace(null);
     setSelectedFilePath('');
     setSelectedAnswerLabel('current');
     setWorkspaceError(null);
-    setIsLoadingFiles(false);
+    setIsLoadingHistoricalFiles(false);
     setIsLoadingWorkspaces(false);
     hasAutoPreviewedRef.current = null;
     prevWorkspacePathRef.current = null;
     clearFileCache();
     setMissingVersion(null);
   }, [sessionId]);
+
+  // Auto-select the final answer's workspace version when viewing a completed session
+  // This ensures that when a session has ended and final answer exists, we show
+  // the workspace from the winning agent's final answer, not "current" which may be empty
+  useEffect(() => {
+    debugLog.info('[HistoricalLoad] Auto-select effect running', {
+      hasFinalAnswer: !!finalAnswer,
+      selectedAgentWorkspace,
+      selectedAnswerLabel,
+      answersCount: answers.length,
+    });
+
+    if (!finalAnswer || !selectedAgentWorkspace || selectedAnswerLabel !== 'current') {
+      debugLog.info('[HistoricalLoad] Auto-select skipped', {
+        reason: !finalAnswer ? 'no finalAnswer' : !selectedAgentWorkspace ? 'no selectedAgentWorkspace' : 'not current',
+      });
+      return;
+    }
+
+    // Find the highest answer number for the selected agent (their final answer)
+    const agentAnswers = answers.filter(a => a.agentId === selectedAgentWorkspace && a.answerNumber > 0);
+    debugLog.info('[HistoricalLoad] Agent answers for auto-select', {
+      selectedAgentWorkspace,
+      agentAnswersCount: agentAnswers.length,
+      answerNumbers: agentAnswers.map(a => a.answerNumber),
+    });
+
+    if (agentAnswers.length === 0) return;
+
+    const latestAnswer = agentAnswers.reduce((latest, current) =>
+      current.answerNumber > latest.answerNumber ? current : latest
+    );
+
+    // Compute the answer label for this agent's final answer
+    const agentIdx = agentOrder.indexOf(selectedAgentWorkspace) + 1;
+    const latestLabel = `agent${agentIdx}.${latestAnswer.answerNumber}`;
+
+    debugLog.info('[HistoricalLoad] Auto-selecting final answer workspace', {
+      selectedAgentWorkspace,
+      latestAnswerNumber: latestAnswer.answerNumber,
+      latestLabel,
+    });
+
+    setSelectedAnswerLabel(latestLabel);
+  }, [finalAnswer, selectedAgentWorkspace, answers, agentOrder, selectedAnswerLabel]);
+
+  // Cleanup debounce timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (debouncedNewAnswerFetchRef.current) {
+        clearTimeout(debouncedNewAnswerFetchRef.current);
+      }
+    };
+  }, []);
 
   // Read ?log_dir override from URL once
   useEffect(() => {
@@ -328,50 +447,95 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
     }
   }, []);
 
-  // Track new answers while on workspace tab
+  // Track new answers while on workspace tab - only for the agent being viewed
+  // This effect detects new answers and sets a flag for workspace refresh
+  // The actual fetch calls happen in a later effect after functions are defined
+  const [pendingNewAnswerRefresh, setPendingNewAnswerRefresh] = useState(false);
+
   useEffect(() => {
-    if (activeTab === 'workspace' && isOpen) {
-      // If we have more answers than before, show notification
-      if (answers.length > lastKnownAnswerCountRef.current && lastKnownAnswerCountRef.current > 0) {
-        // Find the newest answer
-        const newestAnswer = [...answers].sort((a, b) => b.timestamp - a.timestamp)[0];
+    if (activeTab === 'workspace' && isOpen && selectedAgentWorkspace) {
+      // Skip detection if this is a fresh agent selection (agent just changed)
+      // The baseline will be set by the effect that runs right after, and we'll
+      // start detecting from there. This prevents false notifications when switching agents.
+      if (selectedAgentWorkspace !== prevSelectedAgentRef.current) {
+        return;
+      }
+
+      // Filter answers to only the currently viewed agent
+      const agentAnswers = answers.filter(a => a.agentId === selectedAgentWorkspace);
+      const lastKnownCount = lastKnownAgentAnswerCountRef.current[selectedAgentWorkspace];
+      const hasBaseline = lastKnownCount !== undefined && lastKnownCount >= 0;
+
+      // Check if this agent has NEW answers since we started viewing
+      // A baseline count of >= 0 means we've been tracking, so we should notify on increase
+      // This handles first answer (0 -> 1) as well as subsequent answers
+      if (hasBaseline && agentAnswers.length > lastKnownCount) {
+        // Set flag to trigger workspace refresh in later effect
+        setPendingNewAnswerRefresh(true);
+
+        // Show notification for ALL views (current AND historical) per FR-015
+        // This ensures users are always aware of new answers and can navigate to them
+        const newestAnswer = [...agentAnswers].sort((a, b) => b.timestamp - a.timestamp)[0];
         if (newestAnswer) {
-          const agentIdx = agentOrder.indexOf(newestAnswer.agentId) + 1;
-          const answerLabel = newestAnswer.answerNumber === 0
+          const agentIdx = agentOrder.indexOf(selectedAgentWorkspace) + 1;
+          // Store both display label and selection label (used by version dropdown)
+          const displayLabel = newestAnswer.answerNumber === 0
             ? 'Final Answer'
             : `Agent ${agentIdx} Answer ${newestAnswer.answerNumber}`;
+          const selectionLabel = `agent${agentIdx}.${newestAnswer.answerNumber}`;
 
           setNewAnswerNotification({
-            show: true,
-            answerLabel,
-            agentId: newestAnswer.agentId,
-            workspacePath: '', // Will be populated from answerWorkspaces
+            answerLabel: selectionLabel,
+            displayLabel,
+            agentId: selectedAgentWorkspace,
           });
         }
       }
-      lastKnownAnswerCountRef.current = answers.length;
-    }
-  }, [answers.length, activeTab, isOpen, agentOrder, answers]);
 
-  // Update answer count when switching tabs
+      // Update tracking for this agent
+      lastKnownAgentAnswerCountRef.current[selectedAgentWorkspace] = agentAnswers.length;
+    }
+  }, [answers, activeTab, isOpen, agentOrder, selectedAgentWorkspace, selectedAnswerLabel]);
+
+  // Initialize answer count when agent selection changes
+  // Reset baseline when switching to a different agent to prevent false notifications
   useEffect(() => {
-    if (activeTab === 'workspace') {
-      lastKnownAnswerCountRef.current = answers.length;
+    if (selectedAgentWorkspace && selectedAgentWorkspace !== prevSelectedAgentRef.current) {
+      // Agent changed - establish a new baseline
+      const currentCount = answers.filter(a => a.agentId === selectedAgentWorkspace).length;
+      lastKnownAgentAnswerCountRef.current[selectedAgentWorkspace] = currentCount;
+      prevSelectedAgentRef.current = selectedAgentWorkspace;
     }
-  }, [activeTab, answers.length]);
+  }, [selectedAgentWorkspace, answers]);
 
-  // Handle notification actions
-  const handleViewNewAnswer = useCallback(() => {
+  // Clear notification when user manually changes agent or version selection
+  useEffect(() => {
+    setNewAnswerNotification(null);
+  }, [selectedAgentWorkspace, selectedAnswerLabel]);
+
+  // Handle notification actions - navigate to current workspace or stay in historical
+  const handleMoveToCurrentWorkspace = useCallback(() => {
     if (newAnswerNotification) {
-      // Switch to answers tab
-      setActiveTab('answers');
+      // Navigate to the current workspace (where the new answer was produced)
+      setSelectedAnswerLabel('current');
+      // Clear file selection to trigger auto-preview of new content
+      setSelectedFilePath('');
+      // Dismiss the notification
       setNewAnswerNotification(null);
     }
   }, [newAnswerNotification]);
 
-  const handleDismissNotification = useCallback(() => {
+  const handleStayInHistorical = useCallback(() => {
+    if (newAnswerNotification) {
+      // Navigate to the new historical snapshot (what was "current" before the answer)
+      // This is the workspace state we were viewing before it got cleared
+      setSelectedAnswerLabel(newAnswerNotification.answerLabel);
+      // Clear file selection since we're switching workspaces
+      setSelectedFilePath('');
+    }
+    // Dismiss the notification
     setNewAnswerNotification(null);
-  }, []);
+  }, [newAnswerNotification]);
 
   // Handle file click from workspace browser - sets file for inline preview
   const handleFileClick = useCallback((filePath: string) => {
@@ -412,17 +576,24 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
     }
   }, [answers, agentOrder]);
 
-  // Fetch available workspaces from API
+  // Fetch available workspaces from API (reads status.json - should be instant)
   const fetchWorkspaces = useCallback(async () => {
     setIsLoadingWorkspaces(true);
     setWorkspaceError(null);
+
     try {
       // Pass session_id for fast lookup from status.json
       const url = sessionId
         ? `/api/workspaces?session_id=${encodeURIComponent(sessionId)}`
         : '/api/workspaces';
       const response = await fetch(url);
+
       if (!response.ok) {
+        // Handle status.json unavailable specifically (FR-011, T021)
+        if (response.status === 503) {
+          const errorData = await response.json().catch(() => ({}));
+          throw new Error(errorData.error || 'Workspace info not yet available. Session may still be initializing.');
+        }
         throw new Error(`Failed to fetch workspaces (${response.status})`);
       }
       const data: WorkspacesResponse = await response.json();
@@ -436,11 +607,20 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
         if (agentId) {
           setSelectedAgentWorkspace(agentId);
         }
-      } else if (data.current.length === 0) {
-        // No current workspaces – clear selection to avoid stale paths
-        setSelectedAgentWorkspace(null);
-        setSelectedFilePath('');
-        hasAutoPreviewedRef.current = null;
+      } else if (data.current.length === 0 && !selectedAgentWorkspace) {
+        // No current workspaces - try to use historical workspaces for completed sessions
+        if (data.historical.length > 0) {
+          // For completed sessions, select the first agent with historical workspaces
+          const firstHistorical = data.historical[0];
+          const agentId = firstHistorical.agentId || getAgentIdFromWorkspace(firstHistorical.name, agentOrder);
+          if (agentId) {
+            setSelectedAgentWorkspace(agentId);
+          }
+        } else {
+          // Clear selection only if no workspaces exist at all
+          setSelectedFilePath('');
+          hasAutoPreviewedRef.current = null;
+        }
       }
     } catch (err) {
       setWorkspaceError(err instanceof Error ? err.message : 'Failed to load workspaces');
@@ -449,30 +629,74 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
     }
   }, [selectedAgentWorkspace, agentOrder, sessionId]);
 
-  // Fetch files for selected workspace
-  const fetchWorkspaceFiles = useCallback(async (workspace: WorkspaceInfo) => {
-    lastBrowsedPathRef.current = workspace.path;
-    setIsLoadingFiles(true);
+  // Fetch files for historical workspace (current workspaces use WebSocket via store)
+  // Historical workspace files are static - fetch once and store in snapshot
+  const fetchHistoricalFiles = useCallback(async (answerLabel: string, workspacePath: string) => {
+    debugLog.info('[Modal] fetchHistoricalFiles called', { answerLabel, workspacePath });
+
+    // Cancel any in-flight request before starting a new one
+    if (fetchAbortRef.current) {
+      fetchAbortRef.current();
+      fetchAbortRef.current = null;
+    }
+
+    // Increment request ID to track this specific request
+    const requestId = ++fetchRequestIdRef.current;
+
+    setIsLoadingHistoricalFiles(true);
     setWorkspaceError(null);
+
+    const { promise, abort } = createAbortableFetch<BrowseResponse>(
+      `/api/workspace/browse?path=${encodeURIComponent(workspacePath)}`,
+      { timeout: 30000 }
+    );
+
+    fetchAbortRef.current = abort;
+
     try {
-      const response = await fetch(`/api/workspace/browse?path=${encodeURIComponent(workspace.path)}`);
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        const apiError = (data && data.error) ? `: ${data.error}` : '';
-        throw new Error(`Failed to fetch workspace files (${response.status})${apiError}`);
+      const data = await promise;
+      debugLog.info('[Modal] fetchHistoricalFiles response', {
+        answerLabel,
+        workspacePath,
+        responseWorkspacePath: data.workspace_path,
+        fileCount: data.files?.length ?? 0,
+      });
+      // Verify this response is for the currently requested workspace
+      if (data.workspace_path !== workspacePath) {
+        debugLog.warn('[Modal] fetchHistoricalFiles path mismatch', {
+          expected: workspacePath,
+          got: data.workspace_path,
+        });
+        return;
       }
-      const data: BrowseResponse = await response.json();
-      setWorkspaceFiles(data.files || []);
-      if (data.workspace_mtime) {
-        setWorkspaceMtime(data.workspace_mtime);
+      // Only update state if this is still the current request
+      if (requestId === fetchRequestIdRef.current) {
+        // Store files in the workspace store's historical snapshot
+        setSnapshotFiles(answerLabel, data.files || []);
+        debugLog.info('[Modal] fetchHistoricalFiles stored files', {
+          answerLabel,
+          fileCount: data.files?.length ?? 0,
+        });
       }
     } catch (err) {
-      setWorkspaceError(err instanceof Error ? err.message : 'Failed to load files');
-      setWorkspaceFiles([]);
+      if (isAbortError(err)) {
+        debugLog.info('[Modal] fetchHistoricalFiles aborted', { answerLabel });
+        return;
+      }
+      debugLog.error('[Modal] fetchHistoricalFiles error', {
+        answerLabel,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      if (requestId === fetchRequestIdRef.current) {
+        setWorkspaceError(err instanceof Error ? err.message : 'Failed to load files');
+      }
     } finally {
-      setIsLoadingFiles(false);
+      if (requestId === fetchRequestIdRef.current) {
+        setIsLoadingHistoricalFiles(false);
+        fetchAbortRef.current = null;
+      }
     }
-  }, []);
+  }, [setSnapshotFiles]);
 
   // Fetch answer-linked workspaces from API
   const fetchAnswerWorkspaces = useCallback(async () => {
@@ -492,6 +716,35 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
       console.error('Failed to fetch answer workspaces:', err);
     }
   }, [logDirOverride]);
+
+  // CRITICAL FIX: Handle pending new answer refresh with debouncing
+  // This effect runs when a new answer is detected and triggers workspace sync
+  // Debouncing coalesces rapid new_answer events into a single fetch to prevent cascade
+  // NOTE: fetchAnswerWorkspaces removed - new answers now include workspace_path via WebSocket
+  useEffect(() => {
+    if (pendingNewAnswerRefresh) {
+      // Reset the flag first to prevent loops
+      setPendingNewAnswerRefresh(false);
+
+      // Clear selected file to prevent showing stale "file not found" errors
+      // The file list will update shortly and user can select a new file
+      setSelectedFilePath('');
+
+      // Debounce to coalesce rapid new_answer events into single fetch
+      if (debouncedNewAnswerFetchRef.current) {
+        clearTimeout(debouncedNewAnswerFetchRef.current);
+      }
+      debouncedNewAnswerFetchRef.current = setTimeout(() => {
+        // Refresh the current workspaces in case they changed
+        fetchWorkspaces();
+        // Also refresh file list via WebSocket to get updated files immediately
+        if (refreshSessionFn) {
+          refreshSessionFn();
+        }
+      }, 100);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingNewAnswerRefresh]);
 
   // Open workspace in native file browser
   const openWorkspaceInFinder = useCallback(async (workspacePath: string) => {
@@ -542,8 +795,9 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
   const activeWorkspace = useMemo(() => {
     if (!selectedAgentWorkspace) return null;
 
-    // If a historical answer version is selected, use that workspace path from answerWorkspaces
+    // If a historical answer version is selected, get workspace path
     if (selectedAnswerLabel !== 'current') {
+      // Check answerWorkspaces FIRST (from HTTP API via status.json, always has correct absolute paths)
       const answerWs = answerWorkspaces.find(
         (w) => w.agentId === selectedAgentWorkspace && w.answerLabel === selectedAnswerLabel
       );
@@ -555,6 +809,23 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
           type: 'historical' as const,
         };
       }
+
+      // Fallback to answers from agentStore (has workspace_path from new_answer WebSocket event)
+      const agentIdx = agentOrder.indexOf(selectedAgentWorkspace) + 1;
+      const matchingAnswer = answers.find(a => {
+        const expectedLabel = `agent${agentIdx}.${a.answerNumber}`;
+        return a.agentId === selectedAgentWorkspace && expectedLabel === selectedAnswerLabel;
+      });
+
+      if (matchingAnswer?.workspacePath) {
+        setMissingVersion(null);
+        return {
+          name: selectedAnswerLabel,
+          path: matchingAnswer.workspacePath,
+          type: 'historical' as const,
+        };
+      }
+
       // Selected a version but no mapping yet; avoid falling back to current
       setMissingVersion(`Workspace for version "${selectedAnswerLabel}" not available yet`);
       return null;
@@ -563,20 +834,85 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
 
     // Fallback to current workspace for the agent
     return workspacesByAgent[selectedAgentWorkspace]?.current || null;
-  }, [selectedAgentWorkspace, selectedAnswerLabel, answerWorkspaces, workspacesByAgent]);
+  }, [selectedAgentWorkspace, selectedAnswerLabel, answers, answerWorkspaces, workspacesByAgent, agentOrder]);
 
   // Fetch workspaces when modal opens or tab switches to workspace
+  // Note: fetchWorkspaces excluded from deps to prevent refetch cascade
+  // FIX: Also fetch answerWorkspaces eagerly - WebSocket new_answer events may not always include workspace_path
+  // The HTTP API reads from status.json which always has correct absolute paths
   useEffect(() => {
     if (isOpen && activeTab === 'workspace') {
       fetchWorkspaces();
+      fetchAnswerWorkspaces(); // Always fetch historical workspace mappings from status.json
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen, activeTab, sessionId]);
+
+  // Check if current workspace files are missing from store and trigger refresh ONCE
+  // This handles the case where WebSocket connected before status.json was ready
+  const hasRefreshedForMissingRef = useRef(false);
+  useEffect(() => {
+    // Reset the guard when modal closes
+    if (!isOpen) {
+      hasRefreshedForMissingRef.current = false;
+      return;
+    }
+
+    if (activeTab !== 'workspace') {
+      return;
+    }
+
+    // Only check once per modal open to prevent infinite loops
+    if (hasRefreshedForMissingRef.current) {
+      return;
+    }
+
+    // Check if any current workspace paths are missing from the store
+    const missingPaths = workspaces.current.filter(
+      (ws) => {
+        const storeData = allWorkspaces[ws.path];
+        return !storeData || storeData.files.length === 0;
+      }
+    );
+
+    if (missingPaths.length > 0 && refreshSessionFn) {
+      hasRefreshedForMissingRef.current = true;
+      refreshSessionFn();
+    }
+  }, [isOpen, activeTab, workspaces.current, allWorkspaces, refreshSessionFn]);
+
+  // Poll for file updates every 3 seconds when viewing CURRENT workspace
+  // Historical workspaces are snapshots and don't need polling
+  useEffect(() => {
+    // Only poll when modal is open, workspace tab is active, and we have refresh function
+    if (!isOpen || activeTab !== 'workspace' || !refreshSessionFn || !activeWorkspace) {
+      return;
+    }
+
+    // Skip polling for historical workspaces - they don't change
+    if (activeWorkspace.type === 'historical') {
+      return;
+    }
+
+    const pollInterval = setInterval(() => {
+      refreshSessionFn();
+    }, 3000);
+
+    return () => clearInterval(pollInterval);
+  }, [isOpen, activeTab, refreshSessionFn, activeWorkspace]);
+
+  // FIX: Removed hasFetchedAnswerWorkspacesRef guard - answerWorkspaces is now fetched eagerly on tab open
+  // This fallback effect triggers refetch if a version is selected but not found in answerWorkspaces
+  // This handles edge cases where the initial fetch didn't include this version (e.g., answer created after fetch)
+  useEffect(() => {
+    if (missingVersion && answerWorkspaces.length === 0) {
       fetchAnswerWorkspaces();
     }
-  }, [isOpen, activeTab, fetchWorkspaces, fetchAnswerWorkspaces, sessionId]);
+  }, [missingVersion, answerWorkspaces.length, fetchAnswerWorkspaces]);
 
 
   // Track previous workspace path to detect actual changes
-  // Fetch files when workspace is selected
-  // Also clear selected file when workspace changes to avoid showing stale content
+  // For historical workspaces, fetch files if not already cached in store
   useEffect(() => {
     const currentPath = activeWorkspace?.path || null;
     const pathChanged = prevWorkspacePathRef.current !== currentPath;
@@ -587,71 +923,94 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
       setSelectedFilePath('');
       // Reset auto-preview tracking for this new workspace
       hasAutoPreviewedRef.current = null;
-      // Clear workspace files first to show loading state
-      setWorkspaceFiles([]);
-      fetchWorkspaceFiles(activeWorkspace);
-    } else if (!activeWorkspace && workspaceFiles.length > 0) {
-      // Clear stale files when workspace disappears (e.g., new session)
-      setWorkspaceFiles([]);
+    } else if (!activeWorkspace && prevWorkspacePathRef.current !== null) {
+      prevWorkspacePathRef.current = null;
       setSelectedFilePath('');
     }
-  }, [activeWorkspace, fetchWorkspaceFiles, workspaceFiles.length]);
 
-  // If we have an active workspace but no files (and haven't browsed it yet), fetch once
-  useEffect(() => {
-    if (
-      activeWorkspace &&
-      workspaceFiles.length === 0 &&
-      !isLoadingFiles &&
-      lastBrowsedPathRef.current !== activeWorkspace.path
-    ) {
-      fetchWorkspaceFiles(activeWorkspace);
-    }
-  }, [activeWorkspace, workspaceFiles.length, isLoadingFiles, fetchWorkspaceFiles]);
-
-  // Clear selected file when workspace files become empty (prevents stale preview)
-  useEffect(() => {
-    if (workspaceFiles.length === 0 && selectedFilePath && !isLoadingFiles) {
-      setSelectedFilePath('');
-    }
-  }, [workspaceFiles.length, selectedFilePath, isLoadingFiles]);
-
-  // Poll workspace mtime to refresh only when files change (lightweight)
-  useEffect(() => {
-    if (!activeWorkspace) return;
-    let cancelled = false;
-
-    const poll = async () => {
-      try {
-        const response = await fetch(`/api/workspace/browse?path=${encodeURIComponent(activeWorkspace.path)}`);
-        if (!response.ok) return;
-        const data: BrowseResponse = await response.json();
-        if (cancelled) return;
-        if (data.workspace_mtime && data.workspace_mtime !== workspaceMtime) {
-          setWorkspaceFiles(data.files || []);
-          setWorkspaceMtime(data.workspace_mtime);
-        }
-      } catch {
-        // ignore polling errors
+    // For historical workspaces, always check if we need to fetch files
+    // This runs on every render where we have an activeWorkspace + historical label
+    // because the answer label might change without the path changing
+    if (activeWorkspace && selectedAnswerLabel !== 'current') {
+      const historicalFiles = getHistoricalFiles(selectedAnswerLabel);
+      debugLog.info('[HistoricalLoad] Decision point in useEffect', {
+        selectedAnswerLabel,
+        historicalFilesIsNull: historicalFiles === null,
+        willFetch: historicalFiles === null,
+      });
+      if (historicalFiles === null) {
+        // Need to fetch - files not in store yet
+        fetchHistoricalFiles(selectedAnswerLabel, activeWorkspace.path);
       }
-    };
+    }
+  }, [activeWorkspace, selectedAnswerLabel, getHistoricalFiles, fetchHistoricalFiles]);
 
-    const id = window.setInterval(poll, 8000); // every 8s
-    return () => {
-      cancelled = true;
-      window.clearInterval(id);
-    };
-  }, [activeWorkspace?.path, workspaceMtime]);
+  // FIX: Eagerly fetch historical files when answerWorkspaces arrives and we have a pending historical selection
+  // This handles the race condition where the version dropdown is selected before answerWorkspaces is fetched
+  useEffect(() => {
+    if (selectedAnswerLabel === 'current' || !selectedAgentWorkspace) return;
+
+    // Check if we can now find the workspace in answerWorkspaces
+    const answerWs = answerWorkspaces.find(
+      (w) => w.agentId === selectedAgentWorkspace && w.answerLabel === selectedAnswerLabel
+    );
+
+    if (answerWs) {
+      // answerWorkspaces now has this version - fetch files if not already cached
+      const historicalFiles = getHistoricalFiles(selectedAnswerLabel);
+      if (historicalFiles === null) {
+        fetchHistoricalFiles(selectedAnswerLabel, answerWs.workspacePath);
+      }
+    }
+  }, [answerWorkspaces, selectedAnswerLabel, selectedAgentWorkspace, getHistoricalFiles, fetchHistoricalFiles]);
+
+  // Compute workspace files from store (replaces local state)
+  // - Current workspaces: files come from WebSocket via workspaceStore
+  // - Historical workspaces: files come from HTTP fetch, stored in historicalSnapshots
+  const workspaceFiles = useMemo((): FileInfo[] => {
+    if (!activeWorkspace) return [];
+
+    if (selectedAnswerLabel !== 'current') {
+      // Historical workspace - get from snapshot store
+      const historicalFiles = getHistoricalFiles(selectedAnswerLabel);
+      return historicalFiles || [];
+    } else {
+      // Current workspace - get from live workspace store
+      return getWorkspaceFiles(activeWorkspace.path);
+    }
+  }, [activeWorkspace, selectedAnswerLabel, getHistoricalFiles, getWorkspaceFiles, allWorkspaces, historicalSnapshots, wsStatus]);
+
+  // Determine loading state
+  const isLoadingFiles = useMemo(() => {
+    if (!activeWorkspace) return false;
+
+    if (selectedAnswerLabel !== 'current') {
+      // Historical: loading if we're fetching OR if files are null (not yet loaded)
+      const historicalFiles = getHistoricalFiles(selectedAnswerLabel);
+      return isLoadingHistoricalFiles || historicalFiles === null;
+    } else {
+      // Current: WebSocket always provides files - check if workspace exists in store
+      const wsData = allWorkspaces[activeWorkspace.path];
+      // Loading if connected but no workspace data yet
+      return wsStatus === 'connecting' || (wsStatus === 'connected' && !wsData);
+    }
+  }, [activeWorkspace, selectedAnswerLabel, getHistoricalFiles, isLoadingHistoricalFiles, allWorkspaces, wsStatus]);
+
+  // NOTE: Polling removed - now using WebSocket for real-time updates (T030)
+  // WebSocket provides <2s update latency vs 8s polling
 
   // Auto-preview: Select first previewable file when workspace files are loaded
+  // Use filtered files to avoid selecting hidden/temp files
   useEffect(() => {
     // Only auto-preview when:
     // 1. We have files
     // 2. No file is already selected
     // 3. We haven't auto-previewed this workspace yet
     const workspaceKey = activeWorkspace?.path || '';
+    const visibleFiles = filterHiddenFiles(workspaceFiles);
+
     if (
-      workspaceFiles.length > 0 &&
+      visibleFiles.length > 0 &&
       !selectedFilePath &&
       activeTab === 'workspace' &&
       hasAutoPreviewedRef.current !== workspaceKey
@@ -665,7 +1024,7 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
       // 6. Images
       // 7. Any other previewable file
       const findMainPreviewable = (): string | null => {
-        const previewableFiles = workspaceFiles.filter(f => canPreviewFile(f.path));
+        const previewableFiles = visibleFiles.filter(f => canPreviewFile(f.path));
         if (previewableFiles.length === 0) return null;
 
         // Priority 1: PDF
@@ -741,52 +1100,38 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
     return grouped;
   }, [answers]);
 
-  // Collect vote data with answer labels
+  // Collect vote data from voteHistory - permanent record that survives round resets
   const votes = useMemo(() => {
-    return agentOrder
-      .map((agentId, voterIdx) => {
-        const agent = agents[agentId];
-        if (!agent?.voteTarget) return null;
+    return voteHistory.map((record) => {
+      const voterIdx = agentOrder.indexOf(record.voterId);
+      const targetIdx = agentOrder.indexOf(record.targetId);
+      const voterAgent = agents[record.voterId];
+      const targetAgent = agents[record.targetId];
 
-        const targetIdx = agentOrder.indexOf(agent.voteTarget);
-        const targetAgent = agents[agent.voteTarget];
+      // Find what answers were available to choose from at the time of this vote
+      // This is approximate - we use the votedAnswerLabel's answer number as the baseline
+      const voteAnswerNum = parseInt(record.votedAnswerLabel?.match(/\.(\d+)$/)?.[1] || '1', 10);
+      const availableAnswers = agentOrder.map((_, idx) => `answer${idx + 1}.${voteAnswerNum}`);
 
-        // Find the answer that was voted for (most recent answer from target at time of vote)
-        // The target's answerCount tells us how many answers they had
-        const targetAnswerCount = targetAgent?.answerCount || 1;
-        const votedAnswerLabel = `answer${targetIdx + 1}.${targetAnswerCount}`;
+      // Check if this vote is from the current voting round (valid) or a previous round (invalidated)
+      const isValid = record.voteRound === currentVotingRound;
 
-        // Find what answers were available to choose from (answers from all agents at vote time)
-        const availableAnswers = agentOrder.map((aid, idx) => {
-          const a = agents[aid];
-          const count = a?.answerCount || 1;
-          return `answer${idx + 1}.${count}`;
-        });
-
-        return {
-          voterId: agentId,
-          voterIndex: voterIdx + 1,
-          voterModel: agent.modelName,
-          targetId: agent.voteTarget,
-          targetIndex: targetIdx + 1,
-          targetModel: targetAgent?.modelName,
-          votedAnswerLabel,
-          availableAnswers,
-          reason: agent.voteReason || 'No reason provided',
-        };
-      })
-      .filter(Boolean) as Array<{
-        voterId: string;
-        voterIndex: number;
-        voterModel?: string;
-        targetId: string;
-        targetIndex: number;
-        targetModel?: string;
-        votedAnswerLabel: string;
-        availableAnswers: string[];
-        reason: string;
-      }>;
-  }, [agents, agentOrder]);
+      return {
+        voterId: record.voterId,
+        voterIndex: voterIdx + 1,
+        voterModel: voterAgent?.modelName,
+        targetId: record.targetId,
+        targetIndex: targetIdx + 1,
+        targetModel: targetAgent?.modelName,
+        votedAnswerLabel: record.votedAnswerLabel || `answer${targetIdx + 1}.1`,
+        availableAnswers,
+        reason: record.reason || 'No reason provided',
+        isValid,
+        voteRound: record.voteRound,
+        timestamp: record.timestamp,
+      };
+    }).sort((a, b) => b.timestamp - a.timestamp);  // Newest first (top-down chronological)
+  }, [voteHistory, agents, agentOrder, currentVotingRound]);
 
   // Sort vote distribution by votes (highest first)
   const sortedDistribution = useMemo(() => {
@@ -804,11 +1149,63 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
       });
   }, [voteDistribution, agents, agentOrder, selectedAgent]);
 
-  // Build file tree from workspace files
-  const fileTree = useMemo(() => buildFileTree(workspaceFiles), [workspaceFiles]);
+  // Filter out hidden/internal directories from workspace files
+  const filteredWorkspaceFiles = useMemo(() => filterHiddenFiles(workspaceFiles), [workspaceFiles]);
+
+  // Build file tree from filtered workspace files
+  const fileTree = useMemo(() => buildFileTree(filteredWorkspaceFiles), [filteredWorkspaceFiles]);
 
   // Count total workspaces
   const totalWorkspaces = workspaces.current.length + answerWorkspaces.length;
+
+  // Compute item counts for keyboard navigation
+  const itemCountByTab = useMemo(() => ({
+    answers: filteredAnswers.length,
+    votes: votes.length,
+    workspace: fileTree.length,
+    timeline: 0, // Timeline uses its own navigation
+  }), [filteredAnswers.length, votes.length, fileTree.length]);
+
+  // Keyboard navigation within modal
+  // Note: selectedIndex and isNavigating can be used for visual highlighting
+  const {
+    selectedIndex: _selectedIndex,
+    isNavigating: _isNavigating,
+    setSelectedIndex: _setSelectedIndex,
+  } = useModalKeyboardNavigation({
+    isOpen,
+    activeTab,
+    itemCount: itemCountByTab[activeTab],
+    onTabChange: setActiveTab,
+    onItemSelect: (index) => {
+      // Handle item selection based on active tab
+      if (activeTab === 'answers' && filteredAnswers[index]) {
+        setExpandedAnswerId(filteredAnswers[index].id);
+      }
+    },
+    onItemActivate: (index) => {
+      // Handle Enter/Space on selected item
+      if (activeTab === 'answers' && filteredAnswers[index]) {
+        const answerId = filteredAnswers[index].id;
+        setExpandedAnswerId(expandedAnswerId === answerId ? null : answerId);
+      }
+    },
+    onClose,
+  });
+
+  // Compute progress summary values
+  const isVoting = useMemo(() => {
+    return votes.length > 0 && !selectedAgent;
+  }, [votes.length, selectedAgent]);
+
+  const isComplete = useMemo(() => {
+    return !!selectedAgent || !!finalAnswer;
+  }, [selectedAgent, finalAnswer]);
+
+  const winnerVotes = useMemo(() => {
+    if (!selectedAgent) return undefined;
+    return voteDistribution[selectedAgent] || 0;
+  }, [selectedAgent, voteDistribution]);
 
   if (!isOpen) return null;
 
@@ -831,7 +1228,7 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 20 }}
             transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-            className="fixed inset-4 md:inset-10 lg:inset-20 bg-gray-800 rounded-xl border border-gray-600 shadow-2xl z-50 flex flex-col overflow-hidden"
+            className="fixed inset-4 md:inset-6 lg:inset-8 bg-gray-800 rounded-xl border border-gray-600 shadow-2xl z-50 flex flex-col overflow-hidden"
           >
             {/* Header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700 bg-gray-900/50">
@@ -902,6 +1299,21 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                 <GitBranch className="w-4 h-4" />
                 Timeline
               </button>
+
+              {/* Progress Summary Bar - right-aligned */}
+              <div className="ml-auto flex items-center pr-4">
+                <ProgressSummaryBar
+                  agentCount={agentOrder.length}
+                  answerCount={answers.length}
+                  voteCount={votes.length}
+                  totalVotesExpected={agentOrder.length}
+                  winnerId={selectedAgent || undefined}
+                  winnerVotes={winnerVotes}
+                  isComplete={isComplete}
+                  isVoting={isVoting}
+                  agentOrder={agentOrder}
+                />
+              </div>
             </div>
 
             {/* Tab Content */}
@@ -930,11 +1342,12 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                 {/* Answer List */}
                 <div className="flex-1 overflow-y-auto custom-scrollbar p-4">
                   {filteredAnswers.length === 0 ? (
-                    <div className="flex flex-col items-center justify-center h-full text-gray-500">
-                      <FileText className="w-12 h-12 mb-4 opacity-50" />
-                      <p>No answers yet</p>
-                      <p className="text-sm mt-1">Answers will appear here as agents submit them</p>
-                    </div>
+                    <EmptyState
+                      icon={FileText}
+                      title={EMPTY_STATES.noAnswers.title}
+                      description={EMPTY_STATES.noAnswers.description}
+                      hint={EMPTY_STATES.noAnswers.hint}
+                    />
                   ) : (
                     <div className="space-y-3">
                       {filteredAnswers.map((answer) => {
@@ -1072,47 +1485,63 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                     </h3>
 
                     {votes.length === 0 ? (
-                      <div className="text-center py-8 text-gray-500">
-                        <Vote className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                        <p>No votes cast yet</p>
-                      </div>
+                      <EmptyState
+                        icon={Vote}
+                        title={EMPTY_STATES.noVotes.title}
+                        description={EMPTY_STATES.noVotes.description}
+                        hint={EMPTY_STATES.noVotes.hint}
+                        size="sm"
+                      />
                     ) : (
                       <div className="space-y-3">
                         {votes.map((vote) => (
                           <motion.div
-                            key={vote.voterId}
+                            key={`${vote.voterId}-${vote.voteRound}`}
                             initial={{ opacity: 0, y: 10 }}
                             animate={{ opacity: 1, y: 0 }}
-                            className="bg-gray-700/50 rounded-lg border border-gray-600 overflow-hidden"
+                            className={`rounded-lg border overflow-hidden ${
+                              vote.isValid
+                                ? 'bg-gray-700/50 border-gray-600'
+                                : 'bg-gray-800/30 border-gray-700/50 opacity-60'
+                            }`}
                           >
                             {/* Vote header */}
-                            <div className="flex items-center gap-3 px-4 py-3 bg-gray-700/50">
+                            <div className={`flex items-center gap-3 px-4 py-3 ${
+                              vote.isValid ? 'bg-gray-700/50' : 'bg-gray-800/30'
+                            }`}>
                               <div className="flex items-center gap-2 text-gray-300">
-                                <User className="w-4 h-4 text-blue-400" />
-                                <span className="font-medium">Agent {vote.voterIndex}</span>
+                                <User className={`w-4 h-4 ${vote.isValid ? 'text-blue-400' : 'text-gray-500'}`} />
+                                <span className={`font-medium ${!vote.isValid && 'text-gray-500'}`}>Agent {vote.voterIndex}</span>
                                 {vote.voterModel && (
                                   <span className="text-xs text-gray-500">({vote.voterModel})</span>
                                 )}
                               </div>
-                              <ArrowRight className="w-4 h-4 text-amber-500" />
+                              <ArrowRight className={`w-4 h-4 ${vote.isValid ? 'text-amber-500' : 'text-gray-600'}`} />
                               <div className="flex items-center gap-2">
                                 <span className={`font-medium px-2 py-0.5 rounded ${
-                                  vote.targetId === selectedAgent
-                                    ? 'bg-yellow-500/30 text-yellow-300'
-                                    : 'bg-green-500/20 text-green-300'
+                                  !vote.isValid
+                                    ? 'bg-gray-600/30 text-gray-500 line-through'
+                                    : vote.targetId === selectedAgent
+                                      ? 'bg-yellow-500/30 text-yellow-300'
+                                      : 'bg-green-500/20 text-green-300'
                                 }`}>
                                   {vote.votedAnswerLabel}
                                 </span>
-                                {vote.targetId === selectedAgent && <span className="text-sm">👑</span>}
+                                {vote.isValid && vote.targetId === selectedAgent && <span className="text-sm">👑</span>}
+                                {!vote.isValid && (
+                                  <span className="text-xs text-red-400/70 bg-red-900/30 px-1.5 py-0.5 rounded">
+                                    superseded
+                                  </span>
+                                )}
                               </div>
                             </div>
 
                             {/* Vote details */}
-                            <div className="px-4 py-3 border-t border-gray-600 space-y-2">
+                            <div className="px-4 py-3 border-t border-gray-600/50 space-y-2">
                               {/* Voted for */}
                               <div className="text-sm">
                                 <span className="text-gray-500">Voted for: </span>
-                                <span className="text-gray-300">
+                                <span className={vote.isValid ? 'text-gray-300' : 'text-gray-500'}>
                                   Agent {vote.targetIndex}
                                   {vote.targetModel && ` (${vote.targetModel})`}
                                 </span>
@@ -1128,7 +1557,7 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
 
                               {/* Reason */}
                               <div className="mt-2 pt-2 border-t border-gray-600/50">
-                                <p className="text-sm text-gray-400 italic">{vote.reason}</p>
+                                <p className={`text-sm italic ${vote.isValid ? 'text-gray-400' : 'text-gray-500'}`}>{vote.reason}</p>
                               </div>
                             </div>
                           </motion.div>
@@ -1147,10 +1576,13 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                     <Folder className="w-4 h-4 text-blue-400" />
                     <span className="text-sm text-gray-400">Agent:</span>
                     <div className="flex gap-1">
-                      {agentOrder.map((agentId) => {
+                      {agentOrder.map((agentId, index) => {
                         const agentData = workspacesByAgent[agentId];
                         const hasWorkspace = agentData?.current || agentData?.historical.length > 0;
                         if (!hasWorkspace) return null;
+
+                        const agentColor = getAgentColor(agentId, agentOrder);
+                        const isSelected = selectedAgentWorkspace === agentId;
 
                         return (
                           <button
@@ -1160,22 +1592,21 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                               setSelectedAnswerLabel('current');
                               setSelectedFilePath(''); // Clear selection for auto-preview
                               fetchWorkspaces();
-                              fetchAnswerWorkspaces();
                             }}
                             className={`px-3 py-1 text-sm rounded transition-colors ${
-                              selectedAgentWorkspace === agentId
-                                ? 'bg-blue-600 text-white'
-                                : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                              isSelected
+                                ? `${agentColor.bg} text-white`
+                                : `${agentColor.bgLight} ${agentColor.text} hover:opacity-80`
                             }`}
                           >
-                            {agentId}
+                            Agent {index + 1}
                           </button>
                         );
                       })}
                     </div>
                   </div>
 
-                  {/* Answer Version Dropdown */}
+                  {/* Answer Version Dropdown - uses answers from agentStore for immediate updates */}
                   {selectedAgentWorkspace && (
                     <div className="flex items-center gap-2">
                       <History className="w-4 h-4 text-amber-400" />
@@ -1185,34 +1616,58 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                           value={selectedAnswerLabel}
                           onChange={(e) => {
                             const label = e.target.value;
+                            // FIX: Clear file content caches when switching versions
+                            // This prevents stale 404s from persisting across version switches
+                            clearFileCache();
                             setSelectedAnswerLabel(label);
 
-                            if (label !== 'current') {
-                              // Active workspace memo will pick up the historical path; clear stale file selection
-                              setSelectedFilePath('');
+                            // Always clear file selection when switching versions
+                            setSelectedFilePath('');
+
+                            // When switching to "current", trigger a refresh to get latest files
+                            if (label === 'current' && refreshSessionFn) {
+                              refreshSessionFn();
                             }
                           }}
                           className="appearance-none bg-gray-700 border border-gray-600 rounded-lg px-3 py-1 pr-8 text-sm text-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
                         >
                           <option value="current">Current</option>
-                          {answerWorkspaces
-                            .filter(w => w.agentId === selectedAgentWorkspace)
-                            .map((ws) => (
-                              <option key={ws.answerId} value={ws.answerLabel}>
-                                {ws.answerLabel}
-                              </option>
-                            ))}
+                          {/* Show versions from answers (instant via WebSocket), not answerWorkspaces (requires HTTP) */}
+                          {answers
+                            .filter(a => a.agentId === selectedAgentWorkspace && a.answerNumber > 0)
+                            .sort((a, b) => a.answerNumber - b.answerNumber)
+                            .map((answer) => {
+                              const agentIdx = agentOrder.indexOf(answer.agentId) + 1;
+                              const label = `agent${agentIdx}.${answer.answerNumber}`;
+                              return (
+                                <option key={answer.id} value={label}>
+                                  {label}
+                                </option>
+                              );
+                            })}
                         </select>
                         <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-3 h-3 text-gray-400 pointer-events-none" />
                       </div>
                     </div>
                   )}
 
+                  {/* Compare Button */}
+                  {totalWorkspaces >= 2 && (
+                    <button
+                      onClick={() => setIsComparisonOpen(true)}
+                      className="ml-auto flex items-center gap-2 px-3 py-1.5 bg-purple-600 hover:bg-purple-500 rounded-lg transition-colors text-white text-sm"
+                      title="Compare workspaces side-by-side"
+                    >
+                      <Columns className="w-4 h-4" />
+                      <span>Compare</span>
+                    </button>
+                  )}
+
                   {/* Open Folder Button */}
                   {activeWorkspace && (
                     <button
                       onClick={() => openWorkspaceInFinder(activeWorkspace.path)}
-                      className="ml-auto flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 rounded-lg transition-colors text-white text-sm"
+                      className={`flex items-center gap-2 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 rounded-lg transition-colors text-white text-sm ${totalWorkspaces < 2 ? 'ml-auto' : ''}`}
                       title="Open workspace in file browser"
                     >
                       <ExternalLink className="w-4 h-4" />
@@ -1220,12 +1675,51 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                     </button>
                   )}
 
+                  {/* WebSocket Connection Status (T016) */}
+                  <div
+                    className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs ${
+                      wsStatus === 'connected'
+                        ? 'bg-green-900/30 text-green-400'
+                        : wsStatus === 'reconnecting'
+                        ? 'bg-amber-900/30 text-amber-400'
+                        : wsStatus === 'connecting'
+                        ? 'bg-blue-900/30 text-blue-400'
+                        : 'bg-gray-700/50 text-gray-500'
+                    }`}
+                    title={
+                      wsStatus === 'connected'
+                        ? 'Real-time updates active'
+                        : wsStatus === 'reconnecting'
+                        ? `Reconnecting... (attempt ${wsReconnectAttempts})`
+                        : wsStatus === 'connecting'
+                        ? 'Connecting...'
+                        : wsError || 'Disconnected'
+                    }
+                  >
+                    {wsStatus === 'connected' ? (
+                      <Wifi className="w-3 h-3" />
+                    ) : (
+                      <WifiOff className="w-3 h-3" />
+                    )}
+                    <span>
+                      {wsStatus === 'connected'
+                        ? 'Live'
+                        : wsStatus === 'reconnecting'
+                        ? 'Reconnecting...'
+                        : wsStatus === 'connecting'
+                        ? 'Connecting...'
+                        : 'Offline'}
+                    </span>
+                  </div>
+
                   {/* Refresh Button */}
                   <button
                     onClick={() => {
                       fetchWorkspaces();
-                      fetchAnswerWorkspaces();
-                      if (activeWorkspace) fetchWorkspaceFiles(activeWorkspace);
+                      // For historical workspaces, refetch files; current workspaces auto-update via WebSocket
+                      if (activeWorkspace && selectedAnswerLabel !== 'current') {
+                        fetchHistoricalFiles(selectedAnswerLabel, activeWorkspace.path);
+                      }
                     }}
                     disabled={isLoadingWorkspaces || isLoadingFiles}
                     className={`${!activeWorkspace ? 'ml-auto' : ''} p-2 hover:bg-gray-700 rounded-lg transition-colors text-gray-400 hover:text-gray-200`}
@@ -1235,10 +1729,21 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                   </button>
                 </div>
 
-                {/* Error Display */}
+                {/* Error Display with Retry Button (T019) */}
                 {workspaceError && (
-                  <div className="px-6 py-2 bg-red-900/30 border-b border-red-700 text-red-300 text-sm">
-                    {workspaceError}
+                  <div className="px-6 py-2 bg-red-900/30 border-b border-red-700 text-red-300 text-sm flex items-center justify-between">
+                    <span>{workspaceError}</span>
+                    <button
+                      onClick={() => {
+                        fetchWorkspaces();
+                        if (activeWorkspace && selectedAnswerLabel !== 'current') {
+                          fetchHistoricalFiles(selectedAnswerLabel, activeWorkspace.path);
+                        }
+                      }}
+                      className="ml-4 px-3 py-1 bg-red-800/50 hover:bg-red-700/50 rounded text-red-200 text-xs transition-colors"
+                    >
+                      Retry
+                    </button>
                   </div>
                 )}
                 {missingVersion && (
@@ -1247,126 +1752,168 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                   </div>
                 )}
 
-                {/* Active workspace path */}
-                {activeWorkspace && (
-                  <div className="px-6 py-2 border-b border-gray-700 text-xs text-gray-400 flex items-center gap-2">
-                    <span className="font-semibold text-gray-300">Workspace path:</span>
-                    <span className="truncate" title={activeWorkspace.path}>
-                      {activeWorkspace.path}
-                    </span>
-                    {selectedAnswerLabel !== 'current' && (
-                      <span className="text-amber-400">(version: {selectedAnswerLabel})</span>
-                    )}
-                  </div>
-                )}
-
-                {/* New Answer Notification */}
-                <AnimatePresence>
-                  {newAnswerNotification && (
-                    <motion.div
-                      initial={{ opacity: 0, y: -20 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -20 }}
-                      className="mx-4 mt-3 p-3 bg-blue-900/40 border border-blue-600/50 rounded-lg flex items-center justify-between"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="p-2 bg-blue-600/30 rounded-full">
-                          <Bell className="w-4 h-4 text-blue-400" />
-                        </div>
-                        <div>
-                          <p className="text-sm text-blue-200 font-medium">
-                            New answer available
-                          </p>
-                          <p className="text-xs text-blue-300/70">
-                            {newAnswerNotification.answerLabel} has been submitted
-                          </p>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={handleViewNewAnswer}
-                          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-sm rounded-lg transition-colors flex items-center gap-1.5"
+                {/* Split View: File Tree + Preview - wrapped in relative for overlay */}
+                <div className="relative flex-1 flex overflow-hidden">
+                  {/* New Answer Notification - Prominent Modal Overlay */}
+                  <AnimatePresence>
+                    {newAnswerNotification && (
+                      <motion.div
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="absolute inset-0 bg-black/50 backdrop-blur-[2px] z-20 flex items-center justify-center"
+                      >
+                        <motion.div
+                          initial={{ scale: 0.9, opacity: 0, y: 20 }}
+                          animate={{ scale: 1, opacity: 1, y: 0 }}
+                          exit={{ scale: 0.9, opacity: 0, y: 20 }}
+                          transition={{ type: 'spring', stiffness: 300, damping: 25 }}
+                          className="bg-gray-800 border-2 border-blue-500 rounded-xl p-6 shadow-2xl shadow-blue-500/20 max-w-md mx-4"
                         >
-                          <Eye className="w-3.5 h-3.5" />
-                          View Answer
-                        </button>
-                        <button
-                          onClick={handleDismissNotification}
-                          className="p-1.5 text-blue-300 hover:text-white hover:bg-blue-700/50 rounded-lg transition-colors"
-                          title="Dismiss"
-                        >
-                          <X className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
+                          <div className="flex flex-col items-center gap-4 text-center">
+                            {/* Icon with pulse animation */}
+                            <motion.div
+                              animate={{ scale: [1, 1.1, 1] }}
+                              transition={{ duration: 1.5, repeat: Infinity }}
+                              className="p-3 bg-blue-600/30 rounded-full"
+                            >
+                              <Bell className="w-8 h-8 text-blue-400" />
+                            </motion.div>
 
-                {/* Split View: File Tree + Preview */}
-                <div className="flex-1 flex overflow-hidden">
-                  {/* Left: File Tree */}
-                  <div className="w-72 shrink-0 border-r border-gray-700 overflow-y-auto custom-scrollbar p-3">
-                    {isLoadingWorkspaces || isLoadingFiles ? (
-                      <div className="flex flex-col items-center justify-center h-full text-gray-500">
-                        <RefreshCw className="w-6 h-6 mb-3 animate-spin" />
-                        <p className="text-sm">Loading...</p>
-                      </div>
-                    ) : totalWorkspaces === 0 ? (
-                      <div className="flex flex-col items-center justify-center h-full text-gray-500">
-                        <Folder className="w-10 h-10 mb-3 opacity-50" />
-                        <p className="text-sm">No workspaces found</p>
-                      </div>
-                    ) : !activeWorkspace ? (
-                      <div className="flex flex-col items-center justify-center h-full text-gray-500">
-                        <Folder className="w-10 h-10 mb-3 opacity-50" />
-                        <p className="text-sm text-center">Select an agent to browse their workspace</p>
-                      </div>
-                    ) : workspaceFiles.length === 0 ? (
-                      <div className="flex flex-col items-center justify-center h-full text-gray-500">
-                        <Folder className="w-10 h-10 mb-3 opacity-50" />
-                        <p className="text-sm">No files</p>
-                      </div>
-                    ) : (
-                      <div>
-                        <div className="mb-2 text-xs text-gray-500">
-                          {workspaceFiles.length} files
-                          {selectedAnswerLabel !== 'current' && (
-                            <span className="ml-1 text-amber-400">(historical)</span>
-                          )}
-                        </div>
-                        {fileTree.map((node) => (
-                          <FileNode key={node.path} node={node} depth={0} onFileClick={handleFileClick} />
-                        ))}
-                      </div>
-                    )}
-                  </div>
+                            {/* Title and description */}
+                            <div>
+                              <h3 className="text-xl font-semibold text-blue-300">
+                                New Answer Available
+                              </h3>
+                              <p className="text-gray-400 mt-2">
+                                <span className="text-blue-200 font-medium">
+                                  {newAnswerNotification.displayLabel}
+                                </span>{' '}
+                                has been submitted for{' '}
+                                <span className="text-blue-200 font-medium">
+                                  {newAnswerNotification.agentId}
+                                </span>
+                              </p>
+                              <p className="text-sm text-gray-500 mt-1">
+                                You are currently viewing a historical workspace version.
+                              </p>
+                            </div>
 
-                  {/* Right: Inline Preview */}
-                  <div className="flex-1 overflow-hidden p-3">
-                    {selectedFilePath && activeWorkspace ? (
-                      <InlineArtifactPreview
-                        filePath={selectedFilePath}
-                        workspacePath={activeWorkspace.path}
-                        onClose={handleInlinePreviewClose}
-                        onFullscreen={() => setIsPreviewFullscreen(true)}
-                        sessionId={sessionId}
-                        agentId={selectedAgentWorkspace || undefined}
-                      />
-                    ) : (
-                      <div className="flex flex-col items-center justify-center h-full text-gray-500 bg-gray-800/30 rounded-lg border border-gray-700">
-                        <Eye className="w-12 h-12 mb-4 opacity-30" />
-                        <p className="text-sm">Select a file to preview</p>
-                        <p className="text-xs text-gray-600 mt-1">Click any file in the tree</p>
-                      </div>
+                            {/* Action buttons */}
+                            <div className="flex gap-3 mt-2 w-full">
+                              <button
+                                onClick={handleMoveToCurrentWorkspace}
+                                className="flex-1 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2"
+                              >
+                                <RefreshCw className="w-4 h-4" />
+                                Move to Current
+                              </button>
+                              <button
+                                onClick={handleStayInHistorical}
+                                className="flex-1 px-4 py-2.5 bg-gray-700 hover:bg-gray-600 text-gray-200 font-medium rounded-lg transition-colors flex items-center justify-center gap-2"
+                              >
+                                <History className="w-4 h-4" />
+                                Stay Here
+                              </button>
+                            </div>
+                          </div>
+                        </motion.div>
+                      </motion.div>
                     )}
-                  </div>
+                  </AnimatePresence>
+
+                  {/* Resizable Split: File Tree + Preview */}
+                  <ResizableSplitPane
+                    storageKey="workspace-browser-split"
+                    defaultLeftWidth={35}
+                    minLeftWidth={20}
+                    maxLeftWidth={50}
+                    className="flex-1"
+                    left={
+                      <div className="h-full overflow-y-auto custom-scrollbar p-3">
+                        {/* Only show full loading state on first load (no workspaces yet) */}
+                        {isLoadingWorkspaces && totalWorkspaces === 0 ? (
+                          <div className="flex flex-col items-center justify-center h-full text-gray-500">
+                            <RefreshCw className="w-6 h-6 mb-3 animate-spin" />
+                            <p className="text-sm">Loading workspaces...</p>
+                          </div>
+                        ) : totalWorkspaces === 0 ? (
+                          <EmptyState
+                            icon={Folder}
+                            title={EMPTY_STATES.noWorkspaces.title}
+                            description={EMPTY_STATES.noWorkspaces.description}
+                            hint={EMPTY_STATES.noWorkspaces.hint}
+                            size="sm"
+                          />
+                        ) : !activeWorkspace ? (
+                          <EmptyState
+                            icon={Folder}
+                            title="Select an agent"
+                            description={EMPTY_STATES.noFiles.description}
+                            hint={EMPTY_STATES.noFiles.hint}
+                            size="sm"
+                          />
+                        ) : isLoadingFiles && filteredWorkspaceFiles.length === 0 ? (
+                          <EmptyState
+                            icon={RefreshCw}
+                            title={EMPTY_STATES.loading.title}
+                            description="Fetching workspace files..."
+                            size="sm"
+                          />
+                        ) : filteredWorkspaceFiles.length === 0 ? (
+                          <EmptyState
+                            icon={Folder}
+                            title={EMPTY_STATES.noFiles.title}
+                            description={EMPTY_STATES.noFiles.description}
+                            size="sm"
+                          />
+                        ) : (
+                          <div>
+                            <div className="mb-2 text-xs text-gray-500 flex items-center gap-2">
+                              <span>{filteredWorkspaceFiles.length} files</span>
+                              {selectedAnswerLabel !== 'current' && (
+                                <span className="text-amber-400">(historical)</span>
+                              )}
+                              {isLoadingFiles && (
+                                <RefreshCw className="w-3 h-3 animate-spin text-blue-400" />
+                              )}
+                            </div>
+                            {fileTree.map((node) => (
+                              <FileNode key={node.path} node={node} depth={0} onFileClick={handleFileClick} />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    }
+                    right={
+                      <div className="h-full overflow-auto">
+                        {selectedFilePath && activeWorkspace ? (
+                          <InlineArtifactPreview
+                            filePath={selectedFilePath}
+                            workspacePath={activeWorkspace.path}
+                            onClose={handleInlinePreviewClose}
+                            onFullscreen={() => setIsPreviewFullscreen(true)}
+                            sessionId={sessionId}
+                            agentId={selectedAgentWorkspace || undefined}
+                            onFileNotFound={() => setSelectedFilePath('')}
+                          />
+                        ) : (
+                          <div className="flex flex-col items-center justify-center h-full text-gray-500 bg-gray-800/30 rounded-lg border border-gray-700 m-3">
+                            <Eye className="w-12 h-12 mb-4 opacity-30" />
+                            <p className="text-sm">Select a file to preview</p>
+                            <p className="text-xs text-gray-600 mt-1">Click any file in the tree</p>
+                          </div>
+                        )}
+                      </div>
+                    }
+                  />
                 </div>
 
                 {/* Workspace Summary */}
-                {activeWorkspace && workspaceFiles.length > 0 && (
+                {activeWorkspace && filteredWorkspaceFiles.length > 0 && (
                   <div className="border-t border-gray-700 px-6 py-3 text-sm text-gray-400 flex items-center justify-between">
                     <span>
-                      {workspaceFiles.length} files in {activeWorkspace.name}
+                      {filteredWorkspaceFiles.length} files in {activeWorkspace.name}
                     </span>
                     <span className="text-xs text-gray-500">
                       {activeWorkspace.path}
@@ -1379,20 +1926,6 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
                 <TimelineView onNodeClick={handleTimelineNodeClick} />
               </div>
             ) : null}
-
-            {/* Footer with stats */}
-            <div className="px-6 py-3 border-t border-gray-700 bg-gray-900/50 flex items-center justify-between text-sm">
-              <div className="flex items-center gap-4 text-gray-400">
-                <span>Total: {answers.length} answers</span>
-                <span>Agents: {Object.keys(answersByAgent).length}</span>
-              </div>
-              {selectedAgent && (
-                <div className="flex items-center gap-2 text-yellow-400">
-                  <Trophy className="w-4 h-4" />
-                  <span>Winner: {selectedAgent}</span>
-                </div>
-              )}
-            </div>
           </motion.div>
         </>
       )}
@@ -1436,18 +1969,33 @@ export function AnswerBrowserModal({ isOpen, onClose, initialTab = 'answers' }: 
               </button>
             </div>
             {/* Fullscreen preview content */}
-            <div className="flex-1 overflow-hidden p-4">
+            <div className="flex-1 overflow-auto p-4">
               <InlineArtifactPreview
                 filePath={selectedFilePath}
                 workspacePath={activeWorkspace.path}
                 onClose={() => setIsPreviewFullscreen(false)}
                 sessionId={sessionId}
                 agentId={selectedAgentWorkspace || undefined}
+                onFileNotFound={() => {
+                  setSelectedFilePath('');
+                  setIsPreviewFullscreen(false);
+                }}
               />
             </div>
           </motion.div>
         </motion.div>
       )}
+
+      {/* Side-by-Side Comparison View */}
+      <ComparisonView
+        isOpen={isComparisonOpen}
+        onClose={() => setIsComparisonOpen(false)}
+        agentWorkspaces={workspacesByAgent}
+        answerWorkspaces={answerWorkspaces}
+        agentOrder={agentOrder}
+        sessionId={sessionId}
+        initialFile={selectedFilePath}
+      />
     </AnimatePresence>
   );
 }

@@ -472,8 +472,14 @@ Generate personas now:"""
             logger.debug(f"No personas.json files found in {persona_generation_dir}")
             return None
 
-        # Sort by modification time, most recent first
-        found_files = sorted(found_files, key=lambda p: p.stat().st_mtime if p.exists() else 0, reverse=True)
+        # Sort by modification time, most recent first (race-safe)
+        def _safe_mtime(p: Path) -> float:
+            try:
+                return p.stat().st_mtime
+            except (FileNotFoundError, OSError):
+                return 0
+
+        found_files = sorted(found_files, key=_safe_mtime, reverse=True)
 
         # Try each file until we find one with all required agents
         for personas_file in found_files:

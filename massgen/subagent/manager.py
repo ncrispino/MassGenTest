@@ -230,6 +230,9 @@ class SubagentManager:
         """
         Copy context files from parent workspace to subagent workspace.
 
+        Also automatically copies CONTEXT.md if it exists in parent workspace,
+        ensuring subagents have task context for external API calls.
+
         Args:
             subagent_id: Subagent identifier
             context_files: List of relative paths to copy
@@ -239,6 +242,18 @@ class SubagentManager:
             List of successfully copied files
         """
         copied = []
+
+        # Auto-copy CONTEXT.md if it exists (for task context)
+        context_md = self.parent_workspace / "CONTEXT.md"
+        if context_md.exists() and context_md.is_file():
+            dst = workspace / "CONTEXT.md"
+            try:
+                shutil.copy2(context_md, dst)
+                copied.append("CONTEXT.md")
+                logger.info(f"[SubagentManager] Auto-copied CONTEXT.md for {subagent_id}")
+            except Exception as e:
+                logger.warning(f"[SubagentManager] Failed to copy CONTEXT.md: {e}")
+
         for rel_path in context_files:
             src = self.parent_workspace / rel_path
             if not src.exists():
@@ -265,7 +280,11 @@ class SubagentManager:
         logger.info(f"[SubagentManager] Copied {len(copied)} context files for {subagent_id}")
         return copied
 
-    def _build_subagent_system_prompt(self, config: SubagentConfig) -> str:
+    def _build_subagent_system_prompt(
+        self,
+        config: SubagentConfig,
+        workspace: Optional[Path] = None,
+    ) -> tuple[str, Optional[str]]:
         """
         Build system prompt for subagent.
 
@@ -274,18 +293,31 @@ class SubagentManager:
 
         Args:
             config: Subagent configuration
+            workspace: Optional workspace path to read CONTEXT.md from
 
         Returns:
-            System prompt string
+            Tuple of (system_prompt, context_warning).
+            context_warning is set if CONTEXT.md was truncated.
         """
         base_prompt = config.system_prompt
 
-        # Build context section if provided
+        # Build context section - prefer CONTEXT.md if available, fall back to config.context
         context_section = ""
-        if config.context:
+        task_context = None
+        context_warning = None
+
+        # Try to read CONTEXT.md from workspace using shared utility
+        if workspace:
+            from massgen.context.task_context import load_task_context_with_warning
+
+            task_context, context_warning = load_task_context_with_warning(str(workspace))
+
+        # Use CONTEXT.md content if available, otherwise fall back to config.context
+        context_content = task_context or config.context
+        if context_content:
             context_section = f"""
-**Project Context:**
-{config.context}
+**Task Context:**
+{context_content}
 
 """
 
@@ -310,7 +342,7 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         if base_prompt:
             subagent_prompt = f"{base_prompt}\n\n{subagent_prompt}"
 
-        return subagent_prompt
+        return subagent_prompt, context_warning
 
     async def _execute_subagent(
         self,
@@ -329,9 +361,19 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         """
         start_time = time.time()
 
+        # Capture context warning early so it's available for all error paths
+        from massgen.context.task_context import load_task_context_with_warning
+
+        _, context_warning = load_task_context_with_warning(str(workspace))
+
         try:
             # Always use orchestrator mode for subagent execution
-            return await self._execute_with_orchestrator(config, workspace, start_time)
+            return await self._execute_with_orchestrator(
+                config,
+                workspace,
+                start_time,
+                context_warning,
+            )
 
         except asyncio.TimeoutError:
             execution_time = time.time() - start_time
@@ -342,6 +384,7 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                 workspace=workspace,
                 timeout_seconds=execution_time,
                 log_path=str(log_dir) if log_dir else None,
+                warning=context_warning,
             )
 
         except Exception as e:
@@ -352,6 +395,7 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                 error=str(e),
                 workspace_path=str(workspace),
                 execution_time_seconds=execution_time,
+                warning=context_warning,
             )
 
     async def _execute_with_orchestrator(
@@ -359,6 +403,7 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         config: SubagentConfig,
         workspace: Path,
         start_time: float,
+        context_warning: Optional[str] = None,
     ) -> SubagentResult:
         """
         Execute subagent by spawning a separate MassGen process.
@@ -370,6 +415,7 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
             config: Subagent configuration
             workspace: Path to subagent workspace
             start_time: Execution start time
+            context_warning: Warning message if CONTEXT.md was truncated
 
         Returns:
             SubagentResult with execution outcome
@@ -406,7 +452,9 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         )
 
         # Build the task - system prompt already includes the task at the end
-        system_prompt = self._build_subagent_system_prompt(config)
+        # Pass workspace to read CONTEXT.md for task context
+        # Note: context_warning is passed in from _execute_subagent, so we ignore the one from _build_subagent_system_prompt
+        system_prompt, _ = self._build_subagent_system_prompt(config, workspace)
         full_task = system_prompt
 
         # Build command to run MassGen as subprocess
@@ -486,6 +534,7 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                     execution_time_seconds=execution_time,
                     token_usage=token_usage,
                     log_path=str(log_dir) if log_dir else None,
+                    warning=context_warning,
                 )
             else:
                 stderr_text = stderr.decode() if stderr else ""
@@ -502,6 +551,7 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                     workspace_path=str(workspace),
                     execution_time_seconds=time.time() - start_time,
                     log_path=str(log_dir) if log_dir else None,
+                    warning=context_warning,
                 )
 
         except asyncio.TimeoutError:
@@ -516,6 +566,7 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                 workspace=workspace,
                 timeout_seconds=timeout,  # Use the clamped timeout
                 log_path=str(log_dir) if log_dir else None,
+                warning=context_warning,
             )
         except asyncio.CancelledError:
             # Handle graceful cancellation (e.g., from Ctrl+C)
@@ -537,6 +588,7 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                 workspace=workspace,
                 timeout_seconds=time.time() - start_time,
                 log_path=str(log_dir) if log_dir else None,
+                warning=context_warning,
             )
         except Exception as e:
             logger.error(f"[SubagentManager] Subagent {config.id} error: {e}")
@@ -550,6 +602,7 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                 workspace_path=str(workspace),
                 execution_time_seconds=time.time() - start_time,
                 log_path=str(log_dir) if log_dir else None,
+                warning=context_warning,
             )
 
     def _generate_subagent_yaml_config(
@@ -861,9 +914,8 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         # Create workspace
         workspace = self._create_workspace(config.id)
 
-        # Copy context files if specified
-        if config.context_files:
-            self._copy_context_files(config.id, config.context_files, workspace)
+        # Copy context files (always called to auto-copy CONTEXT.md even if no explicit context_files)
+        self._copy_context_files(config.id, config.context_files or [], workspace)
 
         # Track state
         state = SubagentState(
@@ -894,11 +946,18 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                 except asyncio.TimeoutError:
                     # Attempt to recover completed work from workspace
                     log_dir = self._get_subagent_log_dir(config.id)
+                    # Load context warning for the result
+                    from massgen.context.task_context import (
+                        load_task_context_with_warning,
+                    )
+
+                    _, context_warning = load_task_context_with_warning(str(workspace))
                     result = self._create_timeout_result_with_recovery(
                         subagent_id=config.id,
                         workspace=workspace,
                         timeout_seconds=config.timeout_seconds,
                         log_path=str(log_dir) if log_dir else None,
+                        warning=context_warning,
                     )
 
             # Set span attributes based on result
@@ -1050,9 +1109,8 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         # Create workspace
         workspace = self._create_workspace(config.id)
 
-        # Copy context files if specified
-        if config.context_files:
-            self._copy_context_files(config.id, config.context_files, workspace)
+        # Copy context files (always called to auto-copy CONTEXT.md even if no explicit context_files)
+        self._copy_context_files(config.id, config.context_files or [], workspace)
 
         # Track state
         state = SubagentState(
@@ -1077,17 +1135,31 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
                 except asyncio.TimeoutError:
                     # Attempt to recover completed work from workspace
                     log_dir = self._get_subagent_log_dir(config.id)
+                    # Load context warning for the result
+                    from massgen.context.task_context import (
+                        load_task_context_with_warning,
+                    )
+
+                    _, context_warning = load_task_context_with_warning(str(workspace))
                     result = self._create_timeout_result_with_recovery(
                         subagent_id=config.id,
                         workspace=workspace,
                         timeout_seconds=config.timeout_seconds,
                         log_path=str(log_dir) if log_dir else None,
+                        warning=context_warning,
                     )
                 except Exception as e:
+                    # Load context warning for the result
+                    from massgen.context.task_context import (
+                        load_task_context_with_warning,
+                    )
+
+                    _, context_warning = load_task_context_with_warning(str(workspace))
                     result = SubagentResult.create_error(
                         subagent_id=config.id,
                         error=str(e),
                         workspace_path=str(workspace),
+                        warning=context_warning,
                     )
 
             # Update state - use result.status directly for recovered states
@@ -1703,6 +1775,7 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
         workspace: Path,
         timeout_seconds: float,
         log_path: Optional[str] = None,
+        warning: Optional[str] = None,
     ) -> SubagentResult:
         """
         Create a SubagentResult for a timed-out subagent, recovering any completed work.
@@ -1715,6 +1788,7 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
             workspace: Path to subagent workspace
             timeout_seconds: How long the subagent ran
             log_path: Path to log directory
+            warning: Warning message (e.g., context truncation)
 
         Returns:
             SubagentResult with recovered answer and costs if available
@@ -1777,4 +1851,5 @@ You are a subagent spawned to work on a specific task. Your workspace is isolate
             token_usage=token_usage,
             log_path=log_path,
             is_partial=is_partial,
+            warning=warning,
         )

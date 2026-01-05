@@ -55,7 +55,7 @@ uv run python scripts/validate_all_configs.py
 ## Architecture Overview
 
 ### Core Flow
-```
+```text
 cli.py → orchestrator.py → chat_agent.py → backend/*.py
                 ↓
         coordination_tracker.py (voting, consensus)
@@ -79,7 +79,7 @@ cli.py → orchestrator.py → chat_agent.py → backend/*.py
 **Streaming Buffer** (`backend/_streaming_buffer_mixin.py`): Tracks partial responses during streaming for compression recovery.
 
 ### Backend Hierarchy
-```
+```text
 base.py (abstract interface)
     └── base_with_custom_tool_and_mcp.py (tool + MCP support)
             ├── response.py (OpenAI Response API)
@@ -105,8 +105,8 @@ When adding new YAML parameters, update **both**:
 ## Workflow Guidelines
 
 1. **Prioritize specs and TDD** - Write tests before implementation for complex features
-2. **Keep PR_DRAFT.md updated** - Create a PR_DRAFT.md that references each new feature with corresponding Linear (e.g., MAS-XXX) and GitHub issue numbers. Keep this updated as new features are added. You may need to ask the user whether to overwrite or append to this file.
-3. **Review PRs** with `pr-review-toolkit:review-pr` and `/pr-comments`
+2. **Keep PR_DRAFT.md updated** - Create a PR_DRAFT.md that references each new feature with corresponding Linear (e.g., `Closes MAS-XXX`) and GitHub issue numbers. Keep this updated as new features are added. You may need to ask the user whether to overwrite or append to this file. Ensure you include test cases here as well as configs used to test them.
+3. **Review PRs** with `pr-checks` skill.
 4. **Git staging**: Use `git add -u .` for modified tracked files
 
 ## Documentation Requirements
@@ -229,6 +229,11 @@ Docker execution mode auto-excludes tools missing required API keys.
 - Mark expensive API tests with `@pytest.mark.expensive`
 - Use `@pytest.mark.docker` for Docker-dependent tests
 - Async tests use `@pytest.mark.asyncio`
+- **API Keys**: Use `python-dotenv` to load API keys from `.env` file in test scripts:
+  ```python
+  from dotenv import load_dotenv
+  load_dotenv()  # Load before importing os.getenv()
+  ```
 
 ## Key Files for New Contributors
 
@@ -301,7 +306,7 @@ This ensures features are tracked in Linear and spec'd via OpenSpec before imple
 
 Use the `release-prep` skill to automate release documentation:
 
-```
+```bash
 release-prep v0.1.34
 ```
 
@@ -314,7 +319,7 @@ This will:
 
 ### Announcement Files
 
-```
+```text
 docs/announcements/
 ├── feature-highlights.md    # Long-lived feature list (update for major features)
 ├── current-release.md       # Active announcement (copy to LinkedIn/X)
