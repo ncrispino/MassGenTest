@@ -243,13 +243,16 @@ Most configurations use environment variables for API keys:so
 # Install or upgrade
 pip install --upgrade massgen
 
-# Start OpenAI-compatible server (new!)
+# Start OpenAI-compatible server with default config
 massgen serve --host 0.0.0.0 --port 4000
+
+# Or specify a custom config
+massgen serve --config @examples/basic/multi/three_agents_default
 
 # Use with any OpenAI SDK client
 curl http://localhost:4000/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model": "massgen", "messages": [{"role": "user", "content": "hello"}]}'
+  -d '{"model": "massgen", "messages": [{"role": "user", "content": "Explain multi-agent systems in LLMs"}]}'
 ```
 
 ### v0.1.33

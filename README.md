@@ -173,13 +173,16 @@ pip install --upgrade massgen
 # Or with uv (faster)
 uv pip install massgen
 
-# Start OpenAI-compatible server (new!)
+# Start OpenAI-compatible server with default config
 massgen serve --host 0.0.0.0 --port 4000
+
+# Or specify a custom config
+massgen serve --config @examples/basic/multi/three_agents_default
 
 # Use with any OpenAI SDK client
 curl http://localhost:4000/v1/chat/completions \
   -H "Content-Type: application/json" \
-  -d '{"model": "massgen", "messages": [{"role": "user", "content": "hello"}]}'
+  -d '{"model": "massgen", "messages": [{"role": "user", "content": "Explain multi-agent systems in LLMs"}]}'
 ```
 
 → [See full release history and examples](massgen/configs/README.md#release-history--examples)

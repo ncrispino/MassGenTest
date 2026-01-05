@@ -58,7 +58,7 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 ### Features
 
-- **OpenAI-Compatible Server**: Local HTTP server exposing MassGen as an OpenAI-compatible API for integration with Cursor, Continue, and other tools
+- **OpenAI-Compatible Server**: Local HTTP server exposing MassGen as an OpenAI-compatible API
 - **Dynamic Model Discovery**: Authenticated model listing for Groq and Together backends via API
 - **WebUI Improvements**: File diff display, answer refresh polling, workspace browser optimizations
 - **Subagent Reliability**: Better status tracking, cancellation recovery, and error handling
@@ -597,11 +597,10 @@ These features are being actively developed on **separate parallel tracks** and 
 - Research third-party wrappers; document manual update processes
 - **Status:** ✅ Completed in v0.1.34
 
-### Track: OpenAI-Compatible Chat Server (@ncrispino, nickcrispino)
+### Track: OpenAI-Compatible Chat Server (@maxim-saplin)
 - Issue: [#628](https://github.com/massgen/MassGen/issues/628)
 - PR: [#689](https://github.com/massgen/MassGen/pull/689)
 - Run MassGen as an OpenAI-compatible API server
-- Integration with Cursor, Continue, and other tools
 - **Status:** ✅ Completed in v0.1.34
 
 ### Track: Code-Based Tools in Web UI (@ncrispino, nickcrispino)

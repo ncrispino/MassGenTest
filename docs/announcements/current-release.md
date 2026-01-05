@@ -7,11 +7,11 @@ After posting, update the social links below.
 
 ## Release Summary
 
-We're excited to release MassGen v0.1.34, adding an OpenAI-Compatible Server and Dynamic Model Discovery! 🚀
+We're excited to release MassGen v0.1.34, adding an OpenAI-Compatible Server! 🚀
 
-Run MassGen as a local HTTP server that any OpenAI SDK client can connect to. Plus, Groq and Together backends now dynamically fetch available models via authenticated API calls instead of relying on hardcoded lists.
+Run MassGen as a local HTTP server that any OpenAI SDK client can connect to.
 
-**Plus:** WebUI improvements (file diffs, answer refresh, faster workspace browser), subagent reliability fixes, and a new review skill.
+**Plus:** Dynamic model discovery for Groq and Together backends, WebUI improvements (file diffs, answer refresh, faster workspace browser), subagent reliability fixes, and a new review skill.
 
 ## Install
 
@@ -33,7 +33,7 @@ Copy everything below this line, then append content from `feature-highlights.md
 
 ---
 
-We're excited to release MassGen v0.1.34, adding an OpenAI-Compatible Server and Dynamic Model Discovery! 🚀 Run MassGen as a local HTTP server that any OpenAI SDK client can connect to. Plus, Groq and Together backends now dynamically fetch available models via authenticated API calls instead of relying on hardcoded lists. WebUI improvements (file diffs, answer refresh, faster workspace browser), subagent reliability fixes, and a new review skill.
+We're excited to release MassGen v0.1.34, adding an OpenAI-Compatible Server! 🚀 Run MassGen as a local HTTP server that any OpenAI SDK client can connect to. Plus: Dynamic model discovery for Groq and Together backends, WebUI improvements (file diffs, answer refresh, faster workspace browser), subagent reliability fixes, and a new review skill.
 
 Install: `pip install massgen==0.1.34`
 
