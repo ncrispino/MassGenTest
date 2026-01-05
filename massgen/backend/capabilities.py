@@ -53,7 +53,6 @@ This will verify:
 - Default models exist in model lists
 """
 
-import os
 from dataclasses import dataclass
 from enum import Enum
 from typing import Dict, List, Optional, Set
@@ -448,11 +447,12 @@ BACKEND_CAPABILITIES: Dict[str, BackendCapabilities] = {
         builtin_tools=[],
         filesystem_support="mcp",
         models=[
+            "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8",
             "meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo",
             "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
             "mistralai/Mixtral-8x7B-Instruct-v0.1",
         ],
-        default_model="meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo",
+        default_model="Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8",
         env_var="TOGETHER_API_KEY",
         notes="OpenAI-compatible API. Access to open-source models at scale.",
         base_url="https://api.together.xyz/v1",
@@ -691,34 +691,3 @@ def validate_backend_config(backend_type: str, config: Dict) -> List[str]:
         )
 
     return errors
-
-
-def get_models_for_backend(backend_type: str) -> List[str]:
-    """
-    Return model list for a backend.
-    Uses authenticated discovery when possible, otherwise falls back to static registry.
-    This is UX-only and does not affect runtime execution.
-    """
-    caps = get_capabilities(backend_type)
-    if not caps:
-        return []
-
-    # Authenticated OpenAI model discovery (optional)
-    if backend_type == "openai" and os.getenv("OPENAI_API_KEY"):
-        try:
-            from openai import OpenAI
-
-            client = OpenAI()
-            models = client.models.list()
-
-            discovered = sorted(
-                [m.id for m in models.data if isinstance(m.id, str)],
-            )
-
-            if discovered:
-                return discovered
-        except Exception:
-            # Silent fallback to static list
-            pass
-
-    return caps.models
