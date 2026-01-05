@@ -75,6 +75,7 @@ from ..logger_config import (
     log_stream_chunk,
     logger,
 )
+from ..structured_logging import get_current_round, get_tracer, log_token_usage
 from ..tool import ToolManager
 from ..tool.workflow_toolkits.base import WORKFLOW_TOOL_NAMES
 from .base import FilesystemSupport, LLMBackend, StreamChunk
@@ -161,6 +162,43 @@ class ClaudeCodeBackend(LLMBackend):
         # Custom tools support - initialize ToolManager if custom_tools are provided
         self._custom_tool_manager: Optional[ToolManager] = None
         custom_tools = kwargs.get("custom_tools", [])
+
+        # Register multimodal tools if enabled
+        enable_multimodal = self.config.get("enable_multimodal_tools", False) or kwargs.get("enable_multimodal_tools", False)
+
+        # Build multimodal config - priority: explicit multimodal_config > individual config variables
+        self._multimodal_config = self.config.get("multimodal_config", {}) or kwargs.get("multimodal_config", {})
+        if not self._multimodal_config:
+            # Build from individual generation config variables
+            self._multimodal_config = {}
+            for media_type in ["image", "video", "audio"]:
+                backend = self.config.get(f"{media_type}_generation_backend")
+                model = self.config.get(f"{media_type}_generation_model")
+                if backend or model:
+                    self._multimodal_config[media_type] = {}
+                    if backend:
+                        self._multimodal_config[media_type]["backend"] = backend
+                    if model:
+                        self._multimodal_config[media_type]["model"] = model
+
+        if enable_multimodal:
+            multimodal_tools = [
+                {
+                    "name": ["read_media"],
+                    "category": "multimodal",
+                    "path": "massgen/tool/_multimodal_tools/read_media.py",
+                    "function": ["read_media"],
+                },
+                {
+                    "name": ["generate_media"],
+                    "category": "multimodal",
+                    "path": "massgen/tool/_multimodal_tools/generation/generate_media.py",
+                    "function": ["generate_media"],
+                },
+            ]
+            custom_tools = list(custom_tools) + multimodal_tools
+            logger.info("[ClaudeCode] Multimodal tools enabled: read_media, generate_media")
+
         if custom_tools:
             self._custom_tool_manager = ToolManager()
             self._register_custom_tools(custom_tools)
@@ -826,14 +864,47 @@ class ClaudeCodeBackend(LLMBackend):
                 ],
             }
 
+        # Build execution context for context param injection
+        # The tool manager will only inject params that match @context_params decorator
+        execution_context = {}
+        if hasattr(self, "_execution_context") and self._execution_context:
+            try:
+                execution_context = self._execution_context.model_dump()
+            except Exception:
+                pass
+
+        # Ensure agent_cwd is always available for custom tools
+        # Use filesystem_manager's cwd which is set to the agent's workspace
+        if self.filesystem_manager:
+            execution_context["agent_cwd"] = str(self.filesystem_manager.cwd)
+            # Also add allowed_paths for path validation
+            if hasattr(self.filesystem_manager, "path_permission_manager") and self.filesystem_manager.path_permission_manager:
+                paths = self.filesystem_manager.path_permission_manager.get_mcp_filesystem_paths()
+                if paths:
+                    execution_context["allowed_paths"] = paths
+
         tool_request = {
             "name": tool_name,
             "input": args,
         }
 
+        # Build execution context for observability (agent_id, round tracking)
+        execution_context = {
+            "agent_id": getattr(self, "_current_agent_id", None) or "unknown",
+        }
+        # Add round tracking from context variable (set by orchestrator via set_current_round)
+        round_number, round_type = get_current_round()
+        if round_number is not None:
+            execution_context["round_number"] = round_number
+        if round_type:
+            execution_context["round_type"] = round_type
+
         result_text = ""
         try:
-            async for result in self._custom_tool_manager.execute_tool(tool_request):
+            async for result in self._custom_tool_manager.execute_tool(
+                tool_request,
+                execution_context=execution_context,
+            ):
                 # Accumulate ExecutionResult blocks
                 if hasattr(result, "output_blocks"):
                     for block in result.output_blocks:
@@ -1346,8 +1417,14 @@ class ClaudeCodeBackend(LLMBackend):
         Yields:
             StreamChunk objects with response content and metadata
         """
-        # Extract agent_id from kwargs if provided
+        # Extract agent_id from kwargs if provided and store for tool execution context
         agent_id = kwargs.get("agent_id", None)
+        self._current_agent_id = agent_id  # Store for custom tool execution
+
+        # Initialize span tracking variables for proper cleanup in all code paths
+        llm_span = None
+        llm_span_cm = None  # Context manager for the span
+        llm_span_open = False
 
         log_backend_activity(
             self.get_provider_name(),
@@ -1623,6 +1700,33 @@ class ClaudeCodeBackend(LLMBackend):
                 {"system": workflow_system_prompt, "user": combined_query},
                 backend_name=self.get_provider_name(),
             )
+
+            # Create span for LLM interaction tracing
+            tracer = get_tracer()
+            model_name = self.config.get("model") or "claude-code-default"
+            llm_span_attributes = {
+                "llm.provider": "claude_code",
+                "llm.model": model_name,
+                "llm.operation": "stream",
+                "gen_ai.system": "anthropic",
+                "gen_ai.request.model": model_name,
+            }
+            if agent_id:
+                llm_span_attributes["massgen.agent_id"] = agent_id
+            # Get round tracking from context variable (set by orchestrator via set_current_round)
+            llm_round_number, llm_round_type = get_current_round()
+            if llm_round_number is not None:
+                llm_span_attributes["massgen.round"] = llm_round_number
+            if llm_round_type:
+                llm_span_attributes["massgen.round_type"] = llm_round_type
+
+            # Enter span context - will be closed when ResultMessage is received or on error
+            # Note: tracer.span() returns a context manager, so we need to store it
+            # and capture the actual span object from __enter__()
+            llm_span_cm = tracer.span("llm.claude_code.stream", attributes=llm_span_attributes)
+            llm_span = llm_span_cm.__enter__()
+            llm_span_open = True
+
             await client.query(combined_query)
         else:
             log_stream_chunk("backend.claude_code", "error", "All user messages were empty", agent_id)
@@ -1740,6 +1844,39 @@ class ClaudeCodeBackend(LLMBackend):
                     # Update token usage using ResultMessage data
                     self.update_token_usage_from_result_message(message)
 
+                    # Log structured token usage for observability
+                    if message.usage:
+                        usage_data = message.usage
+                        if isinstance(usage_data, dict):
+                            input_tokens = (usage_data.get("input_tokens", 0) or 0) + (usage_data.get("cache_read_input_tokens", 0) or 0) + (usage_data.get("cache_creation_input_tokens", 0) or 0)
+                            output_tokens = usage_data.get("output_tokens", 0) or 0
+                            cached_tokens = usage_data.get("cache_read_input_tokens", 0) or 0
+                        else:
+                            input_tokens = (
+                                (getattr(usage_data, "input_tokens", 0) or 0) + (getattr(usage_data, "cache_read_input_tokens", 0) or 0) + (getattr(usage_data, "cache_creation_input_tokens", 0) or 0)
+                            )
+                            output_tokens = getattr(usage_data, "output_tokens", 0) or 0
+                            cached_tokens = getattr(usage_data, "cache_read_input_tokens", 0) or 0
+
+                        log_token_usage(
+                            agent_id=agent_id or "unknown",
+                            input_tokens=input_tokens,
+                            output_tokens=output_tokens,
+                            reasoning_tokens=0,  # Claude Code doesn't expose this separately
+                            cached_tokens=cached_tokens,
+                            estimated_cost=message.total_cost_usd or 0.0,
+                            model=self.config.get("model") or "claude-code-default",
+                        )
+
+                    # Close LLM span on successful completion
+                    if llm_span_open and llm_span_cm:
+                        if message.duration_ms:
+                            llm_span.set_attribute("llm.duration_ms", message.duration_ms)
+                        if message.total_cost_usd:
+                            llm_span.set_attribute("llm.cost_usd", message.total_cost_usd)
+                        llm_span_cm.__exit__(None, None, None)
+                        llm_span_open = False
+
                     # Yield completion
                     log_stream_chunk(
                         "backend.claude_code",
@@ -1769,6 +1906,13 @@ class ClaudeCodeBackend(LLMBackend):
 
         except Exception as e:
             error_msg = str(e)
+
+            # Close LLM span on error
+            if llm_span_open and llm_span_cm:
+                llm_span.set_attribute("error", True)
+                llm_span.set_attribute("error.message", error_msg[:500])
+                llm_span_cm.__exit__(type(e), e, e.__traceback__)
+                llm_span_open = False
 
             # Provide helpful Windows-specific guidance
             if "git-bash" in error_msg.lower() or "bash.exe" in error_msg.lower():

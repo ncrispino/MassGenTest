@@ -38,13 +38,18 @@ from ..logger_config import (
     log_tool_call,
     logger,
 )
+from ._streaming_buffer_mixin import StreamingBufferMixin
 from .base import FilesystemSupport, StreamChunk
 from .base_with_custom_tool_and_mcp import (
     CustomToolAndMCPBackend,
     CustomToolChunk,
     ToolExecutionConfig,
 )
-from .gemini_utils import CoordinationResponse, PostEvaluationResponse
+from .gemini_utils import (
+    CoordinationResponse,
+    PostEvaluationResponse,
+    VoteOnlyCoordinationResponse,
+)
 from .rate_limiter import GlobalRateLimiter
 
 
@@ -210,7 +215,7 @@ def format_tool_response_as_json(response_text: str) -> str:
         return response_text
 
 
-class GeminiBackend(CustomToolAndMCPBackend):
+class GeminiBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
     """Google Gemini backend using structured output for coordination and MCP tool integration."""
 
     def __init__(self, api_key: Optional[str] = None, **kwargs):
@@ -426,6 +431,7 @@ class GeminiBackend(CustomToolAndMCPBackend):
         - MCP tools: Blocked by planning mode during coordination, blocked by circuit breaker when servers fail
         - Provider tools (vote/new_answer): Emitted as StreamChunks but not executed (handled by orchestrator)
         """
+        self._clear_streaming_buffer(**kwargs)
         # Use instance agent_id (from __init__) or get from kwargs if not set
         agent_id = self.agent_id or kwargs.get("agent_id", None)
         client = None
@@ -440,6 +446,8 @@ class GeminiBackend(CustomToolAndMCPBackend):
             agent_system_message=kwargs.get("system_message", None),
             agent_id=self.agent_id,
             backend_name="gemini",
+            backend_type="gemini",  # For multimodal capability lookup
+            model=kwargs.get("model", ""),  # For model-specific multimodal capability lookup
             current_stage=self.coordination_stage,
         )
 
@@ -493,6 +501,14 @@ class GeminiBackend(CustomToolAndMCPBackend):
             # This prevents it from being passed to Gemini SDK API calls
             kwargs.pop("enable_rate_limit", None)
 
+            # Extract and remove _compression_retry from kwargs (internal flag for preventing recursive compression)
+            # Must be extracted before popping, and popped before merging with config to prevent Pydantic errors
+            # Store as instance variable so it's accessible in the except block
+            self._compression_retry_flag = kwargs.pop("_compression_retry", False)
+
+            # Extract vote_only flag before merging (not a Gemini API param)
+            vote_only = kwargs.pop("vote_only", False)
+
             # Merge constructor config with stream kwargs
             all_params = {**self.config, **kwargs}
 
@@ -524,7 +540,15 @@ class GeminiBackend(CustomToolAndMCPBackend):
             full_content = self.formatter.format_messages(messages)
             # For coordination requests, modify the prompt to use structured output
             if is_coordination:
-                full_content = self.formatter.build_structured_output_prompt(full_content, valid_agent_ids, broadcast_enabled=broadcast_enabled)
+                # vote_only was extracted earlier from kwargs (before merging into all_params)
+                full_content = self.formatter.build_structured_output_prompt(
+                    full_content,
+                    valid_agent_ids,
+                    broadcast_enabled=broadcast_enabled,
+                    vote_only=vote_only,
+                )
+                if vote_only:
+                    logger.info(f"[Gemini] Using vote-only prompt for agent {agent_id} (answer limit reached)")
             elif is_post_evaluation:
                 # For post-evaluation, modify prompt to use structured output
                 full_content = self.formatter.build_post_evaluation_prompt(full_content)
@@ -655,7 +679,13 @@ class GeminiBackend(CustomToolAndMCPBackend):
             if not tools_to_apply and not builtin_tools:
                 if is_coordination:
                     config["response_mime_type"] = "application/json"
-                    config["response_schema"] = CoordinationResponse.model_json_schema()
+                    # Use vote-only schema if agent has reached answer limit
+                    vote_only = kwargs.get("vote_only", False)
+                    if vote_only:
+                        config["response_schema"] = VoteOnlyCoordinationResponse.model_json_schema()
+                        logger.info(f"[Gemini] Using vote-only schema for agent {agent_id} (answer limit reached)")
+                    else:
+                        config["response_schema"] = CoordinationResponse.model_json_schema()
                 elif is_post_evaluation:
                     config["response_mime_type"] = "application/json"
                     config["response_schema"] = PostEvaluationResponse.model_json_schema()
@@ -724,8 +754,24 @@ class GeminiBackend(CustomToolAndMCPBackend):
 
                                                 logger.info(f"[Gemini] Function call detected: {tool_name}")
 
-                        # Process text content
-                        if hasattr(chunk, "text") and chunk.text:
+                        # Process text content - check for thinking parts first
+                        # Gemini 2.5+ thinking models return parts with thought=true
+                        has_thinking_content = False
+                        if hasattr(chunk, "candidates") and chunk.candidates:
+                            for candidate in chunk.candidates:
+                                if hasattr(candidate, "content") and candidate.content:
+                                    if hasattr(candidate.content, "parts") and candidate.content.parts:
+                                        for part in candidate.content.parts:
+                                            if hasattr(part, "thought") and part.thought and hasattr(part, "text") and part.text:
+                                                # This is thinking/reasoning content
+                                                has_thinking_content = True
+                                                thinking_text = part.text
+                                                self._append_reasoning_to_buffer(thinking_text)
+                                                log_stream_chunk("backend.gemini", "reasoning", thinking_text, agent_id)
+                                                yield StreamChunk(type="reasoning", reasoning_delta=thinking_text)
+
+                        # Process regular text content (if not thinking)
+                        if not has_thinking_content and hasattr(chunk, "text") and chunk.text:
                             # Record TTFT on first content
                             if not first_token_recorded:
                                 self.record_first_token()
@@ -740,6 +786,7 @@ class GeminiBackend(CustomToolAndMCPBackend):
                                 backend_name="gemini",
                             )
                             log_stream_chunk("backend.gemini", "content", chunk_text, agent_id)
+                            self._append_to_streaming_buffer(chunk_text)
                             yield StreamChunk(type="content", content=chunk_text)
 
                         # Buffer last chunk with candidates
@@ -1187,45 +1234,60 @@ class GeminiBackend(CustomToolAndMCPBackend):
                         response_parts = []
                         for call in real_function_calls:
                             call_id = call.get("call_id")
-                            result_text = tool_results.get(call_id or "", "No result")
+                            result_data = tool_results.get(call_id or "", "No result")
+
+                            rd_type = type(result_data).__name__
+                            rd_is_dict = isinstance(result_data, dict)
+                            rd_keys = result_data.keys() if rd_is_dict else "N/A"
+                            logger.info(
+                                f"[Gemini MM] result_data type={rd_type}, " f"is_dict={rd_is_dict}, keys={rd_keys}",
+                            )
+
+                            # Plain text result
+                            result_text = result_data if isinstance(result_data, str) else str(result_data)
                             response_parts.append(
                                 types.Part.from_function_response(
                                     name=call.get("name", ""),
                                     response={"result": result_text},
                                 ),
                             )
+                        logger.info(f"[Gemini MM] real_function_calls={len(real_function_calls)}, response_parts={len(response_parts)}")
                         if response_parts:
                             conversation_history.append(types.Content(parts=response_parts, role="user"))
 
                     # For structured output calls (like ask_others from JSON), inject results as text
                     # These don't have thought_signature and can't use function call/response format
                     if structured_output_calls:
+                        logger.info(f"[Gemini MM] structured_output_calls={len(structured_output_calls)}")
                         # Build text representation of tool results
                         text_results = []
                         for call in structured_output_calls:
                             call_id = call.get("call_id")
                             tool_name = call.get("name", "unknown")
-                            result_text = tool_results.get(call_id or "", "No result")
+                            result_data = tool_results.get(call_id or "", "No result")
+                            # Extract text from result
+                            if isinstance(result_data, dict) and "text" in result_data:
+                                result_text = result_data["text"]
+                            else:
+                                result_text = result_data if isinstance(result_data, str) else str(result_data)
                             text_results.append(f"[Tool Result: {tool_name}]\n{result_text}")
 
                         # Add as model response (assistant acknowledging tool execution)
                         model_text = "I executed the following tool(s) and received these results:\n\n" + "\n\n".join(text_results)
                         conversation_history.append(types.Content(parts=[types.Part(text=model_text)], role="model"))
 
-                        # Add user message to prompt continuation
-                        conversation_history.append(
-                            types.Content(
-                                parts=[
-                                    types.Part(
-                                        text=(
-                                            "Based on the tool results above, please continue with your response. "
-                                            "Remember to use the appropriate coordination action "
-                                            "(vote, new_answer, or ask_others) when ready."
-                                        ),
-                                    ),
-                                ],
-                                role="user",
+                        # Add user message prompting continuation
+                        user_parts = [
+                            types.Part(
+                                text=(
+                                    "Based on the tool results above, please continue with your response. "
+                                    "Remember to use the appropriate coordination action "
+                                    "(vote, new_answer, or ask_others) when ready."
+                                ),
                             ),
+                        ]
+                        conversation_history.append(
+                            types.Content(parts=user_parts, role="user"),
                         )
 
                 last_continuation_chunk = None
@@ -1273,7 +1335,24 @@ class GeminiBackend(CustomToolAndMCPBackend):
 
                                                         new_function_calls.append(call_record)
 
-                                if hasattr(chunk, "text") and chunk.text:
+                                # Process text content - check for thinking parts first
+                                # Gemini 2.5+ thinking models return parts with thought=true
+                                has_thinking_content = False
+                                if hasattr(chunk, "candidates") and chunk.candidates:
+                                    for candidate in chunk.candidates:
+                                        if hasattr(candidate, "content") and candidate.content:
+                                            if hasattr(candidate.content, "parts") and candidate.content.parts:
+                                                for part in candidate.content.parts:
+                                                    if hasattr(part, "thought") and part.thought and hasattr(part, "text") and part.text:
+                                                        # This is thinking/reasoning content
+                                                        has_thinking_content = True
+                                                        thinking_text = part.text
+                                                        self._append_reasoning_to_buffer(thinking_text)
+                                                        log_stream_chunk("backend.gemini", "reasoning", thinking_text, agent_id)
+                                                        yield StreamChunk(type="reasoning", reasoning_delta=thinking_text)
+
+                                # Process regular text content (if not thinking)
+                                if not has_thinking_content and hasattr(chunk, "text") and chunk.text:
                                     # Record TTFT on first content
                                     if not cont_first_token_recorded:
                                         self.record_first_token()
@@ -1288,6 +1367,7 @@ class GeminiBackend(CustomToolAndMCPBackend):
                                         backend_name="gemini",
                                     )
                                     log_stream_chunk("backend.gemini", "content", chunk_text, agent_id)
+                                    self._append_to_streaming_buffer(chunk_text)
                                     yield StreamChunk(type="content", content=chunk_text)
 
                             # End API call timing on successful completion
@@ -1601,7 +1681,10 @@ class GeminiBackend(CustomToolAndMCPBackend):
                             response_parts = []
                             for call in real_function_calls:
                                 call_id = call.get("call_id")
-                                result_text = new_tool_results.get(call_id or "", "No result")
+                                result_data = new_tool_results.get(call_id or "", "No result")
+
+                                # Plain text result
+                                result_text = result_data if isinstance(result_data, str) else str(result_data)
                                 response_parts.append(
                                     types.Part.from_function_response(
                                         name=call.get("name", ""),
@@ -1618,22 +1701,26 @@ class GeminiBackend(CustomToolAndMCPBackend):
                             for call in structured_output_calls:
                                 call_id = call.get("call_id")
                                 tool_name = call.get("name", "unknown")
-                                result_text = new_tool_results.get(call_id or "", "No result")
+                                result_data = new_tool_results.get(call_id or "", "No result")
+                                # Extract text from result
+                                if isinstance(result_data, dict) and "text" in result_data:
+                                    result_text = result_data["text"]
+                                else:
+                                    result_text = result_data if isinstance(result_data, str) else str(result_data)
                                 text_results.append(f"[Tool Result: {tool_name}]\n{result_text}")
 
                             model_text = "I executed the following tool(s) and received these results:\n\n" + "\n\n".join(text_results)
                             conversation_history.append(types.Content(parts=[types.Part(text=model_text)], role="model"))
 
-                            conversation_history.append(
-                                types.Content(
-                                    parts=[
-                                        types.Part(
-                                            text="Based on the tool results above, please continue with your response. "
-                                            "Remember to use the appropriate coordination action (vote, new_answer, or ask_others) when ready.",
-                                        ),
-                                    ],
-                                    role="user",
+                            # Add user message prompting continuation
+                            user_parts = [
+                                types.Part(
+                                    text="Based on the tool results above, please continue with your response. "
+                                    "Remember to use the appropriate coordination action (vote, new_answer, or ask_others) when ready.",
                                 ),
+                            ]
+                            conversation_history.append(
+                                types.Content(parts=user_parts, role="user"),
                             )
 
             # ====================================================================
@@ -1698,6 +1785,7 @@ class GeminiBackend(CustomToolAndMCPBackend):
                             log_stream_chunk("backend.gemini", "tool_calls", workflow_tool_calls, agent_id)
 
             if tool_calls_detected:
+                self._append_tool_call_to_buffer(tool_calls_detected)
                 yield StreamChunk(type="tool_calls", tool_calls=tool_calls_detected, source="gemini")
 
                 if mcp_used:
@@ -1835,10 +1923,52 @@ class GeminiBackend(CustomToolAndMCPBackend):
             yield StreamChunk(type="done")
 
         except Exception as e:
-            logger.error(f"[Gemini] Error in stream_with_tools: {e}")
-            raise
+            # Check if this is a context length error that we can recover from via compression
+            from ._context_errors import is_context_length_error
+
+            # Use the flag extracted at the start of stream_with_tools (before kwargs was modified)
+            _compression_retry = getattr(self, "_compression_retry_flag", False)
+
+            if is_context_length_error(e) and not _compression_retry:
+                logger.warning(
+                    "[Gemini] Context length exceeded, attempting compression recovery...",
+                )
+
+                # Notify user that compression is starting
+                yield StreamChunk(
+                    type="compression_status",
+                    status="compressing",
+                    content=f"\n📦 [Compression] Context limit exceeded - summarizing {len(messages)} messages...",
+                    source=agent_id,
+                )
+
+                # Compress messages using the inherited method
+                compressed_messages = await self._compress_messages_for_context_recovery(
+                    messages,
+                    buffer_content=None,
+                )
+
+                # Notify user that compression succeeded
+                yield StreamChunk(
+                    type="compression_status",
+                    status="compression_complete",
+                    content=f"✅ [Compression] Recovered with {len(compressed_messages)} messages - continuing...",
+                    source=agent_id,
+                )
+
+                # Retry with compressed messages (with flag to prevent infinite loops)
+                retry_kwargs = {**kwargs, "_compression_retry": True}
+                async for chunk in self.stream_with_tools(compressed_messages, tools, **retry_kwargs):
+                    yield chunk
+
+                logger.info("[Gemini] Compression recovery successful")
+            else:
+                logger.error(f"[Gemini] Error in stream_with_tools: {e}")
+                raise
 
         finally:
+            # Save streaming buffer before cleanup
+            self._finalize_streaming_buffer(agent_id=agent_id)
             await self._cleanup_genai_resources(stream, client)
 
     async def _try_close_resource(
@@ -1938,18 +2068,31 @@ class GeminiBackend(CustomToolAndMCPBackend):
             call: Tool call dictionary with call_id, name, arguments
             result: Tool execution result
             tool_type: "custom" or "mcp"
+
         """
+        # Extract text from result - handle MCP CallToolResult objects properly
+        if hasattr(result, "content") and not isinstance(result, (dict, str)):
+            # MCP CallToolResult - extract text from content list
+            extracted = self._extract_text_from_content(result.content)
+            result_text = extracted if extracted is not None else str(result)
+        else:
+            result_text = getattr(result, "text", None) or str(result)
+
         tool_result_msg = {
             "role": "tool",
             "name": call.get("name", ""),
-            "content": str(result),
+            "content": result_text,
         }
         updated_messages.append(tool_result_msg)
 
         tool_results_store = getattr(self, "_active_tool_result_store", None)
         call_id = call.get("call_id")
         if isinstance(tool_results_store, dict) and call_id:
-            tool_results_store[call_id] = str(result)
+            tool_results_store[call_id] = result_text
+
+        # Track in streaming buffer for compression recovery
+        tool_name = call.get("name", "unknown")
+        self._append_tool_to_buffer(tool_name, result_text)
 
     def _append_tool_error_message(
         self,
@@ -1978,6 +2121,10 @@ class GeminiBackend(CustomToolAndMCPBackend):
         call_id = call.get("call_id")
         if isinstance(tool_results_store, dict) and call_id:
             tool_results_store[call_id] = f"Error: {error_msg}"
+
+        # Track in streaming buffer for compression recovery
+        tool_name = call.get("name", "unknown")
+        self._append_tool_to_buffer(tool_name, error_msg, is_error=True)
 
     async def _execute_custom_tool(self, call: Dict[str, Any]) -> AsyncGenerator[CustomToolChunk, None]:
         """Execute custom tool with streaming support - async generator for base class.

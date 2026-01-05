@@ -647,7 +647,7 @@ Use the ``massgen export`` command to share a session:
 
 .. code-block:: bash
 
-   # Share the most recent session
+   # Share the most recent session (all turns)
    massgen export
 
    # Share a specific session by log directory name
@@ -656,11 +656,59 @@ Use the ``massgen export`` command to share a session:
    # Share a specific session by full path
    massgen export /path/to/.massgen/massgen_logs/log_20251218_134125_867383
 
+**Multi-Turn Sessions:**
+
+For sessions with multiple turns, all turns are included by default. Use the ``--turns`` option to select specific turns:
+
+.. code-block:: bash
+
+   # Share only the first 3 turns
+   massgen export --turns 3
+
+   # Share turns 2 through 5
+   massgen export --turns 2-5
+
+   # Share only the latest turn
+   massgen export --turns latest
+
+   # Share all turns (default)
+   massgen export --turns all
+
+**Export Options:**
+
+.. code-block:: bash
+
+   # Preview what would be shared without creating a gist
+   massgen export --dry-run
+
+   # Show detailed file listing
+   massgen export --verbose
+
+   # Output result as JSON (for scripting)
+   massgen export --json
+
+   # Skip interactive prompts (use defaults)
+   massgen export --yes
+
+   # Exclude workspace artifacts
+   massgen export --no-workspace
+
+   # Set workspace size limit per agent (default: 500KB)
+   massgen export --workspace-limit 1MB
+
 **Output:**
 
 .. code-block:: text
 
-   Sharing session from: /path/to/.massgen/massgen_logs/log_20251218_134125/turn_1/attempt_1
+   Sharing session from: log_20251218_134125_867383
+
+   Session: log_20251218_134125_867383
+   Turns: 3
+
+     ✓ Turn 1 - What is the capital of France?
+     ✓ Turn 2 - Tell me more about Paris
+     ✓ Turn 3 - What are popular attractions?
+
    Collecting files...
    Uploading 45 files (1,234,567 bytes)...
 
@@ -675,21 +723,42 @@ The share URL opens the **MassGen Viewer**, a web-based session viewer that disp
 - Answers and votes with full content
 - Tool usage breakdown
 - Configuration used
+- Turn navigation (for multi-turn sessions)
+- Error details (for failed/interrupted sessions)
 
 **What gets uploaded:**
 
-- Metrics and status files
+- Session manifest (``_session_manifest.json``) with turn metadata
+- Metrics and status files for all turns
 - Coordination events and votes
 - Agent answers (intermediate and final)
 - Execution metadata (with API keys redacted)
-- Small workspace files (code, text, configs)
+- Workspace artifacts (HTML, CSS, JS, images up to size limit)
+- Error information for failed/interrupted sessions
 
 **What is excluded:**
 
-- Large files (>10MB)
+- Large files (>10MB or exceeding workspace limit)
 - Debug logs (``massgen.log``)
 - Binary files and caches
 - Sensitive data (API keys are automatically redacted)
+- Files matching sensitive patterns (detected with warning)
+
+**Sharing Error Sessions:**
+
+Failed or interrupted sessions can still be shared for debugging:
+
+.. code-block:: text
+
+   Session: log_20251218_134125_867383
+   Turns: 2
+
+     ✓ Turn 1 - What is the capital of France?
+     ✗ Turn 2 - Tell me more about Paris
+
+   [yellow]Warning: This session has errors[/yellow]
+
+The viewer will clearly indicate error status and show error details when available.
 
 Managing Shared Sessions
 ~~~~~~~~~~~~~~~~~~~~~~~~
@@ -726,6 +795,363 @@ If the GitHub CLI is not installed:
    Install it from https://cli.github.com/
 
 **Solution:** Install the GitHub CLI for your platform.
+
+Logfire Observability
+---------------------
+
+MassGen supports `Logfire <https://logfire.pydantic.dev/docs/>`_ for advanced structured tracing and observability.
+
+.. note::
+   Logfire is an **optional dependency**. Install it with:
+
+   .. code-block:: bash
+
+      pip install "massgen[observability]"
+
+      # Or with uv
+      uv pip install "massgen[observability]"
+
+When enabled, Logfire provides:
+
+* **Automatic LLM instrumentation** - Traces all OpenAI and Anthropic API calls with request/response details
+* **Tool execution tracing** - Spans for MCP tool calls with timing and success/failure metrics
+* **Coordination events** - Structured logs for agent coordination, voting, and winner selection
+* **Token usage metrics** - Detailed tracking of input/output/reasoning/cached tokens
+* **Integrated with loguru** - All existing log messages flow through Logfire when enabled
+
+Enabling Logfire
+~~~~~~~~~~~~~~~~
+
+**Via CLI flag (recommended):**
+
+.. code-block:: bash
+
+   massgen --logfire --config your_config.yaml "Your question"
+
+**Via environment variable:**
+
+.. code-block:: bash
+
+   export MASSGEN_LOGFIRE_ENABLED=true
+   massgen --config your_config.yaml "Your question"
+
+Setting Up Logfire
+~~~~~~~~~~~~~~~~~~
+
+1. **Install MassGen with observability support:**
+
+   .. code-block:: bash
+
+      pip install "massgen[observability]"
+
+      # Or with uv
+      uv pip install "massgen[observability]"
+
+2. **Create a Logfire account** at https://logfire.pydantic.dev/
+
+3. **Authenticate with Logfire:**
+
+   .. code-block:: bash
+
+      # Authenticate (this creates ~/.logfire/credentials.json)
+      uv run logfire auth
+
+4. **Alternatively, set the token directly:**
+
+   .. code-block:: bash
+
+      export LOGFIRE_TOKEN=your_token_here
+
+5. **Run MassGen with Logfire enabled:**
+
+   .. code-block:: bash
+
+      massgen --logfire --config your_config.yaml "Your question"
+
+What Gets Traced
+~~~~~~~~~~~~~~~~
+
+When Logfire is enabled, MassGen automatically traces:
+
+**LLM API Calls:**
+
+* All requests to OpenAI-compatible APIs (GPT-4, etc.)
+* All requests to Anthropic Claude API
+* All requests to Google GenAI (Gemini) API
+* Request parameters, response content, and timing
+* Token usage breakdown
+
+.. note::
+   For Gemini tracing, set ``OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT=true``
+   to capture full prompts and completions. Without this, content appears as ``<elided>``.
+
+**Tool Executions:**
+
+* MCP server tool calls with full input/output
+* Custom tools (like ``read_media``, ``write_file``, etc.)
+* Agent attribution via ``massgen.agent_id`` span attribute
+* Execution time in milliseconds
+* Success/failure status
+* Error messages when tools fail
+
+**Coordination Events:**
+
+* ``coordination_started`` - When agent coordination begins
+* ``winner_selected`` - When voting completes and a winner is chosen
+* Vote counts and participating agents
+
+**Example Logfire Dashboard View:**
+
+.. code-block:: text
+
+   ┌─ coordination.session (45.2s) ──────────────────────────────┐
+   │  task: "Build a REST API for user management"              │
+   │  num_agents: 3                                              │
+   │  agent_ids: agent_a, agent_b, agent_c                      │
+   │                                                             │
+   │  ├─ llm.call [claude-3-5-sonnet] (3.1s)                   │
+   │  │   input_tokens: 1,234                                   │
+   │  │   output_tokens: 567                                    │
+   │  │                                                         │
+   │  ├─ mcp.filesystem.write_file (0.8s)                      │
+   │  │   input_chars: 245                                      │
+   │  │   output_chars: 12                                      │
+   │  │   success: true                                         │
+   │  │                                                         │
+   │  ├─ [info] Agent answer: agent1.1                         │
+   │  │   agent_id: agent_a, iteration: 1, round: 1            │
+   │  │                                                         │
+   │  ├─ llm.call [gpt-4] (3.5s)                               │
+   │  │   input_tokens: 2,456                                   │
+   │  │   output_tokens: 823                                    │
+   │  │                                                         │
+   │  ├─ [info] Agent answer: agent2.1                         │
+   │  │   agent_id: agent_b, iteration: 1, round: 1            │
+   │  │                                                         │
+   │  ├─ [info] Agent vote: agent_a -> agent2.1                │
+   │  │   reason: "More comprehensive solution"                │
+   │  │                                                         │
+   │  ├─ [info] Agent vote: agent_b -> agent2.1                │
+   │  │                                                         │
+   │  └─ [info] Winner selected: agent2.1                      │
+   │      vote_counts: {agent2.1: 2}                           │
+   └────────────────────────────────────────────────────────────┘
+
+**What Gets Logged (Meaningful Events Only):**
+
+To reduce noise, MassGen only logs meaningful coordination events:
+
+1. **Session span** (``coordination.session``) - Top-level span for the entire coordination
+2. **LLM API calls** - Automatic instrumentation of OpenAI, Anthropic, and Gemini calls
+3. **Tool executions** - MCP tool calls with input/output sizes and timing
+4. **Agent answers** - When an agent provides a new answer (with label like ``agent1.1``)
+5. **Agent votes** - When an agent casts a vote (with reason)
+6. **Winner selection** - When voting completes and winner is determined
+7. **Final answer** - When the winning agent presents the final response
+
+Note: Individual coordination iterations are tracked internally but not logged to Logfire to avoid cluttering the trace with less useful information.
+
+Tool Execution Attributes
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+All tool execution events include rich attributes for filtering, grouping, and debugging:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 75
+
+   * - Attribute
+     - Description
+   * - ``agent_id``
+     - The ID of the agent executing the tool (e.g., ``agent_a``, ``agent_b``)
+   * - ``tool_name``
+     - The full tool name (e.g., ``mcp__filesystem__write_file``)
+   * - ``tool_type``
+     - Tool category: ``mcp`` for MCP tools, ``custom`` for built-in tools
+   * - ``success``
+     - Boolean indicating whether the tool call succeeded
+   * - ``execution_time_ms``
+     - Execution time in milliseconds
+   * - ``input_chars``
+     - Number of characters in the tool input/arguments
+   * - ``output_chars``
+     - Number of characters in the tool output/result
+   * - ``error_message``
+     - Error message if the tool call failed (null on success)
+   * - ``server_name``
+     - MCP server name for MCP tools (e.g., ``filesystem``, ``command_line``)
+   * - ``arguments_preview``
+     - First 200 characters of tool arguments (for pattern analysis)
+   * - ``output_preview``
+     - First 200 characters of tool output (for debugging)
+   * - ``round_number``
+     - Which coordination round the tool was called in (0, 1, 2, ...)
+   * - ``round_type``
+     - Type of round: ``initial_answer``, ``voting``, ``presentation``
+
+LLM API Call Attributes
+~~~~~~~~~~~~~~~~~~~~~~~
+
+All LLM API call spans include these attributes for agent attribution:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 25 75
+
+   * - Attribute
+     - Description
+   * - ``massgen.agent_id``
+     - The ID of the agent making the call
+   * - ``llm.provider``
+     - Provider name (``anthropic``, ``openai``, ``gemini``, etc.)
+   * - ``llm.model``
+     - Model being called (``claude-3-opus``, ``gpt-4o``, etc.)
+   * - ``llm.operation``
+     - API operation type (typically ``stream``)
+   * - ``gen_ai.system``
+     - OpenTelemetry semantic convention for provider
+   * - ``gen_ai.request.model``
+     - OpenTelemetry semantic convention for model
+
+Example Logfire Queries
+~~~~~~~~~~~~~~~~~~~~~~~
+
+These attributes enable powerful filtering and analysis in the Logfire dashboard:
+
+**Find slowest tool calls:**
+
+.. code-block:: sql
+
+   SELECT
+     attributes->>'tool.name' as tool_name,
+     (attributes->>'tool.execution_time_ms')::float as execution_time_ms,
+     attributes->>'massgen.agent_id' as agent_id
+   FROM records
+   WHERE attributes->>'tool.type' = 'mcp'
+   ORDER BY (attributes->>'tool.execution_time_ms')::float DESC
+
+**Find failed tools with their arguments:**
+
+.. code-block:: sql
+
+   SELECT
+     attributes->>'tool.name' as tool_name,
+     attributes->>'tool.arguments_preview' as arguments_preview,
+     attributes->>'tool.error_message' as error_message,
+     attributes->>'massgen.agent_id' as agent_id
+   FROM records
+   WHERE attributes->>'tool.success' = 'false'
+
+**Tools with large outputs (potential cost drivers):**
+
+.. code-block:: sql
+
+   SELECT
+     attributes->>'mcp.server' as server_name,
+     attributes->>'tool.name' as tool_name,
+     (attributes->>'tool.output_chars')::int as output_chars,
+     attributes->>'massgen.agent_id' as agent_id
+   FROM records
+   WHERE (attributes->>'tool.output_chars')::int > 10000
+   ORDER BY (attributes->>'tool.output_chars')::int DESC
+
+**Pattern analysis - which arguments lead to failures:**
+
+.. code-block:: sql
+
+   SELECT
+     attributes->>'tool.arguments_preview' as arguments_preview,
+     COUNT(*) as fail_count
+   FROM records
+   WHERE attributes->>'tool.success' = 'false'
+   GROUP BY attributes->>'tool.arguments_preview'
+   ORDER BY fail_count DESC
+
+**Tool usage by MCP server:**
+
+.. code-block:: sql
+
+   SELECT
+     attributes->>'mcp.server' as server_name,
+     COUNT(*) as calls,
+     AVG((attributes->>'tool.execution_time_ms')::float) as avg_time_ms
+   FROM records
+   WHERE attributes->>'tool.type' = 'mcp'
+   GROUP BY attributes->>'mcp.server'
+
+**LLM calls by agent:**
+
+.. code-block:: sql
+
+   SELECT
+     attributes->>'massgen.agent_id' as agent_id,
+     attributes->>'llm.model' as model,
+     COUNT(*) as calls
+   FROM records
+   WHERE span_name LIKE 'llm.%'
+   GROUP BY attributes->>'massgen.agent_id', attributes->>'llm.model'
+
+**All activity for a specific agent:**
+
+.. code-block:: sql
+
+   SELECT span_name, start_timestamp, duration
+   FROM records
+   WHERE attributes->>'massgen.agent_id' = 'agent_a'
+   ORDER BY start_timestamp
+
+Environment Variables
+~~~~~~~~~~~~~~~~~~~~~
+
+.. list-table::
+   :header-rows: 1
+   :widths: 35 65
+
+   * - Variable
+     - Description
+   * - ``MASSGEN_LOGFIRE_ENABLED``
+     - Set to ``true`` to enable Logfire (alternative to ``--logfire`` flag)
+   * - ``LOGFIRE_TOKEN``
+     - Your Logfire API token (if not using ``logfire auth login``)
+   * - ``LOGFIRE_SERVICE_NAME``
+     - Override the service name (default: ``massgen``). Read by Logfire library.
+   * - ``LOGFIRE_ENVIRONMENT``
+     - Set environment tag (e.g., ``production``, ``development``). Read by Logfire library.
+   * - ``OTEL_INSTRUMENTATION_GENAI_CAPTURE_MESSAGE_CONTENT``
+     - Set to ``true`` to capture Gemini prompts/completions (otherwise shows ``<elided>``)
+
+Programmatic Usage
+~~~~~~~~~~~~~~~~~~
+
+When using MassGen as a library, you can configure Logfire programmatically:
+
+.. code-block:: python
+
+   from massgen.structured_logging import configure_observability
+
+   # Enable observability with custom settings
+   configure_observability(
+       enabled=True,
+       service_name="my-app",
+       environment="production",
+   )
+
+   # Now run your orchestrator
+   from massgen.orchestrator import Orchestrator
+   orchestrator = Orchestrator(config)
+   result = await orchestrator.run("Your question")
+
+Graceful Degradation
+~~~~~~~~~~~~~~~~~~~~
+
+Logfire integration is designed to be non-intrusive:
+
+* **Logfire not installed?** - You'll see a helpful message: ``⚠️ Logfire not installed. Install with: pip install massgen[observability]``
+* **Not authenticated?** - You'll see: ``Logfire requires authentication. Run 'logfire auth' to authenticate``
+* **Logfire disabled?** - All logging falls back to standard loguru
+* **Network issues?** - Logfire handles connectivity gracefully
+
+This means you can always enable the ``--logfire`` flag without worrying about breaking your workflow - it will show helpful guidance if Logfire needs to be set up.
 
 See Also
 --------

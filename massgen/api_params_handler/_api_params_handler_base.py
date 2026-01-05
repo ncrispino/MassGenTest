@@ -64,6 +64,14 @@ class APIParamsHandlerBase(ABC):
             "enable_audio_generation",
             "enable_file_generation",
             "enable_video_generation",
+            # Generation backend/model preferences (used by generate_media tool)
+            "image_generation_backend",
+            "image_generation_model",
+            "video_generation_backend",
+            "video_generation_model",
+            "audio_generation_backend",
+            "audio_generation_model",
+            "multimodal_config",
             "enable_mcp_command_line",
             "command_line_allowed_commands",
             "command_line_blocked_commands",
@@ -91,6 +99,8 @@ class APIParamsHandlerBase(ABC):
             "session_storage_base",
             # MCP configuration (handled by base class for MCP backends)
             "mcp_servers",
+            # Coordination parameters (handled by orchestrator, not passed to API)
+            "vote_only",  # Vote-only mode flag for coordination
             # NLIP configuration belongs to MassGen routing, never provider APIs
             "enable_nlip",
             "nlip",
@@ -101,6 +111,9 @@ class APIParamsHandlerBase(ABC):
             "enable_rate_limit",
             "concurrent_tool_execution",  # Local execution control (not sent to API)
             "max_concurrent_tools",  # Local execution control (not sent to API)
+            # Multimodal tools (handled by base_with_custom_tool_and_mcp.py)
+            "enable_multimodal_tools",
+            "multimodal_config",
         }
 
     def build_base_api_params(

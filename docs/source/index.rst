@@ -157,17 +157,17 @@ Key Features
 Recent Releases
 ---------------
 
-**v0.1.27 (December 19, 2025)** - Session Sharing & Log Analysis
+**v0.1.33 (January 2, 2026)** - Reactive Context Compression & MCP Protections
 
-Session sharing via GitHub Gist with ``massgen export`` command. New ``massgen logs`` CLI for viewing, filtering, and exporting run logs. Per-LLM call timing metrics across all backends. Gemini 3 Flash model support. CLI config builder with per-agent web search and system messages. Web UI context paths wizard.
+Automatic conversation compression when context length errors occur with streaming buffer system for recovery. MCP tool protections: ``write_file`` refuses to overwrite existing files, ``create_task_plan`` blocks duplicate plans. Model fixes for Grok MCP tools visibility, Gemini vote-only mode, and GPT-5 coordination.
 
-**v0.1.26 (December 17, 2025)** - Docker Diagnostics & Web UI Setup
+**v0.1.32 (December 31, 2025)** - Multi-Turn Export & Logfire Optional
 
-Docker diagnostics module with platform-specific error detection and resolution. Web UI setup wizard for guided first-run experience with API key management. Shadow agent response depth for test-time compute scaling. Model registry updates with GPT-5.1-Codex family and Claude alias notation.
+Enhanced session export with multi-turn support, turn range selection (``--turns``), and workspace options. Logfire moved to optional ``[observability]`` dependency. Per-attempt logging with separate log files. Office document PDF conversion for sharing previews.
 
-**v0.1.25 (December 15, 2025)** - UI-TARS & Evolving Skills
+**v0.1.31 (December 29, 2025)** - Logfire Observability & Azure Tool Streaming
 
-UI-TARS backend for GUI automation with visual understanding. GPT-5.2 model support via OpenRouter. Evolving skill creator system for reusable workflows. Textual terminal display with adaptive dark/light themes.
+Comprehensive logging and tracing via `Logfire <https://logfire.pydantic.dev/>`_ with automatic LLM instrumentation for OpenAI, Claude, and Gemini backends. Enable via ``--logfire`` CLI flag or ``MASSGEN_LOGFIRE_ENABLED=true``. Azure OpenAI tool calls now accumulated and yielded as structured chunks.
 
 :doc:`Full changelog → <changelog>`
 

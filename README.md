@@ -69,7 +69,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🆕 Latest Features</h3></summary>
 
-- [v0.1.27 Features](#-latest-features-v0127)
+- [v0.1.33 Features](#-latest-features-v0133)
 </details>
 
 <details open>
@@ -122,16 +122,15 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🗺️ Roadmap</h3></summary>
 
-- Recent Achievements
-  - [v0.1.27](#recent-achievements-v0127)
-  - [v0.0.3 - v0.1.26](#previous-achievements-v003---v0126)
+- [Recent Achievements (v0.1.33)](#recent-achievements-v0133)
+- [Previous Achievements (v0.0.3 - v0.1.32)](#previous-achievements-v003---v0132)
 - [Key Future Enhancements](#key-future-enhancements)
   - Bug Fixes & Backend Improvements
   - Advanced Agent Collaboration
   - Expanded Model, Tool & Agent Integrations
   - Improved Performance & Scalability
   - Enhanced Developer Experience
-- [v0.1.28 Roadmap](#v0128-roadmap)
+- [v0.1.34 Roadmap](#v0134-roadmap)
 </details>
 
 <details open>
@@ -156,42 +155,32 @@ This project started with the "threads of thought" and "iterative refinement" id
 
 ---
 
-## 🆕 Latest Features (v0.1.27)
+## 🆕 Latest Features (v0.1.33)
 
-**🎉 Released: December 19, 2025**
+**🎉 Released: January 2, 2026**
 
-**What's New in v0.1.27:**
-- **📤 Session Sharing** - Share sessions via GitHub Gist with `massgen export` (MAS-16)
-- **📊 Log Analysis CLI** - New `massgen logs` command for viewing, filtering, and exporting run logs
-- **⏱️ Per-LLM Call Timing** - Detailed timing metrics for each LLM API call
-- **🌐 Gemini 3 Flash** - Google's Gemini 3 Flash model now available
-- **⚙️ Config Builder Improvements** - Per-agent web search, system messages, and coordination settings
-- **🖥️ Web UI Improvements** - Context paths wizard and "Open in Browser" button
+**What's New in v0.1.33:**
+- **🔄 Reactive Context Compression** - Automatic conversation compression when context length errors occur, seamlessly recovering from token limit issues
+- **📦 Streaming Buffer System** - Tracks partial agent responses during streaming, enabling compression recovery
+- **🛡️ MCP Tool Protections** - `write_file` refuses to overwrite existing files; `create_task_plan` prevents duplicate task plans after recovery
+- **🔧 Model Behavior Fixes** - Grok MCP tools visibility, Gemini vote-only mode, GPT-5 coordination improvements
 
-**Bug Fixes:**
-- Fixed Claude Code tool permissions handling
-- Fixed orchestrator error recovery with proper timeout handling
-- Fixed web search workflow restart issues
-
-**Try v0.1.27 Features:**
+**Try v0.1.33 Features:**
 ```bash
 # Install or upgrade
-uv pip install --upgrade massgen
+pip install --upgrade massgen
 
 # Or with uv (faster)
 uv pip install massgen
 
-# Try Gemini 3 Flash
-uv run massgen --config massgen/configs/providers/gemini/gemini_3_flash.yaml \
-  "Create a simple Python script that demonstrates async programming"
+# Test reactive context compression (automatically handles long conversations)
+uv run massgen --debug --save-llm-calls \
+  --config massgen/configs/tools/filesystem/test_reactive_compression.yaml \
+  "Read all Python files in massgen/backend/ and summarize what each one does"
 
-# Analyze your run logs
-massgen logs list                         # List all runs
-massgen logs view <log_id>                # View detailed run info
-
-# Share a session via GitHub Gist (requires gh CLI)
-massgen export                            # Share most recent session
-massgen shares list                       # List your shared sessions
+# Compression activates automatically when context limits are reached
+# Agent progress is preserved through the streaming buffer system
+# Debug logs saved to .massgen/massgen_logs/<session>/compression_debug/
 ```
 
 → [See full release history and examples](massgen/configs/README.md#release-history--examples)
@@ -415,7 +404,9 @@ MassGen automatically loads API keys from `.env` in your current directory.
 The system currently supports multiple model providers with advanced capabilities:
 
 **API-based Models:**
-- **OpenAI**: GPT-5.1-Codex series (gpt-5.1-codex-max, gpt-5.1-codex, gpt-5.1-codex-mini), GPT-5.2, GPT-5.1, GPT-5 series (GPT-5, GPT-5-mini, GPT-5-nano), GPT-4.1 series, GPT-4o, o4-mini with reasoning, web search, code interpreter, and computer-use support
+- **OpenAI**: GPT-5.2 (recommended default), GPT-5.1, GPT-5 series (GPT-5, GPT-5-mini, GPT-5-nano), GPT-5.1-Codex series, GPT-4.1 series, GPT-4o, o4-mini with reasoning, web search, code interpreter, and computer-use support
+  - **Note**: We recommend GPT-5.2/5.1/5 over Codex models. Codex models are [optimized for shorter system messages](https://cookbook.openai.com/examples/gpt-5-codex_prompting_guide) and may not work well with MassGen's coordination prompts.
+  - **Reasoning**: GPT-5.1 and GPT-5.2 default to `reasoning: none`. MassGen automatically sets `reasoning.effort: medium` when no reasoning config is provided, matching GPT-5's default behavior.
 - **Azure OpenAI**: Any Azure-deployed models (GPT-4, GPT-4o, GPT-35-turbo, etc.)
 - **Claude / Anthropic**: Claude Opus 4.5, Claude Haiku 4.5, Claude Sonnet 4.5, Claude Opus 4.1, Claude Sonnet 4
   - Advanced tooling: web search, code execution, Files API, programmatic tool calling, tool search with deferred loading
@@ -1130,27 +1121,42 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 ⚠️ **Early Stage Notice:** As MassGen is in active development, please expect upcoming breaking architecture changes as we continue to refine and improve the system.
 
-### Recent Achievements (v0.1.27)
+### Recent Achievements (v0.1.33)
 
-**🎉 Released: December 19, 2025**
+**🎉 Released: January 2, 2026**
 
-#### Session Sharing & Log Analysis
-- **Session Sharing via GitHub Gist**: Share sessions with `massgen export`, manage with `massgen shares list/delete` (MAS-16)
-- **Log Analysis CLI**: New `massgen logs` command for viewing, filtering, and exporting run logs to JSON/CSV
-- **Per-LLM Call Timing**: Detailed timing metrics for individual LLM API calls across all backends
+#### Reactive Context Compression
+- **Automatic Recovery**: Conversation automatically compressed when context length errors occur
+- **Seamless Continuation**: Agents resume work after compression without losing progress
+- **Streaming Buffer Integration**: Partial responses preserved through streaming buffer system
 
-#### New Features
-- **Gemini 3 Flash Model**: Google's Gemini 3 Flash model added to provider registry
-- **CLI Config Builder**: Per-agent web search toggle, system messages, coordination settings
-- **Web UI Context Paths Wizard**: New `ContextPathsStep` component for workspace configuration
-- **Web UI "Open in Browser"**: Quick-access button for opening results in browser
+#### Streaming Buffer System
+- **Response Tracking**: Tracks partial agent responses during streaming for compression recovery
+- **Backend Integration**: Works across all supported backends
 
-#### Bug Fixes
-- Fixed Claude Code tool permissions handling
-- Fixed orchestrator error recovery with proper timeout handling
-- Fixed web search workflow restart issues
+#### MCP Tool Protections
+- **File Overwrite Protection**: `write_file` tool refuses to overwrite existing files, preventing accidental data loss
+- **Task Plan Duplicate Prevention**: `create_task_plan` blocks duplicate plan creation after compression recovery
 
-### Previous Achievements (v0.0.3 - v0.1.26)
+#### Model Behavior Fixes
+- **Grok MCP Tools**: Fixed MCP tool visibility for Grok backend by adjusting tool handling in chat completions
+- **Gemini Vote-Only Mode**: Fixed `vote_only` parameter handling in Gemini backend streaming
+- **GPT-5 Model Behavior**: System prompt adjustments and default reasoning set for newer models
+- **Circuit Breaker**: Improved debugging output with shorter ultimate timeout for faster failure detection
+
+### Previous Achievements (v0.0.3 - v0.1.32)
+
+✅ **Multi-Turn Session Export & Per-Attempt Logging (v0.1.32)**: Turn range selection for session export (`--turns`), workspace export controls (`--no-workspace`, `--workspace-limit`), Logfire moved to optional `[observability]` extra, per-attempt isolated log files with handler reconfiguration, automatic DOCX/PPTX/XLSX to PDF conversion for session sharing
+
+✅ **Logfire Observability & Azure Tool Streaming (v0.1.31)**: Optional Logfire integration with automatic LLM instrumentation for OpenAI, Claude, and Gemini backends, Azure OpenAI tool calls yielded as structured chunks, `--logfire` CLI flag and `MASSGEN_LOGFIRE_ENABLED` environment variable
+
+✅ **OpenRouter Web Search & Persona Diversity (v0.1.30)**: Native web search via OpenRouter plugins with `enable_web_search`, persona diversity modes (`perspective`/`implementation`) with phase-based adaptation, Azure multi-endpoint auto-detection, environment variable expansion with `${VAR}` syntax
+
+✅ **Subagent System & Tool Metrics (v0.1.29)**: Spawn parallel child MassGen processes with isolated workspaces and automatic result aggregation, enhanced tool metrics with per-call averages and min/max/median distribution, CLI per-agent system messages via `massgen --quickstart`
+
+✅ **Unified Multimodal Tools & Artifact Previews (v0.1.28)**: Consolidated `read_media` tool for image/audio/video analysis, unified `generate_media` tool for media creation (images, videos, audio), Web UI artifact previewer for PDFs/DOCX/PPTX/images/HTML/SVG/Markdown/Mermaid, OpenRouter tool-capable model filtering, Azure OpenAI fixes
+
+✅ **Session Sharing & Log Analysis (v0.1.27)**: Session sharing via GitHub Gist with `massgen export`, log analysis CLI with `massgen logs` command, per-LLM call timing metrics, Gemini 3 Flash model support, enhanced CLI config builder with per-agent web search and system messages
 
 ✅ **Web UI Setup & Shadow Agent Depth (v0.1.26)**: Docker diagnostics module, Web UI setup wizard with guided first-run experience, shadow agent response depth for test-time compute scaling, GPT-5.1-Codex family models
 
@@ -1348,19 +1354,17 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 We welcome community contributions to achieve these goals.
 
-### v0.1.28 Roadmap
+### v0.1.34 Roadmap
 
-Version 0.1.28 focuses on system reminders and memory as callable tools:
+Version 0.1.34 focuses on exposing MassGen as an OpenAI-compatible chat server:
 
 #### Planned Features
-- **Add system reminders** (@ncrispino): Framework for injecting system reminders mid-run during LLM streaming
-- **Memory as Tools** (@ncrispino): Include memory (including filesystem) as callable tools for agents
+- **OpenAI-Compatible Chat Server** (@ncrispino): Run MassGen as an OpenAI-compatible API server for integration with external tools like Cursor and Continue
 
 Key technical approach:
-- **System Reminders**: Mid-run injection during LLM streaming, support for context awareness, human feedback, safety, and memory reminders
-- **Memory as Tools**: Unified memory tool interface with store/retrieve/search operations, filesystem and vector store backends
+- **OpenAI-Compatible Server**: Implement `/v1/chat/completions` endpoint with streaming and tool calling support
 
-For detailed milestones and technical specifications, see the [full v0.1.28 roadmap](ROADMAP_v0.1.28.md).
+For detailed milestones and technical specifications, see the [full v0.1.34 roadmap](ROADMAP_v0.1.34.md).
 
 ---
 

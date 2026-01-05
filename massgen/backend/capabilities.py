@@ -131,12 +131,12 @@ BACKEND_CAPABILITIES: Dict[str, BackendCapabilities] = {
             "gpt-4o-mini",
             "o4-mini",
         ],
-        default_model="gpt-5.1-codex",
+        default_model="gpt-5.2",
         env_var="OPENAI_API_KEY",
         notes=(
-            "Codex models (gpt-5.1-codex, gpt-5-codex) are recommended for coding tasks. "
-            "Reasoning support in GPT-5 and o-series models. Audio/video generation (v0.0.30+). "
-            "Video generation via Sora-2 API (v0.0.31)."
+            "GPT-5.2 is the recommended default. Codex models (gpt-5.1-codex, gpt-5-codex) are optimized "
+            "for shorter system messages and may not work well with MassGen's coordination prompts. "
+            "Reasoning support in GPT-5 and o-series models. Audio/video generation (v0.0.30+)."
         ),
         model_release_dates={
             "gpt-5.2": "2025-12",
@@ -261,6 +261,8 @@ BACKEND_CAPABILITIES: Dict[str, BackendCapabilities] = {
             "code_execution",
             "mcp",
             "image_understanding",
+            "image_generation",
+            "video_generation",
         },
         builtin_tools=["google_search_retrieval", "code_execution"],
         filesystem_support="mcp",
@@ -272,7 +274,7 @@ BACKEND_CAPABILITIES: Dict[str, BackendCapabilities] = {
         ],
         default_model="gemini-3-flash-preview",
         env_var="GEMINI_API_KEY",
-        notes="Google Search Retrieval provides web search. Image understanding capabilities.",
+        notes="Google Search Retrieval provides web search. Image understanding. Image generation via Imagen 3. Video generation via Veo 2.",
         model_release_dates={
             "gemini-3-flash-preview": "2025-12",
             "gemini-3-pro-preview": "2025-11",
@@ -286,6 +288,7 @@ BACKEND_CAPABILITIES: Dict[str, BackendCapabilities] = {
         supported_capabilities={
             "web_search",
             "mcp",
+            "image_understanding",
         },
         builtin_tools=["web_search"],
         filesystem_support="mcp",
@@ -300,7 +303,7 @@ BACKEND_CAPABILITIES: Dict[str, BackendCapabilities] = {
         ],
         default_model="grok-4-1-fast-reasoning",
         env_var="XAI_API_KEY",
-        notes="Web search includes real-time data access.",
+        notes="Web search includes real-time data access. Image understanding capabilities.",
         model_release_dates={
             "grok-4-1-fast-reasoning": "2025-11",
             "grok-4-1-fast-non-reasoning": "2025-11",
@@ -494,16 +497,18 @@ BACKEND_CAPABILITIES: Dict[str, BackendCapabilities] = {
         backend_type="openrouter",
         provider_name="OpenRouter",
         supported_capabilities={
+            "web_search",  # Via plugins array (enable_web_search: true)
             "mcp",
             "audio_understanding",
             "video_understanding",
+            "image_generation",
         },
-        builtin_tools=[],
+        builtin_tools=[],  # OpenRouter is a routing service, tools depend on underlying models
         filesystem_support="mcp",
-        models=["custom"],  # OpenRouter supports 300+ models
+        models=["custom"],  # User-specified OpenRouter model ID
         default_model="custom",
         env_var="OPENROUTER_API_KEY",
-        notes="OpenAI-compatible API. Unified access to 300+ AI models.",
+        notes="OpenAI-compatible API. Unified access to 300+ AI models. Web search via plugins array. Tool support depends on underlying model capabilities.",
         base_url="https://openrouter.ai/api/v1",
     ),
     "moonshot": BackendCapabilities(

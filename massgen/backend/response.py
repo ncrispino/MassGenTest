@@ -26,6 +26,7 @@ from ..api_params_handler import (
 from ..formatter import ResponseFormatter
 from ..logger_config import log_backend_agent_message, log_stream_chunk, logger
 from ..stream_chunk import ChunkType, TextStreamChunk
+from ._streaming_buffer_mixin import StreamingBufferMixin
 from .base import FilesystemSupport, StreamChunk
 from .base_with_custom_tool_and_mcp import (
     CustomToolAndMCPBackend,
@@ -35,7 +36,7 @@ from .base_with_custom_tool_and_mcp import (
 )
 
 
-class ResponseBackend(CustomToolAndMCPBackend):
+class ResponseBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
     """Backend using the standard Response API format with multimodal support."""
 
     def __init__(self, api_key: Optional[str] = None, **kwargs):
@@ -58,6 +59,8 @@ class ResponseBackend(CustomToolAndMCPBackend):
         self._vector_store_ids: List[str] = []
         self._uploaded_file_ids: List[str] = []
 
+        # Note: _streaming_buffer is provided by StreamingBufferMixin
+
     def supports_upload_files(self) -> bool:
         return True
 
@@ -71,11 +74,16 @@ class ResponseBackend(CustomToolAndMCPBackend):
 
         Wraps parent implementation to ensure File Search cleanup happens after streaming completes.
         """
+        # Clear streaming buffer at start of new stream (mixin respects _compression_retry)
+        self._clear_streaming_buffer(**kwargs)
+        agent_id = kwargs.get("agent_id", self.agent_id)
 
         try:
             async for chunk in super().stream_with_tools(messages, tools, **kwargs):
                 yield chunk
         finally:
+            # Save streaming buffer before cleanup
+            self._finalize_streaming_buffer(agent_id=agent_id)
             # Cleanup File Search resources after stream completes
             await self._cleanup_file_search_if_needed(**kwargs)
 
@@ -113,7 +121,9 @@ class ResponseBackend(CustomToolAndMCPBackend):
         **kwargs,
     ) -> AsyncGenerator[StreamChunk, None]:
         agent_id = kwargs.get("agent_id")
-        all_params = {**self.config, **kwargs}
+        # Filter out internal flags that shouldn't be passed to API
+        filtered_kwargs = {k: v for k, v in kwargs.items() if not k.startswith("_compression")}
+        all_params = {**self.config, **filtered_kwargs}
 
         processed_messages = await self._process_upload_files(messages, all_params)
 
@@ -147,7 +157,82 @@ class ResponseBackend(CustomToolAndMCPBackend):
                 non_mcp_tools.append(tool)
             api_params["tools"] = non_mcp_tools
 
-        stream = await client.responses.create(**api_params)
+        # Check for compression retry flag to prevent infinite loops
+        _compression_retry = kwargs.get("_compression_retry", False)
+
+        try:
+            stream = await client.responses.create(**api_params)
+        except Exception as e:
+            # Debug: Catch input[N].content format errors and print the problematic message
+            error_str = str(e)
+            if "input[" in error_str and "].content" in error_str:
+                import re
+
+                match = re.search(r"input\[(\d+)\]\.content", error_str)
+                if match:
+                    idx = int(match.group(1))
+                    input_messages = api_params.get("input", [])
+                    if idx < len(input_messages):
+                        problematic_msg = input_messages[idx]
+                        logger.error(f"[Response API] Message format error at input[{idx}]:")
+                        logger.error(f"[Response API] Full message:\n{json.dumps(problematic_msg, indent=2, default=str)}")
+                    else:
+                        logger.error(f"[Response API] Error at input[{idx}] but only {len(input_messages)} messages in input")
+
+            # Check if this is a context length error and we haven't already retried
+            from ._context_errors import is_context_length_error
+
+            if is_context_length_error(e) and not _compression_retry:
+                logger.warning(
+                    f"[{self.get_provider_name()}] Context length exceeded, " f"attempting compression recovery...",
+                )
+
+                # Notify user that compression is starting
+                yield StreamChunk(
+                    type="compression_status",
+                    status="compressing",
+                    content=f"\n📦 [Compression] Context limit exceeded - summarizing {len(processed_messages)} messages...",
+                    source=agent_id,
+                )
+
+                # Compress messages and retry
+                # Include accumulated buffer content if available (may have content from prior calls)
+                buffer_for_compression = self._get_streaming_buffer()
+                compressed_messages = await self._compress_messages_for_context_recovery(
+                    processed_messages,
+                    buffer_content=buffer_for_compression,
+                )
+
+                # CRITICAL: Remove previous_response_id - it would add all prior context server-side,
+                # making our compression pointless (Response API maintains conversation state)
+                had_prev_id = "previous_response_id" in all_params
+                compression_params = {k: v for k, v in all_params.items() if k != "previous_response_id"}
+                logger.warning(f"[Compression DEBUG _stream_api] Removed previous_response_id from all_params: was_present={had_prev_id}")
+
+                # Rebuild API params with compressed messages
+                api_params = await self.api_params_handler.build_api_params(
+                    compressed_messages,
+                    tools,
+                    compression_params,
+                )
+                logger.warning(f"[Compression DEBUG _stream_api] Final api_params has previous_response_id: {'previous_response_id' in api_params}")
+
+                # Retry with compressed messages
+                stream = await client.responses.create(**api_params)
+
+                # Notify user that compression succeeded
+                yield StreamChunk(
+                    type="compression_status",
+                    status="compression_complete",
+                    content=f"✅ [Compression] Recovered with {len(compressed_messages)} messages - continuing...",
+                    source=agent_id,
+                )
+
+                logger.info(
+                    f"[{self.get_provider_name()}] Compression recovery successful, " f"continuing with {len(compressed_messages)} messages",
+                )
+            else:
+                raise
 
         async for chunk in self._process_stream(stream, all_params, agent_id):
             yield chunk
@@ -173,14 +258,26 @@ class ResponseBackend(CustomToolAndMCPBackend):
             The function_call is already present from response.output to maintain
             reasoning item continuity.
         """
+        # Extract text from result - handle MCP CallToolResult objects properly
+        if hasattr(result, "content") and not isinstance(result, (dict, str)):
+            # MCP CallToolResult - extract text from content list
+            extracted = self._extract_text_from_content(result.content)
+            result_text = extracted if extracted is not None else str(result)
+        else:
+            result_text = getattr(result, "text", None) or str(result)
+
         # Only add function output message
         # function_call is already included from response.output (with reasoning items)
         function_output_msg = {
             "type": "function_call_output",
             "call_id": call.get("call_id", ""),
-            "output": str(result),
+            "output": result_text,
         }
         updated_messages.append(function_output_msg)
+
+        # Track tool result in streaming buffer for compression recovery
+        tool_name = call.get("name", "unknown")
+        self._append_tool_to_buffer(tool_name, result_text)
 
     def _append_tool_error_message(
         self,
@@ -211,6 +308,10 @@ class ResponseBackend(CustomToolAndMCPBackend):
             "output": error_msg,
         }
         updated_messages.append(error_output_msg)
+
+        # Track tool error in streaming buffer for compression recovery
+        tool_name = call.get("name", "unknown")
+        self._append_tool_to_buffer(tool_name, error_msg, is_error=True)
 
     async def _execute_custom_tool(self, call: Dict[str, Any]) -> AsyncGenerator[CustomToolChunk, None]:
         """Execute custom tool with streaming support - async generator for base class.
@@ -245,7 +346,9 @@ class ResponseBackend(CustomToolAndMCPBackend):
         agent_id = kwargs.get("agent_id")
 
         # Build API params for this iteration
-        all_params = {**self.config, **kwargs}
+        # Filter out internal flags that shouldn't be passed to API
+        filtered_kwargs = {k: v for k, v in kwargs.items() if not k.startswith("_compression")}
+        all_params = {**self.config, **filtered_kwargs}
 
         if all_params.get("_has_file_search_files"):
             logger.info("Processing File Search uploads...")
@@ -267,12 +370,93 @@ class ResponseBackend(CustomToolAndMCPBackend):
         model = api_params.get("model", "unknown")
         self.start_api_call_timing(model)
 
-        # Start streaming
+        # Check for compression retry flag to prevent infinite loops
+        _compression_retry = kwargs.get("_compression_retry", False)
+
+        # Debug: ALWAYS log before API call
+        prev_id = api_params.get("previous_response_id")
+        input_count = len(api_params.get("input", []))
+        logger.warning(f"[Response API DEBUG] About to call API: _compression_retry={_compression_retry}, previous_response_id={prev_id}, input_count={input_count}")
+
+        # Start streaming with context error handling
         try:
             stream = await client.responses.create(**api_params)
         except Exception as e:
-            self.end_api_call_timing(success=False, error=str(e))
-            raise
+            # Debug: Catch input[N].content format errors and print the problematic message
+            error_str = str(e)
+            if "input[" in error_str and "].content" in error_str:
+                import re
+
+                match = re.search(r"input\[(\d+)\]\.content", error_str)
+                if match:
+                    idx = int(match.group(1))
+                    input_messages = api_params.get("input", [])
+                    if idx < len(input_messages):
+                        problematic_msg = input_messages[idx]
+                        logger.error(f"[Response API] Message format error at input[{idx}]:")
+                        logger.error(f"[Response API] Full message:\n{json.dumps(problematic_msg, indent=2, default=str)}")
+                    else:
+                        logger.error(f"[Response API] Error at input[{idx}] but only {len(input_messages)} messages in input")
+
+            # Check if this is a context length error and we haven't already retried
+            from ._context_errors import is_context_length_error
+
+            if is_context_length_error(e) and not _compression_retry:
+                logger.warning(
+                    f"[{self.get_provider_name()}] Context length exceeded in MCP mode, " f"attempting compression recovery...",
+                )
+                self.end_api_call_timing(success=False, error=str(e))
+
+                # Notify user that compression is starting
+                yield StreamChunk(
+                    type="compression_status",
+                    status="compressing",
+                    content=f"\n📦 [Compression] Context limit exceeded - summarizing {len(current_messages)} messages...",
+                    source=agent_id,
+                )
+
+                # Compress messages and retry
+                # Include accumulated buffer content if available (not first API call)
+                buffer_for_compression = self._get_streaming_buffer()
+                compressed_messages = await self._compress_messages_for_context_recovery(
+                    current_messages,
+                    buffer_content=buffer_for_compression,
+                )
+
+                # CRITICAL: Remove previous_response_id - it would add all prior context server-side,
+                # making our compression pointless (Response API maintains conversation state)
+                had_prev_id = "previous_response_id" in all_params
+                compression_params = {k: v for k, v in all_params.items() if k != "previous_response_id"}
+                logger.warning(f"[Compression DEBUG] Removed previous_response_id from all_params: was_present={had_prev_id}")
+
+                # Rebuild API params with compressed messages
+                api_params = await self.api_params_handler.build_api_params(
+                    compressed_messages,
+                    tools,
+                    compression_params,
+                )
+                logger.warning(f"[Compression DEBUG] Final api_params has previous_response_id: {'previous_response_id' in api_params}")
+
+                # Retry with compressed messages
+                stream = await client.responses.create(**api_params)
+
+                # Update current_messages for subsequent recursions
+                current_messages = compressed_messages
+
+                # Notify user that compression succeeded
+                yield StreamChunk(
+                    type="compression_status",
+                    status="compression_complete",
+                    content=f"✅ [Compression] Recovered with {len(compressed_messages)} messages - continuing...",
+                    source=agent_id,
+                )
+
+                logger.info(
+                    f"[{self.get_provider_name()}] Compression recovery successful, " f"continuing with {len(compressed_messages)} messages",
+                )
+            else:
+                self.end_api_call_timing(success=False, error=str(e))
+                raise
 
         # Track function calls in this iteration
         captured_function_calls = []
@@ -306,6 +490,9 @@ class ResponseBackend(CustomToolAndMCPBackend):
                 elif chunk.type == "response.output_text.delta":
                     self.record_first_token()  # Record TTFT on first content
                     delta = getattr(chunk, "delta", "")
+                    # Track content in streaming buffer for compression recovery
+                    self._append_to_streaming_buffer(delta)
+                    # Record content chunk for LLM call logging
                     yield TextStreamChunk(
                         type=ChunkType.CONTENT,
                         content=delta,
@@ -318,7 +505,7 @@ class ResponseBackend(CustomToolAndMCPBackend):
                     yield result
 
                 # Response completed
-                if chunk.type == "response.completed":
+                if chunk.type in ["response.completed", "response.incomplete"]:
                     response_completed = True
                     # Note: Usage tracking is handled in _process_stream_chunk() above
                     # Capture response ID and ALL output items for reasoning continuity
@@ -384,6 +571,7 @@ class ResponseBackend(CustomToolAndMCPBackend):
                 # Emit tool_calls chunk for orchestrator to process
                 if workflow_tool_calls:
                     log_stream_chunk("backend.response", "tool_calls", workflow_tool_calls, kwargs.get("agent_id"))
+                    self._append_tool_call_to_buffer(workflow_tool_calls)
                     yield TextStreamChunk(
                         type=ChunkType.TOOL_CALLS,
                         tool_calls=workflow_tool_calls,
@@ -402,9 +590,19 @@ class ResponseBackend(CustomToolAndMCPBackend):
             # This is required for reasoning models like GPT-5, o3, o4-mini
             # Without reasoning items, subsequent API calls will fail with:
             # "Item 'msg_...' of type 'message' was provided without its required 'reasoning' item"
-            if response_output_items:
-                updated_messages.extend(response_output_items)
-                logger.debug(f"Added {len(response_output_items)} response output items to messages for reasoning continuity")
+            #
+            # IMPORTANT: Only add items manually if we DON'T have a response_id
+            # When previous_response_id is passed to the API, it automatically includes
+            # all items from that response, so manually adding them causes duplicates
+            if response_output_items and not response_id:
+                # Deduplicate by 'id' field to avoid "Duplicate item found with id" errors
+                existing_ids = {msg.get("id") for msg in updated_messages if msg.get("id")}
+                unique_items = [item for item in response_output_items if item.get("id") not in existing_ids]
+
+                updated_messages.extend(unique_items)
+                logger.debug(f"Added {len(unique_items)} response output items to messages for reasoning continuity (filtered {len(response_output_items) - len(unique_items)} duplicates)")
+            elif response_id:
+                logger.debug(f"Skipping manual item addition - using previous_response_id={response_id} for automatic continuity")
 
             # Configuration for custom tool execution
             CUSTOM_TOOL_CONFIG = ToolExecutionConfig(
@@ -587,8 +785,11 @@ class ResponseBackend(CustomToolAndMCPBackend):
                 updated_messages = super()._trim_message_history(updated_messages)
 
                 # Pass response_id for reasoning continuity in recursive call
+                # BUT NOT if we're in compression retry mode - we need to stay stateless
+                # to avoid re-accumulating context that would exceed the window again
                 recursive_kwargs = kwargs.copy()
-                if response_id:
+                _compression_retry = kwargs.get("_compression_retry", False)
+                if response_id and not _compression_retry:
                     recursive_kwargs["previous_response_id"] = response_id
 
                 # Recursive call with updated messages
@@ -601,7 +802,6 @@ class ResponseBackend(CustomToolAndMCPBackend):
 
         elif response_completed:
             # Response completed with no function calls - we're done (base case)
-
             yield TextStreamChunk(
                 type=ChunkType.MCP_STATUS,
                 status="mcp_session_complete",
@@ -878,6 +1078,8 @@ class ResponseBackend(CustomToolAndMCPBackend):
                 backend_name=self.get_provider_name(),
             )
             log_stream_chunk("backend.response", "content", chunk.delta, agent_id)
+            # Track content in streaming buffer for compression recovery
+            self._append_to_streaming_buffer(chunk.delta)
             return TextStreamChunk(
                 type=ChunkType.CONTENT,
                 content=chunk.delta,
@@ -886,6 +1088,7 @@ class ResponseBackend(CustomToolAndMCPBackend):
 
         elif chunk_type == "response.reasoning_text.delta" and hasattr(chunk, "delta"):
             log_stream_chunk("backend.response", "reasoning", chunk.delta, agent_id)
+            self._append_reasoning_to_buffer(chunk.delta)
             return TextStreamChunk(
                 type=ChunkType.REASONING,
                 content=f"🧠 [Reasoning] {chunk.delta}",
@@ -909,6 +1112,8 @@ class ResponseBackend(CustomToolAndMCPBackend):
 
         elif chunk_type == "response.reasoning_summary_text.delta" and hasattr(chunk, "delta"):
             log_stream_chunk("backend.response", "reasoning_summary", chunk.delta, agent_id)
+            # Buffer reasoning summary for compression recovery (same as raw reasoning)
+            self._append_reasoning_to_buffer(chunk.delta)
             return TextStreamChunk(
                 type=ChunkType.REASONING_SUMMARY,
                 content=chunk.delta,
@@ -1202,7 +1407,7 @@ class ResponseBackend(CustomToolAndMCPBackend):
                 source="response_api",
             )
 
-        elif chunk.type == "response.completed":
+        elif chunk.type in ["response.completed", "response.incomplete"]:
             # Extract usage data for token tracking
             if hasattr(chunk, "response") and hasattr(chunk.response, "usage"):
                 self._update_token_usage_from_api_response(
@@ -1280,19 +1485,74 @@ class ResponseBackend(CustomToolAndMCPBackend):
         # Return legacy StreamChunk for backward compatibility
         return StreamChunk(type="content", content="")
 
+    async def _compress_messages_for_context_recovery(
+        self,
+        messages: List[Dict[str, Any]],
+        buffer_content: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Compress messages for context error recovery.
+
+        Uses the shared compression utility to compress messages when
+        context length is exceeded.
+
+        Args:
+            messages: The messages that caused the context length error
+            buffer_content: Optional partial response content from streaming
+
+        Returns:
+            Compressed message list ready for retry
+        """
+        from ._compression_utils import compress_messages_for_recovery
+
+        logger.info(
+            f"[{self.get_provider_name()}] Compressing {len(messages)} messages " f"with target_ratio={self._compression_target_ratio}",
+        )
+
+        # Use the shared compression utility
+        result = await compress_messages_for_recovery(
+            messages=messages,
+            backend=self,
+            target_ratio=self._compression_target_ratio,
+            buffer_content=buffer_content,
+        )
+
+        logger.info(
+            f"[{self.get_provider_name()}] Compressed {len(messages)} messages " f"to {len(result)} messages",
+        )
+
+        return result
+
     def create_tool_result_message(
         self,
         tool_call: Dict[str, Any],
         result_content: str,
-    ) -> Dict[str, Any]:
-        """Create tool result message for OpenAI Responses API format."""
+    ) -> List[Dict[str, Any]]:
+        """Create tool result message for OpenAI Responses API format.
+
+        Response API requires BOTH the function_call AND function_call_output
+        to be present in the input for multi-turn conversations.
+
+        Returns:
+            List of two dicts: [function_call, function_call_output]
+        """
         tool_call_id = self.extract_tool_call_id(tool_call)
-        # Use Responses API format directly - no conversion needed
-        return {
-            "type": "function_call_output",
-            "call_id": tool_call_id,
-            "output": result_content,
-        }
+        tool_name = tool_call.get("name") or tool_call.get("function", {}).get("name", "unknown")
+        tool_arguments = tool_call.get("arguments") or tool_call.get("function", {}).get("arguments", "{}")
+
+        # Return both function_call and function_call_output
+        return [
+            {
+                "type": "function_call",
+                "call_id": tool_call_id,
+                "name": tool_name,
+                "arguments": tool_arguments,
+            },
+            {
+                "type": "function_call_output",
+                "call_id": tool_call_id,
+                "output": result_content,
+            },
+        ]
 
     def extract_tool_result_content(self, tool_result_message: Dict[str, Any]) -> str:
         """Extract content from OpenAI Responses API tool result message."""

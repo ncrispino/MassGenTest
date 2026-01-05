@@ -55,6 +55,10 @@ _CONSOLE_SUPPRESSED = False
 # Streaming debug handler ID (for full StreamChunk logging)
 _STREAMING_DEBUG_HANDLER_ID = None
 
+# File handler IDs for reconfiguration on attempt change
+_MAIN_LOG_HANDLER_ID = None
+_STREAMING_LOG_HANDLER_ID = None
+
 
 def get_log_session_dir(turn: Optional[int] = None) -> Path:
     """Get the current log session directory, including attempt subdirectory if set.
@@ -128,14 +132,62 @@ def set_log_turn(turn: int) -> None:
 def set_log_attempt(attempt: int) -> None:
     """Set the current attempt number for restart tracking.
 
-    This forces the log directory to be recreated with the new attempt subdirectory.
+    This forces the log directory to be recreated with the new attempt subdirectory,
+    and reconfigures file handlers to write to the new directory.
 
     Args:
         attempt: Attempt number (1-indexed)
     """
     global _LOG_SESSION_DIR, _CURRENT_ATTEMPT
+    global _MAIN_LOG_HANDLER_ID, _STREAMING_LOG_HANDLER_ID, _STREAMING_DEBUG_HANDLER_ID
+
     _CURRENT_ATTEMPT = attempt
     _LOG_SESSION_DIR = None  # Force recreation with new attempt subdirectory
+
+    # Get the new log directory
+    new_log_dir = get_log_session_dir()
+
+    # Reconfigure file handlers to point to new attempt directory
+    if _MAIN_LOG_HANDLER_ID is not None:
+        try:
+            logger.remove(_MAIN_LOG_HANDLER_ID)
+        except ValueError:
+            pass  # Handler already removed
+
+        console_format = "<green>{time:HH:mm:ss}</green> | <level>{level: <8}</level> | <level>{message}</level>"
+        log_file = new_log_dir / "massgen.log"
+        _MAIN_LOG_HANDLER_ID = logger.add(
+            str(log_file),
+            format=console_format,
+            level="INFO",
+            rotation="10 MB",
+            retention="3 days",
+            compression="zip",
+            enqueue=True,
+            colorize=False,
+            filter=lambda record: record["extra"].get("category") != "streaming_debug",
+        )
+        logger.info("Reconfigured main log for attempt {}: {}", attempt, log_file)
+
+    if _STREAMING_LOG_HANDLER_ID is not None:
+        try:
+            logger.remove(_STREAMING_LOG_HANDLER_ID)
+        except ValueError:
+            pass  # Handler already removed
+
+        streaming_debug_log = new_log_dir / "streaming_debug.log"
+        _STREAMING_LOG_HANDLER_ID = logger.add(
+            str(streaming_debug_log),
+            format="{time:HH:mm:ss.SSS} | {message}",
+            level="DEBUG",
+            filter=lambda record: record["extra"].get("category") == "streaming_debug",
+            rotation="50 MB",
+            retention="1 day",
+            enqueue=True,
+            colorize=False,
+        )
+        _STREAMING_DEBUG_HANDLER_ID = _STREAMING_LOG_HANDLER_ID
+        logger.info("Reconfigured streaming debug log for attempt {}: {}", attempt, streaming_debug_log)
 
 
 def set_log_base_session_dir(log_dir: str) -> None:
@@ -150,6 +202,21 @@ def set_log_base_session_dir(log_dir: str) -> None:
     global _LOG_BASE_SESSION_DIR, _LOG_SESSION_DIR
     log_base_dir = Path(".massgen") / "massgen_logs"
     _LOG_BASE_SESSION_DIR = log_base_dir / log_dir
+    _LOG_BASE_SESSION_DIR.mkdir(parents=True, exist_ok=True)
+    _LOG_SESSION_DIR = None  # Force recreation with new base
+
+
+def set_log_base_session_dir_absolute(log_dir_path: Path) -> None:
+    """Set the base log session directory to an existing absolute path.
+
+    Used by subagent orchestrator to inherit the parent's log directory
+    instead of creating a new timestamped session.
+
+    Args:
+        log_dir_path: Absolute path to existing log directory
+    """
+    global _LOG_BASE_SESSION_DIR, _LOG_SESSION_DIR
+    _LOG_BASE_SESSION_DIR = log_dir_path
     _LOG_BASE_SESSION_DIR.mkdir(parents=True, exist_ok=True)
     _LOG_SESSION_DIR = None  # Force recreation with new base
 
@@ -337,7 +404,8 @@ def setup_logging(debug: bool = False, log_file: Optional[str] = None, turn: Opt
             log_file = log_session_dir / "massgen.log"
 
         # Use the same format as console with color codes
-        logger.add(
+        global _MAIN_LOG_HANDLER_ID, _STREAMING_LOG_HANDLER_ID
+        _MAIN_LOG_HANDLER_ID = logger.add(
             str(log_file),
             format=console_format,
             level="INFO",  # Capture INFO and above in file
@@ -353,7 +421,7 @@ def setup_logging(debug: bool = False, log_file: Optional[str] = None, turn: Opt
         # Add streaming debug log for full StreamChunk repr (verbose, for debugging)
         streaming_debug_log = log_session_dir / "streaming_debug.log"
         global _STREAMING_DEBUG_HANDLER_ID
-        _STREAMING_DEBUG_HANDLER_ID = logger.add(
+        _STREAMING_LOG_HANDLER_ID = logger.add(
             str(streaming_debug_log),
             format="{time:HH:mm:ss.SSS} | {message}",
             level="DEBUG",
@@ -363,9 +431,34 @@ def setup_logging(debug: bool = False, log_file: Optional[str] = None, turn: Opt
             enqueue=True,
             colorize=False,
         )
+        _STREAMING_DEBUG_HANDLER_ID = _STREAMING_LOG_HANDLER_ID  # Keep for backwards compat
 
         logger.info("Logging enabled - logging INFO+ to file: {}", log_file)
         logger.info("Streaming debug log: {}", streaming_debug_log)
+
+
+def integrate_logfire_with_loguru():
+    """
+    Integrate Logfire with loguru so that log messages are also sent to Logfire.
+
+    This should be called after both setup_logging() and configure_observability()
+    have been called. It uses Logfire's built-in loguru instrumentation.
+    """
+    try:
+        from .structured_logging import is_observability_enabled
+
+        if not is_observability_enabled():
+            return
+
+        import logfire
+
+        # Logfire has built-in loguru integration
+        logfire.instrument_loguru()
+        logger.debug("Logfire integrated with loguru")
+    except ImportError:
+        pass  # Logfire not available
+    except Exception as e:
+        logger.debug(f"Could not integrate Logfire with loguru: {e}")
 
 
 def suppress_console_logging():
@@ -825,6 +918,7 @@ def _format_message(message: dict) -> str:
 __all__ = [
     "logger",
     "setup_logging",
+    "integrate_logfire_with_loguru",
     "suppress_console_logging",
     "restore_console_logging",
     "get_logger",
@@ -834,6 +928,7 @@ __all__ = [
     "set_log_turn",
     "set_log_attempt",
     "set_log_base_session_dir",
+    "set_log_base_session_dir_absolute",
     "save_execution_metadata",
     "log_orchestrator_activity",
     "log_agent_message",

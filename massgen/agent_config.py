@@ -16,6 +16,7 @@ from .persona_generator import PersonaGeneratorConfig
 
 if TYPE_CHECKING:
     from .message_templates import MessageTemplates
+    from .subagent.models import SubagentOrchestratorConfig
 
 
 @dataclass
@@ -67,10 +68,13 @@ class CoordinationConfig:
         task_planning_filesystem_mode: If True, task planning MCP writes tasks to tasks/ directory
                                        in agent workspace for transparency and cross-agent visibility.
         enable_memory_filesystem_mode: If True, enables filesystem-based memory system with two-tier
-                                       hierarchy (short-term and long-term). Memory MCP tools are
-                                       provided for creating/updating/loading memories. Short-term
+                                       hierarchy (short-term and long-term). Agents create memories
+                                       by writing Markdown files to memory/ directories. Short-term
                                        memories auto-inject into all agents' system prompts. Long-term
-                                       memories load on-demand. Inspired by Letta's context hierarchy.
+                                       memories are read on-demand. Inspired by Letta's context hierarchy.
+        compression_target_ratio: Target ratio for reactive compression when context limit is exceeded.
+                                 Value between 0 and 1, where 0.2 means preserve 20% of messages and
+                                 summarize the remaining 80%. Lower values = more aggressive compression.
         use_skills: If True, enables skills system using openskills. Agents can invoke skills
                    via bash commands (openskills read <skill-name>). Requires command line
                    execution to be enabled.
@@ -83,6 +87,14 @@ class CoordinationConfig:
                                      previous sessions and include them as available skills.
         persona_generator: Configuration for automatic persona generation to increase agent diversity.
                           When enabled, an LLM generates diverse system message personas for each agent.
+        enable_subagents: If True, agents receive subagent MCP tools for spawning independent
+                         agent instances with fresh context and isolated workspaces. Useful for
+                         parallel task execution and avoiding context pollution.
+        subagent_default_timeout: Default timeout in seconds for subagent execution (default 300).
+        subagent_max_concurrent: Maximum number of concurrent subagents an agent can spawn (default 3).
+        subagent_orchestrator: Configuration for subagent orchestrator mode. When enabled, subagents
+                              use a full Orchestrator with multiple agents. This enables multi-agent coordination within
+                              subagent execution.
     """
 
     enable_planning_mode: bool = False
@@ -100,11 +112,16 @@ class CoordinationConfig:
     max_broadcasts_per_agent: int = 10
     task_planning_filesystem_mode: bool = False
     enable_memory_filesystem_mode: bool = False
+    compression_target_ratio: float = 0.20  # Preserve 20% of messages on context overflow
     use_skills: bool = False
     massgen_skills: List[str] = field(default_factory=list)
     skills_directory: str = ".agent/skills"
     load_previous_session_skills: bool = False
     persona_generator: PersonaGeneratorConfig = field(default_factory=PersonaGeneratorConfig)
+    enable_subagents: bool = False
+    subagent_default_timeout: int = 300
+    subagent_max_concurrent: int = 3
+    subagent_orchestrator: Optional["SubagentOrchestratorConfig"] = None
 
     def __post_init__(self):
         """Validate configuration after initialization."""
@@ -916,7 +933,6 @@ class AgentConfig:
             coordination_config=coordination_config,
         )
         config.debug_final_answer = debug_final_answer
-        return config
 
         # Set custom_system_instruction separately to avoid deprecation warning
         if custom_system_instruction is not None:
