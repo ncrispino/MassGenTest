@@ -4249,14 +4249,26 @@ Your answer:"""
                         if hasattr(agent, "backend") and hasattr(agent.backend, "get_provider_name"):
                             backend_name = agent.backend.get_provider_name()
 
+                        # Build set of client-provided external tool names
+                        external_tool_names = {(t.get("function", {}) or {}).get("name") for t in (self._external_tools or []) if isinstance(t, dict)}
+
                         external_tool_calls = []
                         for tool_call in chunk_tool_calls:
                             tool_name = agent.backend.extract_tool_name(tool_call)
                             tool_args = agent.backend.extract_tool_arguments(tool_call)
 
-                            # Non-workflow tool calls are treated as external: surface to caller and end the turn.
-                            if tool_name and tool_name not in internal_tool_names:
+                            # Client-provided external tools: surface to caller and end the turn
+                            if tool_name and tool_name in external_tool_names:
                                 external_tool_calls.append(tool_call)
+                                continue
+
+                            # Unknown tools (not internal, not external): log warning and skip
+                            # This handles hallucinated tool names or model prefixes like "default_api:"
+                            if tool_name and tool_name not in internal_tool_names:
+                                logger.warning(
+                                    f"[Orchestrator] Agent {agent_id} called unknown tool '{tool_name}' - skipping",
+                                )
+                                yield self._trace_tuple(f"⚠️ Unknown tool: {tool_name} (skipped)", kind="coordination")
                                 continue
 
                             if tool_name == "new_answer":
