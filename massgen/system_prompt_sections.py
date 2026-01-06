@@ -1462,12 +1462,14 @@ class EvaluationSection(SystemPromptSection):
     Args:
         voting_sensitivity: Controls evaluation strictness ('lenient', 'balanced', 'strict')
         answer_novelty_requirement: Controls novelty requirements ('lenient', 'balanced', 'strict')
+        vote_only: If True, agent has reached max answers and can only vote (no new_answer)
     """
 
     def __init__(
         self,
         voting_sensitivity: str = "lenient",
         answer_novelty_requirement: str = "lenient",
+        vote_only: bool = False,
     ):
         super().__init__(
             title="MassGen Coordination",
@@ -1476,9 +1478,22 @@ class EvaluationSection(SystemPromptSection):
         )
         self.voting_sensitivity = voting_sensitivity
         self.answer_novelty_requirement = answer_novelty_requirement
+        self.vote_only = vote_only
 
     def build_content(self) -> str:
         import time
+
+        # Vote-only mode: agent has exhausted their answer limit
+        if self.vote_only:
+            return f"""You are evaluating existing solutions to determine the best answer.
+
+You have provided your maximum number of new answers. Now you MUST vote for the best existing answer.
+
+Analyze the existing answers carefully, then call the `vote` tool to select the best one.
+
+IMPORTANT: The only workflow action available to you is `vote`. You cannot submit new answers.
+
+*Note*: The CURRENT TIME is **{time.strftime("%Y-%m-%d %H:%M:%S")}**."""
 
         # Determine evaluation criteria based on voting sensitivity
         if self.voting_sensitivity == "strict":

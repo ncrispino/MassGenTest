@@ -92,6 +92,7 @@ class SystemMessageBuilder:
         enable_task_planning: bool,
         previous_turns: List[Dict[str, Any]],
         human_qa_history: Optional[List[Dict[str, str]]] = None,
+        vote_only: bool = False,
     ) -> str:
         """Build system message for coordination phase.
 
@@ -108,6 +109,7 @@ class SystemMessageBuilder:
             enable_task_planning: Whether to include task planning guidance
             previous_turns: List of previous turn data for filesystem context
             human_qa_history: List of human Q&A pairs from broadcast channel (human mode only)
+            vote_only: If True, agent has reached max answers and can only vote
 
         Returns:
             Complete system prompt string with XML structure
@@ -143,6 +145,7 @@ class SystemMessageBuilder:
             EvaluationSection(
                 voting_sensitivity=voting_sensitivity,
                 answer_novelty_requirement=answer_novelty_requirement,
+                vote_only=vote_only,
             ),
         )
 

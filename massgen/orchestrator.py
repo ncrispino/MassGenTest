@@ -3888,6 +3888,12 @@ Your answer:"""
             if hasattr(self, "broadcast_channel") and self.broadcast_channel:
                 human_qa_history = self.broadcast_channel.get_human_qa_history()
 
+            # Check if agent is in vote-only mode (reached max_new_answers_per_agent)
+            # This affects both the system message and available tools
+            vote_only_for_system_message = self._is_vote_only_mode(agent_id)
+            if vote_only_for_system_message:
+                logger.info(f"[Orchestrator] Agent {agent_id} in vote-only mode for system message (answer limit reached)")
+
             system_message = self._get_system_message_builder().build_coordination_message(
                 agent=agent,
                 agent_id=agent_id,
@@ -3898,6 +3904,7 @@ Your answer:"""
                 enable_task_planning=self.config.coordination_config.enable_agent_task_planning,
                 previous_turns=self._previous_turns,
                 human_qa_history=human_qa_history,
+                vote_only=vote_only_for_system_message,
             )
 
             # Inject phase-appropriate persona if enabled
@@ -4180,8 +4187,8 @@ Your answer:"""
                 response_text = ""
                 tool_calls = []
                 workflow_tool_found = False
-                # Determine internal tool names for this run (includes broadcast tools if enabled).
-                internal_tool_names = {(t.get("function", {}) or {}).get("name") for t in (self.workflow_tools or []) if isinstance(t, dict)}
+                # Determine internal tool names for this run (uses agent-specific tools to respect vote-only mode).
+                internal_tool_names = {(t.get("function", {}) or {}).get("name") for t in (agent_workflow_tools or []) if isinstance(t, dict)}
 
                 logger.info(f"[Orchestrator] Agent {agent_id} starting to stream chat response...")
 

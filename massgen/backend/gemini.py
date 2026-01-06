@@ -384,10 +384,6 @@ class GeminiBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
         if last_exc:
             raise last_exc
 
-    def _setup_permission_hooks(self):
-        """Override base class - Gemini uses session-based permissions, not function hooks."""
-        logger.debug("[Gemini] Using session-based permissions, skipping function hook setup")
-
     async def _process_stream(self, stream, all_params, agent_id: Optional[str] = None) -> AsyncGenerator[StreamChunk, None]:
         """
         Required by CustomToolAndMCPBackend abstract method.
