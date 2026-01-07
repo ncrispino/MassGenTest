@@ -65,10 +65,10 @@ def has_analysis_report(log_dir: Path) -> bool:
         log_dir: Path to the log session directory (e.g., log_20260105_105524_290672)
 
     Returns:
-        True if any attempt has an ANALYSIS_REPORT.md, False otherwise
+        True if any turn has an ANALYSIS_REPORT.md, False otherwise
     """
-    for attempt_dir in log_dir.glob("turn_*/attempt_*"):
-        if (attempt_dir / "ANALYSIS_REPORT.md").exists():
+    for turn_dir in log_dir.glob("turn_*"):
+        if (turn_dir / "ANALYSIS_REPORT.md").exists():
             return True
     return False
 
@@ -540,11 +540,12 @@ def open_log_directory(log_dir: Path, console: Console) -> int:
         return 1
 
 
-def generate_analysis_prompt(log_dir: Path) -> str:
+def generate_analysis_prompt(log_dir: Path, turn: Optional[int] = None) -> str:
     """Generate a minimal prompt for Claude Code to analyze a log directory.
 
     Args:
         log_dir: Path to the log session directory (e.g., log_20260105_105524_290672)
+        turn: Optional specific turn number to analyze
 
     Returns:
         A prompt string referencing the skill and log directory
@@ -552,25 +553,41 @@ def generate_analysis_prompt(log_dir: Path) -> str:
     # Resolve to absolute path for clarity
     abs_log_dir = log_dir.resolve()
 
+    turn_info = f"\nAnalyze turn: turn_{turn}" if turn is not None else ""
+
     prompt = f"""Use the massgen-log-analyzer skill to analyze:
 
-{abs_log_dir}
+{abs_log_dir}{turn_info}
 """
     return prompt
 
 
-def display_analyze_prompt(console: Console, log_dir: Path) -> None:
+def display_analyze_prompt(console: Console, log_dir: Path, turn: Optional[int] = None) -> None:
     """Display analysis prompt with helpful context.
 
     Args:
         console: Rich console for output
         log_dir: Path to the log directory to analyze
+        turn: Optional specific turn number to analyze
     """
-    prompt = generate_analysis_prompt(log_dir)
+    # Find turn directories
+    turn_dirs = sorted(log_dir.glob("turn_*"), key=_natural_sort_key)
 
-    # Check if analysis report already exists
-    if has_analysis_report(log_dir):
-        console.print("[yellow]Note: This log already has an ANALYSIS_REPORT.md[/yellow]\n")
+    if turn is not None:
+        target_turn = log_dir / f"turn_{turn}"
+        if not target_turn.exists():
+            console.print(f"[red]Error:[/red] Turn {turn} not found in {log_dir}")
+            if turn_dirs:
+                console.print(f"Available turns: {[d.name for d in turn_dirs]}")
+            return
+    else:
+        target_turn = turn_dirs[-1] if turn_dirs else None
+
+    prompt = generate_analysis_prompt(log_dir, turn)
+
+    # Check if analysis report already exists for the target turn
+    if target_turn and (target_turn / "ANALYSIS_REPORT.md").exists():
+        console.print(f"[yellow]Note: {target_turn.name} already has an ANALYSIS_REPORT.md[/yellow]\n")
 
     console.print(prompt)
     console.print("[dim italic]Copy this into your coding CLI if not already there[/dim italic]")
@@ -581,6 +598,8 @@ def run_self_analysis(
     config_path: Optional[Path] = None,
     ui_mode: str = "automation",
     console: Optional[Console] = None,
+    turn: Optional[int] = None,
+    force: bool = False,
 ) -> int:
     """Run MassGen to analyze a log directory using multi-agent coordination.
 
@@ -589,6 +608,8 @@ def run_self_analysis(
         config_path: Optional custom config file. If None, uses default analysis config.
         ui_mode: UI mode - "automation" (headless), "rich_terminal", or "webui"
         console: Optional Rich console for output
+        turn: Optional turn number to analyze. If None, analyzes the latest turn.
+        force: If True, overwrite existing report without prompting.
 
     Returns:
         Exit code (0 for success, non-zero for error)
@@ -628,16 +649,45 @@ def run_self_analysis(
         console.print(f"[red]Error loading config:[/red] {e}")
         return 1
 
-    # Find the attempt directory for the ANALYSIS_REPORT.md
-    attempt_dirs = list(log_dir.glob("turn_*/attempt_*"))
-    if not attempt_dirs:
-        console.print(f"[red]Error:[/red] No attempt directories found in {log_dir}")
+    # Find the turn directory for the ANALYSIS_REPORT.md
+    turn_dirs = list(log_dir.glob("turn_*"))
+    if not turn_dirs:
+        console.print(f"[red]Error:[/red] No turn directories found in {log_dir}")
         return 1
 
-    # Use the first attempt directory (usually turn_1/attempt_1)
-    # Use natural sort to handle multi-digit numbers correctly (turn_2 < turn_10)
-    attempt_dir = sorted(attempt_dirs, key=_natural_sort_key)[0]
-    report_path = attempt_dir / "ANALYSIS_REPORT.md"
+    # Sort turns naturally (turn_2 < turn_10)
+    turn_dirs = sorted(turn_dirs, key=_natural_sort_key)
+
+    if turn is not None:
+        # Find specific turn
+        target_turn_dir = log_dir / f"turn_{turn}"
+        if not target_turn_dir.exists():
+            console.print(f"[red]Error:[/red] Turn {turn} not found in {log_dir}")
+            console.print(f"Available turns: {[d.name for d in turn_dirs]}")
+            return 1
+        turn_dir = target_turn_dir
+    else:
+        # Default to latest turn
+        turn_dir = turn_dirs[-1]
+
+    report_path = turn_dir / "ANALYSIS_REPORT.md"
+
+    # Handle existing report
+    if report_path.exists():
+        if force:
+            console.print(f"[yellow]Overwriting existing report in {turn_dir.name}...[/yellow]")
+        elif ui_mode == "automation":
+            # In automation mode, require --force flag
+            console.print(f"[red]Error:[/red] Report already exists for {turn_dir.name}.")
+            console.print("Use --force to overwrite in automation mode.")
+            return 1
+        else:
+            # Interactive mode - prompt user
+            response = console.input(f"Report exists for {turn_dir.name}. Overwrite? [y/N]: ")
+            if response.lower() not in ("y", "yes"):
+                console.print("[yellow]Analysis cancelled.[/yellow]")
+                return 0
+            console.print()
 
     # Create empty ANALYSIS_REPORT.md if it doesn't exist
     # This is required for context_paths validation
@@ -678,12 +728,15 @@ def run_self_analysis(
         question = f"""Use the massgen-log-analyzer skill to analyze this log directory:
 {log_dir}
 
+Analyze turn: {turn_dir.name}
+
 Write your analysis report to: {report_path}
 
 IMPORTANT: Do NOT run any `massgen logs` CLI commands - that would cause infinite recursion.
 Read log files directly and use Logfire MCP tools if available."""
 
         console.print(f"[cyan]Starting self-analysis of:[/cyan] {log_dir}")
+        console.print(f"[cyan]Analyzing turn:[/cyan] {turn_dir.name}")
         console.print(f"[dim]Using config: {config_path}[/dim]")
         console.print(f"[dim]UI mode: {ui_mode}[/dim]")
         console.print(f"[dim]Report will be saved to: {report_path}[/dim]\n")
@@ -770,9 +823,11 @@ def logs_command(args) -> int:
                 log_dir = logs[0]
 
             mode = getattr(args, "mode", "prompt")
+            turn = getattr(args, "turn", None)
+            force = getattr(args, "force", False)
 
             if mode == "prompt":
-                display_analyze_prompt(console, log_dir)
+                display_analyze_prompt(console, log_dir, turn)
             elif mode == "self":
                 # Get custom config if provided
                 custom_config = None
@@ -783,7 +838,7 @@ def logs_command(args) -> int:
                         return 1
                 # Get UI mode
                 ui_mode = getattr(args, "ui", "automation")
-                return run_self_analysis(log_dir, custom_config, ui_mode, console)
+                return run_self_analysis(log_dir, custom_config, ui_mode, console, turn, force)
             else:
                 console.print(f"[red]Error:[/red] Unknown mode: {mode}")
                 return 1

@@ -32,19 +32,39 @@ uv run massgen logs list --limit 20         # Show more logs
 ### Generate Analysis Prompt
 ```bash
 # Run from within your coding CLI (e.g., Claude Code) so it sees output
-uv run massgen logs analyze                 # Analyze latest log
+uv run massgen logs analyze                 # Analyze latest turn of latest log
 uv run massgen logs analyze --log-dir PATH  # Analyze specific log
+uv run massgen logs analyze --turn 1        # Analyze specific turn
 ```
 
 The prompt output tells your coding CLI to use this skill on the specified log directory.
 
 ### Multi-Agent Self-Analysis
 ```bash
-uv run massgen logs analyze --mode self                 # Run 3-agent analysis team
+uv run massgen logs analyze --mode self                 # Run 3-agent analysis team (prompts if report exists)
+uv run massgen logs analyze --mode self --force         # Overwrite existing report without prompting
+uv run massgen logs analyze --mode self --turn 2        # Analyze specific turn
 uv run massgen logs analyze --mode self --config PATH   # Use custom config
 ```
 
 Self-analysis mode runs MassGen with multiple agents to analyze logs from different perspectives (correctness, efficiency, behavior) and produces a combined ANALYSIS_REPORT.md.
+
+### Multi-Turn Sessions
+
+MassGen log directories support multiple turns (coordination sessions). Each turn has its own `turn_N/` directory with attempts inside:
+
+```
+log_YYYYMMDD_HHMMSS/
+├── turn_1/                    # First coordination session
+│   ├── ANALYSIS_REPORT.md     # Report for turn 1
+│   ├── attempt_1/             # First attempt
+│   └── attempt_2/             # Retry if orchestration restarted
+├── turn_2/                    # Second coordination session (if multi-turn)
+│   ├── ANALYSIS_REPORT.md     # Report for turn 2
+│   └── attempt_1/
+```
+
+When analyzing, the `--turn` flag specifies which turn to analyze. Without it, the latest turn is analyzed.
 
 ## When to Use Logfire vs Local Logs
 
@@ -561,7 +581,7 @@ In this case, please sleep (for up to a minute) and try again.
 
 ## Part 6: Comprehensive Log Analysis Report
 
-When asked to analyze a MassGen log run, generate a **markdown report** saved to `[log_dir]/turn_1/attempt_1/ANALYSIS_REPORT.md`. The report must cover the **Standard Analysis Questions** below.
+When asked to analyze a MassGen log run, generate a **markdown report** saved to `[log_dir]/turn_N/ANALYSIS_REPORT.md` where N is the turn being analyzed. Each turn (coordination session) gets its own analysis report as a sibling to the attempt directories. The report must cover the **Standard Analysis Questions** below.
 
 ### Standard Analysis Questions
 
@@ -641,7 +661,7 @@ cat coordination_events.json | jq '.events[] | select(.event_type == "agent_time
 
 ### Report Template
 
-Save this report to `[log_dir]/turn_1/attempt_1/ANALYSIS_REPORT.md`:
+Save this report to `[log_dir]/turn_N/ANALYSIS_REPORT.md` (where N is the turn number being analyzed):
 
 ```markdown
 # MassGen Log Analysis Report
@@ -832,7 +852,7 @@ Based on the analysis, the following issues are suggested for tracking. If you h
 3. **Analyze streaming_debug.log** for command patterns
 4. **Check vote.json files** for agent reasoning
 5. **Generate the report** using the template
-6. **Save to** `[log_dir]/turn_1/attempt_1/ANALYSIS_REPORT.md`
+6. **Save to** `[log_dir]/turn_N/ANALYSIS_REPORT.md` (N = turn number being analyzed)
 7. **Print summary** to the user
 8. **Suggest Linear issues** based on findings - present to user for approval, if session is interactive
 9. **Create approved issues** in Linear with `log-analysis` label

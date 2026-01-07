@@ -5719,6 +5719,18 @@ def cli_main():
             default="rich_terminal",
             help="UI mode for self-analysis: rich_terminal (default), automation (headless), or webui",
         )
+        analyze_parser.add_argument(
+            "--turn",
+            "-t",
+            type=int,
+            help="Specific turn number to analyze (default: latest turn)",
+        )
+        analyze_parser.add_argument(
+            "--force",
+            "-f",
+            action="store_true",
+            help="Overwrite existing report without prompting",
+        )
 
         # Parse logs arguments (skip 'massgen logs')
         logs_args = logs_parser.parse_args(sys.argv[2:])
