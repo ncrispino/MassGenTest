@@ -458,6 +458,8 @@ class WebDisplay(BaseDisplay):
             target_id: Agent who received the vote
             reason: Reason for the vote
         """
+        # Update voter status to completed when vote is cast
+        self.update_agent_status(voter_id, "completed")
         self._vote_targets[voter_id] = target_id
         self._emit(
             "vote_cast",
@@ -505,6 +507,7 @@ class WebDisplay(BaseDisplay):
         vote_label: str,
         voted_for: str,
         available_answers: List[str],
+        voting_round: int = 1,
     ) -> None:
         """Record a vote node with its available answers for timeline visualization.
 
@@ -513,15 +516,17 @@ class WebDisplay(BaseDisplay):
             vote_label: Label like "vote1.1"
             voted_for: Agent ID who received the vote
             available_answers: List of answer labels voter could see
+            voting_round: The iteration/round number when this vote was cast
         """
+        # Use vote_label in ID to allow multiple votes from same agent (superseded votes)
         self._timeline_events.append(
             {
-                "id": f"{voter_id}-vote",
+                "id": f"{voter_id}-{vote_label}",
                 "type": "vote",
                 "agent_id": voter_id,
                 "label": vote_label,
                 "timestamp": time.time() * 1000,
-                "round": 1,
+                "round": voting_round,
                 "context_sources": available_answers,
                 "voted_for": voted_for,
             },
@@ -671,6 +676,8 @@ class WebDisplay(BaseDisplay):
         content: str,
         answer_id: Optional[str] = None,
         answer_number: int = 1,
+        answer_label: Optional[str] = None,
+        workspace_path: Optional[str] = None,
     ) -> None:
         """Notify about a new answer from an agent.
 
@@ -679,7 +686,12 @@ class WebDisplay(BaseDisplay):
             content: The answer content
             answer_id: Optional unique answer ID
             answer_number: The answer number for this agent (1, 2, etc.)
+            answer_label: Label for this answer (e.g., "agent1.1")
+            workspace_path: Absolute path to the workspace snapshot for this answer
         """
+        # Note: Don't set status to "completed" here - submitting an answer doesn't mean
+        # the agent is done. They still need to vote. Status will be set to "completed"
+        # when they actually vote (in update_vote_target).
         self._emit(
             "new_answer",
             {
@@ -687,6 +699,8 @@ class WebDisplay(BaseDisplay):
                 "content": content,
                 "answer_id": answer_id or f"{agent_id}-{int(time.time() * 1000)}",
                 "answer_number": answer_number,
+                "answer_label": answer_label,
+                "workspace_path": workspace_path,
             },
         )
 

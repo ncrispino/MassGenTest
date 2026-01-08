@@ -67,13 +67,27 @@ from .chat_agent import (
 )
 
 # LiteLLM integration
-from .litellm_provider import MassGenLLM, register_with_litellm
+#
+# LiteLLM integration
+#
+# NOTE:
+# Some environments (including restricted sandboxes / CI hardening) may forbid
+# reading system CA bundle locations during module import. `litellm` currently
+# initializes an HTTP client + SSL context at import-time, which can raise
+# PermissionError and prevent *any* MassGen import (and therefore pytest
+# collection). Treat LiteLLM as an optional integration and fail soft.
+try:
+    from .litellm_provider import MassGenLLM, register_with_litellm
+
+    LITELLM_AVAILABLE = True
+except Exception:  # pragma: no cover - environment-specific import side effects
+    MassGenLLM = None  # type: ignore[assignment]
+    register_with_litellm = None  # type: ignore[assignment]
+    LITELLM_AVAILABLE = False
 from .message_templates import MessageTemplates, get_templates
 from .orchestrator import Orchestrator, create_orchestrator
 
-LITELLM_AVAILABLE = True
-
-__version__ = "0.1.28"
+__version__ = "0.1.35"
 __author__ = "MassGen Contributors"
 
 
@@ -202,8 +216,8 @@ def build_config(
                 },
             )
     else:
-        # Default: 2 agents with gpt-5
-        default_model = "gpt-5.1-codex"
+        # Default: 2 agents with gpt-5.2
+        default_model = "gpt-5.2"
         default_backend = "openai"
         n = num_agents or 2
         provider_info = builder.PROVIDERS.get(default_backend, {})
@@ -346,7 +360,7 @@ async def run(
         run_question_with_history,
         run_single_question,
     )
-    from .logger_config import setup_logging
+    from .logger_config import save_execution_metadata, setup_logging
     from .utils import get_backend_type_from_model
 
     # Initialize logging for programmatic API
@@ -358,11 +372,13 @@ async def run(
 
     # Determine config to use (priority order)
     final_config_dict = None
+    raw_config_for_metadata = None  # Raw config (unexpanded env vars) for safe logging
     config_path_used = None
 
     if config_dict:
         # 1. Pre-built config dict provided directly
         final_config_dict = config_dict
+        raw_config_for_metadata = config_dict  # No env expansion for dict input
         config_path_used = "config_dict"
 
     elif models:
@@ -372,6 +388,7 @@ async def run(
             use_docker=use_docker,
             context_paths=kwargs.get("context_paths"),
         )
+        raw_config_for_metadata = final_config_dict  # No env expansion for built config
         config_path_used = f"multi-agent:{','.join(models)}"
 
     elif model and enable_filesystem:
@@ -382,6 +399,7 @@ async def run(
             use_docker=use_docker,
             context_paths=kwargs.get("context_paths"),
         )
+        raw_config_for_metadata = final_config_dict  # No env expansion for built config
         config_path_used = f"agent:{model}x{num_agents or 1}"
 
     elif config:
@@ -389,7 +407,7 @@ async def run(
         resolved_path = resolve_config_path(config)
         if resolved_path is None:
             raise ValueError("Could not resolve config path. Use --init to create default config.")
-        final_config_dict = load_config_file(str(resolved_path))
+        final_config_dict, raw_config_for_metadata = load_config_file(str(resolved_path))
         config_path_used = str(resolved_path)
 
     elif model:
@@ -406,13 +424,14 @@ async def run(
             base_url=kwargs.get("base_url"),
             ui_config=headless_ui_config,
         )
+        raw_config_for_metadata = final_config_dict  # No env expansion for simple config
         config_path_used = f"single-agent-light:{model}"
 
     else:
         # 6. Try default config
         default_config = Path.home() / ".config/massgen/config.yaml"
         if default_config.exists():
-            final_config_dict = load_config_file(str(default_config))
+            final_config_dict, raw_config_for_metadata = load_config_file(str(default_config))
             config_path_used = str(default_config)
         else:
             raise ValueError(
@@ -429,6 +448,21 @@ async def run(
     agents = create_agents_from_config(config_dict, orchestrator_cfg)
     if not agents:
         raise ValueError("No agents configured")
+
+    # Save execution metadata for debugging and reconstruction (matches CLI behavior)
+    # Use raw_config_for_metadata to avoid logging expanded secrets
+    save_execution_metadata(
+        query=query,
+        config_path=config_path_used if config_path_used and not config_path_used.startswith(("config_dict", "multi-agent:", "agent:", "single-agent-light:")) else None,
+        config_content=raw_config_for_metadata,
+        cli_args={
+            "mode": "programmatic_api",
+            "session_id": session_id,
+            "enable_logging": enable_logging,
+            "verbose": verbose,
+            "config_source": config_path_used,
+        },
+    )
 
     # Force headless UI config for programmatic API usage
     # Override any UI settings from the config file to ensure non-interactive operation
@@ -491,7 +525,8 @@ async def run(
         result["answers"] = coordination_result.get("answers")  # List with label, agent_id, answer_path, content
         result["log_directory"] = coordination_result.get("log_directory")
         result["final_answer_path"] = coordination_result.get("final_answer_path")
-        result["agent_mapping"] = coordination_result.get("agent_mapping")  # Maps agent_a -> real_id
+        result["usage"] = coordination_result.get("usage")  # Token usage stats
+        # Note: agent_mapping is inside vote_results (vote_results.agent_mapping)
     elif enable_logging:
         # Fallback: add log directory even without full coordination result
         try:

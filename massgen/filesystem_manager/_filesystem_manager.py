@@ -26,6 +26,7 @@ from ..mcp_tools.client import HookType
 from . import _code_execution_server as ce_module
 from . import _workspace_tools_server as wc_module
 from ._base import Permission
+from ._constants import FRAMEWORK_MCPS
 from ._path_permission_manager import PathPermissionManager
 
 
@@ -66,6 +67,7 @@ class FilesystemManager:
         custom_tools_path: Optional[str] = None,
         auto_discover_custom_tools: bool = False,
         exclude_custom_tools: Optional[List[str]] = None,
+        direct_mcp_servers: Optional[List[str]] = None,
         shared_tools_directory: Optional[str] = None,
         instance_id: Optional[str] = None,
         filesystem_session_id: Optional[str] = None,
@@ -103,6 +105,9 @@ class FilesystemManager:
             custom_tools_path: Optional path to custom tools directory to copy into workspace
             auto_discover_custom_tools: If True and custom_tools_path is not set, automatically use default path 'massgen/tool/'
             exclude_custom_tools: Optional list of directory names to exclude when copying custom tools (e.g., ['_claude_computer_use', '_gemini_computer_use'])
+            direct_mcp_servers: Optional list of MCP server names to keep as direct protocol tools when enable_code_based_tools is True.
+                               These servers remain callable as native tools in the prompt rather than being filtered to code-only access.
+                               Example: ['logfire', 'context7']
             shared_tools_directory: Optional shared directory for code-based tools (servers/, custom_tools/, .mcp/).
                                     If provided, tools are generated once in shared location (read-only for all agents).
                                     If None, tools are generated in each agent's workspace (per-agent, in snapshots).
@@ -120,6 +125,7 @@ class FilesystemManager:
         self.use_mcpwrapped_for_tool_filtering = use_mcpwrapped_for_tool_filtering
         self.enable_code_based_tools = enable_code_based_tools
         self.exclude_custom_tools = exclude_custom_tools if exclude_custom_tools else []
+        self.direct_mcp_servers = direct_mcp_servers if direct_mcp_servers else []
 
         # Handle custom_tools_path with auto-discovery
         if custom_tools_path:
@@ -800,8 +806,8 @@ class FilesystemManager:
     def _extract_mcp_tool_schemas(self, mcp_client) -> List[Dict[str, Any]]:
         """Extract tool schemas from MCP client, organized by server.
 
-        Only extracts user-added MCP servers. Framework MCPs (command_line, workspace_tools,
-        filesystem, planning, memory) are excluded as they're handled separately.
+        Only extracts user-added MCP servers. Framework MCPs (defined in FRAMEWORK_MCPS
+        constant) are excluded as they're handled separately.
 
         Args:
             mcp_client: MCPClient instance with connected tools
@@ -826,16 +832,6 @@ class FilesystemManager:
                 ...
             ]
         """
-        # Framework MCPs that should NOT be converted to code
-        # These are automatically available or handled by the framework
-        FRAMEWORK_MCPS = {
-            "command_line",  # Command execution (already available via bash)
-            "workspace_tools",  # Workspace operations (file ops, media generation)
-            "filesystem",  # Filesystem operations
-            "planning",  # Task planning MCP
-            "memory",  # Memory management MCP
-        }
-
         servers_with_tools = {}
 
         # Group tools by server
@@ -851,6 +847,12 @@ class FilesystemManager:
             is_framework_mcp = server_name in FRAMEWORK_MCPS or any(server_name.startswith(f"{fmcp}_") for fmcp in FRAMEWORK_MCPS)
             if is_framework_mcp:
                 logger.debug(f"[FilesystemManager] Skipping framework MCP: {server_name}")
+                continue
+
+            # Skip direct MCP servers - they remain as protocol tools, not code-based
+            is_direct_mcp = server_name in (self.direct_mcp_servers or [])
+            if is_direct_mcp:
+                logger.debug(f"[FilesystemManager] Skipping direct MCP (kept as protocol tool): {server_name}")
                 continue
 
             # Initialize server entry if needed
@@ -1277,6 +1279,15 @@ class FilesystemManager:
         # The servers need to connect so we can extract their tool schemas for code generation
         # Tool filtering happens later in the backend after conversion to Function objects
 
+        # Validate direct_mcp_servers - warn if any aren't in configured mcp_servers
+        if self.direct_mcp_servers:
+            configured_server_names = set(existing_names)
+            for direct_server in self.direct_mcp_servers:
+                if direct_server not in configured_server_names:
+                    logger.warning(
+                        f"[FilesystemManager] direct_mcp_servers contains '{direct_server}' " f"but no MCP server with that name is configured in mcp_servers",
+                    )
+
         try:
             # Add filesystem server if missing
             if "filesystem" not in existing_names:
@@ -1470,7 +1481,14 @@ class FilesystemManager:
                         if item.is_file():
                             shutil.copy2(item, self.snapshot_storage / item.name)
                         elif item.is_dir():
-                            shutil.copytree(item, self.snapshot_storage / item.name)
+                            # Use symlinks=True to copy symlinks as symlinks, not follow them
+                            # Use ignore_dangling_symlinks=True to handle broken symlinks in subdirectories (e.g., from subagent workspaces)
+                            shutil.copytree(
+                                item,
+                                self.snapshot_storage / item.name,
+                                symlinks=True,
+                                ignore_dangling_symlinks=True,
+                            )
                         items_copied += 1
 
                     logger.info(f"[FilesystemManager] Saved snapshot with {items_copied} items to {self.snapshot_storage}")
@@ -1499,7 +1517,15 @@ class FilesystemManager:
                     if item.is_file():
                         shutil.copy2(item, dest_dir / item.name)
                     elif item.is_dir():
-                        shutil.copytree(item, dest_dir / item.name, dirs_exist_ok=True)
+                        # Use symlinks=True to copy symlinks as symlinks, not follow them
+                        # Use ignore_dangling_symlinks=True to handle broken symlinks in subdirectories (e.g., from subagent workspaces)
+                        shutil.copytree(
+                            item,
+                            dest_dir / item.name,
+                            dirs_exist_ok=True,
+                            symlinks=True,
+                            ignore_dangling_symlinks=True,
+                        )
                     items_copied += 1
 
                 logger.info(f"[FilesystemManager] Saved {'final' if is_final else 'regular'} " f"log snapshot with {items_copied} items to {dest_dir}")
@@ -1620,8 +1646,16 @@ class FilesystemManager:
                 dest_dir = self.agent_temporary_workspace / anon_id
 
                 # Copy snapshot content if not empty
+                # Use symlinks=True to copy symlinks as symlinks, not follow them
+                # Use ignore_dangling_symlinks=True to handle broken symlinks in subdirectories
                 if any(snapshot_path.iterdir()):
-                    shutil.copytree(snapshot_path, dest_dir, dirs_exist_ok=True)
+                    shutil.copytree(
+                        snapshot_path,
+                        dest_dir,
+                        dirs_exist_ok=True,
+                        symlinks=True,
+                        ignore_dangling_symlinks=True,
+                    )
 
         return self.agent_temporary_workspace
 

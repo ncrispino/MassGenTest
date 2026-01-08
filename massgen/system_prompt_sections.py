@@ -198,6 +198,84 @@ previous calls to inform dependent values like the parameters, do NOT call these
 and instead call them sequentially. Never use placeholders or guess missing parameters in tool calls."""
 
 
+class GPT5GuidanceSection(SystemPromptSection):
+    """
+    GPT-5.x specific guidance for solution persistence and tool preambles.
+
+    Encourages autonomous, end-to-end task completion and structured tool
+    usage narration based on OpenAI's GPT-5 prompting guides.
+
+    Only included when the model is GPT-5.x (gpt-5, gpt-5.1, gpt-5.2, etc.)
+    Priority 4 places this alongside CoreBehaviorsSection.
+
+    References:
+        - https://cookbook.openai.com/examples/gpt-5/gpt-5-1_prompting_guide#encouraging-complete-solutions
+        - https://cookbook.openai.com/examples/gpt-5/gpt-5_prompting_guide#tool-preambles
+    """
+
+    def __init__(self):
+        super().__init__(
+            title="GPT-5 Guidance",
+            priority=4,  # Same priority as CoreBehaviorsSection
+            xml_tag=None,  # Uses internal XML tags for each subsection
+        )
+
+    def build_content(self) -> str:
+        return (
+            "<solution_persistence>\n"
+            "- Treat yourself as an autonomous senior pair-programmer: once the user gives a direction, "
+            "proactively gather context, plan, implement, test, and refine without waiting for additional "
+            "prompts at each step.\n"
+            "- Persist until the task is fully handled end-to-end within the current turn whenever feasible: "
+            "do not stop at analysis or partial fixes; carry changes through implementation, verification, "
+            "and a clear explanation of outcomes unless the user explicitly pauses or redirects you.\n"
+            "- Be extremely biased for action. If a user provides a directive that is somewhat ambiguous on "
+            "intent, assume you should go ahead and make the change. If the user asks a question like "
+            '"should we do x?" and your answer is "yes", you should also go ahead and perform the action. '
+            "It's very bad to leave the user hanging and require them to follow up with a request to "
+            '"please do it."\n'
+            "</solution_persistence>\n\n"
+            "<tool_preambles>\n"
+            "- As you execute your file edit(s) and other tool calls, narrate each step succinctly and "
+            "sequentially, marking progress clearly.\n"
+            "- CRITICAL: If your task requires creating or modifying files, you MUST use file tools to "
+            "actually write them to the filesystem. Do NOT just output file contents in the new_answer "
+            "text using markdown - the files will not exist unless you call the appropriate writing and "
+            "editing tools.\n"
+            "</tool_preambles>"
+        )
+
+
+class GrokGuidanceSection(SystemPromptSection):
+    """
+    Grok-specific guidance for file content encoding.
+
+    Addresses a known issue where Grok models (particularly Grok 4.1) HTML-escape
+    file content when writing SVG, XML, HTML, or other files containing angle
+    brackets. This results in corrupted files with &lt; instead of <, etc.
+
+    Only included when the model is Grok (grok-*).
+    Priority 4 places this alongside CoreBehaviorsSection.
+    """
+
+    def __init__(self):
+        super().__init__(
+            title="Grok Guidance",
+            priority=4,  # Same priority as CoreBehaviorsSection
+            xml_tag=None,  # Uses internal XML tags
+        )
+
+    def build_content(self) -> str:
+        return (
+            "<file_content_encoding>\n"
+            "CRITICAL: When writing file content, pass the content EXACTLY as it should appear in the file. "
+            "Do NOT HTML-escape or XML-escape the content.\n"
+            '- Write literal characters: use < not &lt;, use > not &gt;, use " not &quot;, use & not &amp;\n'
+            "- The file writing tool expects raw content, not escaped content. Escaping will corrupt the file.\n"
+            "</file_content_encoding>"
+        )
+
+
 class SkillsSection(SystemPromptSection):
     """
     Available skills that agents can invoke.
@@ -880,9 +958,10 @@ class CommandExecutionSection(SystemPromptSection):
     Args:
         docker_mode: Whether commands execute in Docker containers
         enable_sudo: Whether sudo is available in Docker containers
+        concurrent_tool_execution: Whether tools execute in parallel
     """
 
-    def __init__(self, docker_mode: bool = False, enable_sudo: bool = False):
+    def __init__(self, docker_mode: bool = False, enable_sudo: bool = False, concurrent_tool_execution: bool = False):
         super().__init__(
             title="Command Execution",
             priority=Priority.MEDIUM,
@@ -890,6 +969,7 @@ class CommandExecutionSection(SystemPromptSection):
         )
         self.docker_mode = docker_mode
         self.enable_sudo = enable_sudo
+        self.concurrent_tool_execution = concurrent_tool_execution
 
     def build_content(self) -> str:
         parts = ["## Command Execution"]
@@ -919,6 +999,16 @@ class CommandExecutionSection(SystemPromptSection):
                     "- For system packages, ask the user to rebuild the Docker image with " "needed packages",
                 )
 
+            parts.append("")
+
+        if self.concurrent_tool_execution:
+            parts.append("**PARALLEL TOOL EXECUTION ENABLED**")
+            parts.append("- Multiple tool calls in your response will execute SIMULTANEOUSLY, not sequentially")
+            parts.append("- Do NOT call dependent tools together in the same response:")
+            parts.append("  - BAD: `mkdir foo` + `write_file foo/bar.txt` (directory may not exist yet)")
+            parts.append("  - BAD: `execute_command 'python server.py'` + `execute_command 'curl localhost'` (server not ready)")
+            parts.append("- Each tool call should be independent and not rely on another tool's output")
+            parts.append("- If you need sequential execution, make separate responses for each step")
             parts.append("")
 
         return "\n".join(parts)
@@ -1402,12 +1492,14 @@ class EvaluationSection(SystemPromptSection):
     Args:
         voting_sensitivity: Controls evaluation strictness ('lenient', 'balanced', 'strict')
         answer_novelty_requirement: Controls novelty requirements ('lenient', 'balanced', 'strict')
+        vote_only: If True, agent has reached max answers and can only vote (no new_answer)
     """
 
     def __init__(
         self,
         voting_sensitivity: str = "lenient",
         answer_novelty_requirement: str = "lenient",
+        vote_only: bool = False,
     ):
         super().__init__(
             title="MassGen Coordination",
@@ -1416,27 +1508,57 @@ class EvaluationSection(SystemPromptSection):
         )
         self.voting_sensitivity = voting_sensitivity
         self.answer_novelty_requirement = answer_novelty_requirement
+        self.vote_only = vote_only
 
     def build_content(self) -> str:
         import time
 
+        # Vote-only mode: agent has exhausted their answer limit
+        if self.vote_only:
+            return f"""You are evaluating existing solutions to determine the best answer.
+
+You have provided your maximum number of new answers. Now you MUST vote for the best existing answer.
+
+Analyze the existing answers carefully, then call the `vote` tool to select the best one.
+
+IMPORTANT: The only workflow action available to you is `vote`. You cannot submit new answers.
+
+*Note*: The CURRENT TIME is **{time.strftime("%Y-%m-%d %H:%M:%S")}**."""
+
         # Determine evaluation criteria based on voting sensitivity
         if self.voting_sensitivity == "strict":
-            evaluation_section = """Does the best CURRENT ANSWER address the ORIGINAL MESSAGE exceptionally well? Consider:
+            evaluation_section = """Critically examine existing answers for flaws (be skeptical, not charitable),
+verify claims by checking actual files/outputs, and consider if you can build on or combine the best elements.
+
+Does the best CURRENT ANSWER address the ORIGINAL MESSAGE exceptionally well? Consider:
 - Is it comprehensive, addressing ALL aspects and edge cases?
 - Is it technically accurate and well-reasoned?
 - Does it provide clear explanations and proper justification?
 - Is it complete with no significant gaps or weaknesses?
 - Could it serve as a reference-quality solution?
 
-Only use the `vote` tool if the best answer meets high standards of excellence."""
+**Before voting, ask: Can I CREATE A BETTER ANSWER by:**
+- Combining strengths from multiple answers (e.g., Agent 1's visuals + Agent 2's content)?
+- Fixing errors or gaps you identified in the best answer?
+- Adding missing elements that would make it more complete?
+
+If YES to any of these, produce a `new_answer` instead of voting.
+Only vote if the best answer is truly excellent AND you cannot improve it."""
         elif self.voting_sensitivity == "balanced":
-            evaluation_section = """Does the best CURRENT ANSWER address the ORIGINAL MESSAGE well? Consider:
+            evaluation_section = """Critically examine existing answers for flaws,
+verify claims by checking actual files/outputs, and consider if you can build on or combine approaches.
+
+Does the best CURRENT ANSWER address the ORIGINAL MESSAGE well? Consider:
 - Is it comprehensive, accurate, and complete?
 - Could it be meaningfully improved, refined, or expanded?
 - Are there weaknesses, gaps, or better approaches?
 
-Only use the `vote` tool if the best answer is strong and complete."""
+**Before voting, ask: Can I CREATE A BETTER ANSWER by:**
+- Combining strengths from multiple answers (e.g., one agent's structure + another's execution)?
+- Fixing errors or gaps you identified?
+- Adding missing elements?
+
+If YES, produce a `new_answer`. Only vote if you genuinely cannot add meaningful value."""
         else:
             # Default to lenient (including explicit "lenient" or any other value)
             evaluation_section = """Does the best CURRENT ANSWER address the ORIGINAL MESSAGE well?
@@ -1548,6 +1670,217 @@ class PlanningModeSection(SystemPromptSection):
 
     def build_content(self) -> str:
         return self.planning_mode_instruction
+
+
+class SubagentSection(SystemPromptSection):
+    """
+    Subagent delegation guidance for spawning independent agent instances.
+
+    Provides instructions on when and how to use subagents for task delegation,
+    parallel execution, and context isolation.
+
+    Args:
+        workspace_path: Path to the agent's workspace (for subagent workspace location)
+        max_concurrent: Maximum concurrent subagents allowed
+    """
+
+    def __init__(self, workspace_path: str, max_concurrent: int = 3):
+        super().__init__(
+            title="Subagent Delegation",
+            priority=Priority.MEDIUM,
+            xml_tag="subagent_delegation",
+        )
+        self.workspace_path = workspace_path
+        self.max_concurrent = max_concurrent
+
+    def build_content(self) -> str:
+        return f"""
+# Subagent Delegation
+
+You can spawn **subagents** to execute tasks with fresh context and isolated workspaces.
+
+## When to Use Subagents
+
+**USING TASK DEPENDENCIES TO IDENTIFY SUBAGENT CANDIDATES:**
+When you create a task plan, tasks with the SAME dependencies (or no dependencies) can potentially run in parallel via subagents. Look at your plan:
+- Tasks that share dependencies → candidates for parallel subagent execution
+- Tasks that depend on each other → must be sequential (do NOT subagent)
+- Simple/quick tasks → do yourself (subagent overhead not worth it)
+
+Example task plan analysis:
+```
+Task A: Research biography (no deps)        ← Can parallelize
+Task B: Research discography (no deps)      ← Can parallelize
+Task C: Research quotes (no deps)           ← Can parallelize
+Task D: Build website (deps: A, B, C)       ← Sequential, do yourself after A/B/C
+```
+→ Spawn subagents for A, B, C simultaneously. Wait for results. Then do D yourself.
+
+**IDEAL USE CASES:**
+- **Research and exploration** - gathering information, searching, analyzing sources
+- **Parallel data collection** - multiple independent lookups that can run simultaneously
+- Complex subtasks that benefit from fresh context (avoid context pollution)
+- Experimental operations you want isolated from your main workspace
+
+**SUBAGENT RELIABILITY:**
+Subagents are useful helpers but have limitations:
+- They run with simpler configs and may be less capable than you
+- Their outputs are **raw materials** - expect to review, refine, and fix their work
+- Don't blindly trust subagent results - verify and integrate thoughtfully
+- If a subagent produces something broken or incomplete, **you fix it** rather than reporting failure
+
+**AVOID SUBAGENTS FOR:**
+- Simple, quick operations you can do directly (overhead not worth it)
+- Tasks requiring back-and-forth coordination (high overhead)
+- Operations that need to modify your main workspace directly
+- Sequential tasks that depend on other task outputs
+- High-stakes deliverables that need careful quality control (do these yourself)
+
+## How Subagents Work
+
+1. **Isolated Workspace**: Each subagent gets its own workspace
+   - You can READ files from subagent workspaces
+   - You CANNOT write directly to subagent workspaces
+2. **Fresh Context**: Subagents start with a clean slate (just the task you provide)
+3. **Context Files**: Pass `context_files` to give the subagent READ-ONLY access to files
+4. **No Nesting**: Subagents cannot spawn their own subagents
+
+## Waiting for Subagents (CRITICAL)
+
+**DO NOT submit your answer until ALL subagents have returned results.**
+
+When you spawn subagents:
+1. **Wait for the tool to return** - `spawn_subagents` blocks until ALL tasks complete
+2. **Do NOT say "I will now run subagents"** and submit an answer - wait for actual results first
+3. **Only after receiving results** should you integrate outputs and submit your answer
+
+**BAD**: "I spawned 5 subagents. I will now wait for them and report back." (submitting answer before results)
+**GOOD**: Wait for spawn tool to return → read results → integrate → then submit answer with completed work
+
+## Integrating Subagent Results (MANDATORY)
+
+**YOU MUST INTEGRATE SUBAGENT OUTPUTS.** Subagents are helpers - YOU are responsible for the final deliverable.
+
+After subagents complete (or timeout):
+1. **Read each subagent's answer** to get the file paths they created
+2. **Read those files** from the paths listed in the answer
+3. **Write integrated files to YOUR workspace** - combine, merge, and organize the content
+4. **If a subagent timed out**: Check its workspace anyway - it may have created partial work you can use. Complete any remaining work yourself.
+5. **Your final answer**: Describe the COMPLETED work in your workspace, not what subagents did
+
+**Handling timeouts/failures - YOU MUST CHECK WORKSPACES AND LOGS:**
+When a subagent times out or fails, the result includes both `workspace` and `log_path`. You MUST:
+1. **Check the workspace** (e.g., `/path/to/subagents/bio/workspace`) for partial work
+2. **Check the log_path** (if provided) for debugging info - contains `full_logs/` with conversation history
+3. **List files in both directories** to see what was created before failure
+4. **Read and use any partial work** - even a half-finished file is better than nothing
+5. **Complete the remaining work yourself** - don't just report the timeout
+
+**DO NOT:**
+- ❌ Submit answer before subagents finish
+- ❌ Say "I will run subagents and report back" as your answer
+- ❌ List what subagents produced and ask "what do you want next?"
+- ❌ Leave files scattered in subagent workspaces
+- ❌ Report subagent failures without completing the work yourself
+- ❌ Provide "next steps" menus (A/B/C options) instead of finished work
+
+**DO:**
+- ✅ Wait for all subagent results before submitting answer
+- ✅ Read subagent output files and write them to YOUR workspace
+- ✅ If building a website: create the actual HTML/CSS/content files in your workspace
+- ✅ If subagent timed out: check for partial work, use it, complete the rest
+- ✅ Final answer: "I created X, Y, Z in my workspace" with the actual files present
+
+## Retrieving Files from Subagents
+
+When a subagent creates files you need:
+1. **Check the answer**: The subagent lists relevant file paths in its answer
+2. **Read the files**: Read from the paths in the answer
+3. **Copy to your workspace**: Save files you need to your workspace
+
+**IMPORTANT**: Only copy files you actually need. Context isolation is a key feature - you don't need every file the subagent created, just the relevant outputs.
+
+## The spawn_subagents Tool
+
+**CRITICAL: Tasks run in PARALLEL (simultaneously), NOT sequentially!**
+
+All subagents start at the same time and cannot see each other's output. Design tasks that are INDEPENDENT:
+- ✅ GOOD: "Research biography" + "Research discography" + "Research songs" (independent research)
+- ❌ BAD: "Research content" + "Build site using researched content" (task 2 can't access task 1's output!)
+
+**REQUIREMENTS:**
+1. **Maximum {self.max_concurrent} tasks per call** - requests for more will error
+2. **`context` parameter is REQUIRED** - subagents need to know the project/goal
+3. **Each task dict must have `"task"` field** (not "description" or "id")
+
+```python
+# CORRECT: Independent parallel tasks (each can complete without the others)
+spawn_subagents(
+    tasks=[
+        {{"task": "Research and write Bob Dylan biography to bio.md", "subagent_id": "bio"}},
+        {{"task": "Create discography table in discography.md", "subagent_id": "discog"}},
+        {{"task": "List 20 famous songs with years in songs.md", "subagent_id": "songs"}}
+    ],
+    context="Building a Bob Dylan tribute website with biography, discography, songs, and quotes pages"
+)
+
+# WRONG - DO NOT DO THIS (task 2 depends on task 1's output):
+# spawn_subagents(tasks=[
+#     {{"task": "Research all content"}},
+#     {{"task": "Build website using the researched content"}}  # CAN'T ACCESS TASK 1!
+# ])
+```
+
+## Available Tools
+
+- `spawn_subagents(tasks, context, timeout_seconds?)` - `context` is REQUIRED! Max {self.max_concurrent} parallel tasks.
+- `list_subagents()` - List all spawned subagents with status
+- `get_subagent_result(subagent_id)` - Get result from a completed subagent
+- `check_subagent_status(subagent_id)` - Check status of a subagent
+
+## Result Format
+
+```json
+{{
+    "success": true,
+    "operation": "spawn_subagents",
+    "results": [
+        {{
+            "subagent_id": "research_oauth",
+            "status": "completed",  // or "completed_but_timeout", "partial", "timeout", "error"
+            "workspace": "{self.workspace_path}/subagents/research_oauth/workspace",
+            "answer": "The subagent's answer with file paths...",
+            "execution_time_seconds": 45.2,
+            "completion_percentage": 100,  // Progress when timeout occurred (0-100)
+            "token_usage": {{"input_tokens": 1000, "output_tokens": 500}}
+        }}
+    ],
+    "summary": {{"total": 1, "completed": 1, "failed": 0, "timeout": 0}}
+}}
+```
+
+**Status values:**
+- `completed`: Normal successful completion
+- `completed_but_timeout`: Timed out but answer was recovered (use it!)
+- `partial`: Some work done, check workspace for partial files
+- `timeout`: No recoverable work, but workspace still accessible
+- `error`: Failed with error
+
+## Workspace Structure
+
+```
+{self.workspace_path}/
+├── ... (your files)
+└── subagents/
+    ├── _registry.json    # Subagent tracking
+    ├── sub_abc123/
+    │   ├── workspace/    # Subagent's files (READ-ONLY to you)
+    │   └── _metadata.json
+    └── sub_def456/
+        ├── workspace/
+        └── _metadata.json
+```
+"""
 
 
 class BroadcastCommunicationSection(SystemPromptSection):
@@ -1858,7 +2191,7 @@ After execution, the actual scripts live in `scripts/` and can be reused.
 
 1. **Be specific** - Workflow steps should be actionable, not vague
 2. **Document tools upfront** - Plan scripts before writing them
-3. **Verify outputs first** - Test the result as a user would (run code, view websites, check files)
+3. **Test like a user** - Verify artifacts through interaction, not just observation (click buttons, play games, navigate pages, run with edge cases, etc)
 4. **Update with learnings** - The skill improves through use
 5. **Keep scripts reusable** - Design tools to work in similar future tasks"""
 
@@ -1883,40 +2216,57 @@ class OutputFirstVerificationSection(SystemPromptSection):
     def build_content(self) -> str:
         return """## Output-First Iteration
 
-**Core Principle: Experience your work as a user would, then iterate until the outcome is excellent.**
+**Core Principle: Experience your work exactly as a user would - through dynamic interaction, not just static observation.**
 
 This is an **improvement loop**, not just a verification step:
-1. Run/view output → 2. Identify gaps or issues → 3. Fix and enhance → 4. Re-run → 5. Confirm improvements → 6. Repeat until excellent
+1. Run/view output → 2. **Interact as a user would** → 3. Identify gaps or issues → 4. Fix and enhance → 5. Re-run and re-interact → 6. Repeat until excellent
 
-| Artifact Type | Experience It (user view) | Then Improve (iterate) |
-|--------------|---------------------------|------------------------|
-| Script/Code | Run it, observe output | Fix errors, enhance behavior |
-| Website/App | View it in browser | Adjust layout, styling, UX |
-| Generated files | Open and read contents | Refine content, fix formatting |
-| API integration | Make test calls | Handle edge cases, improve responses |
-| Data processing | Check output data | Fix accuracy, optimize pipeline |
+### Dynamic Verification: Think Like a User
 
-**Why this matters:**
-- Code that "looks correct" but crashes needs **fixing**
-- A file generator that runs but produces weak content needs **improvement**
-- An API call that executes but has poor error handling needs **enhancement**
+Static screenshots or a single code run are often not sufficient. Users don't just look at artifacts - they interact with them:
 
-**The goal is to iterate on OUTCOMES until they meet or exceed the task requirements.**
+| Artifact Type | Static Check (incomplete) | Dynamic Check (required) |
+|--------------|---------------------------|--------------------------|
+| Website/App | Screenshot looks good | Click all buttons, navigate all pages, test forms, verify links work |
+| Game | Screenshot shows UI | Play the game - test controls, scoring, game over states, restart |
+| Interactive tool | Interface renders | Use every feature, test edge cases, verify all interactions |
+| Script/Code | No errors on run | Test with various inputs, edge cases, invalid data |
+| API | Single call works | Test all endpoints, error states, authentication flows |
+| Data pipeline | Output exists | Validate accuracy, test with edge case inputs |
+
+**For any artifact not listed above:** Apply the same principle - ask "How will a user actually USE this?" and test that way.
+The goal is always to verify the complete user experience, not just surface appearance.
+
+### The User Experience Test
+
+Before considering any interactive artifact complete, ask:
+1. **What will users click/interact with?** → Do it. Does it work?
+2. **What will users type/input?** → Try it. Does it respond correctly?
+3. **What paths will users take?** → Navigate them all. Any broken routes?
+4. **How will users break it?** → Try to break it. Does it handle errors gracefully?
+
+### Why this matters:
+- A website screenshot can look perfect while half the links are broken
+- A game screenshot shows nothing about whether gameplay works
+- An interactive tool may render but crash on first click
+- Any artifact may LOOK correct but FAIL when actually used
+
+**The goal is to verify INTERACTION OUTCOMES, not just visual appearance.**
 
 ### Apply at every stage:
-1. **During development** - short loops: run/view, improve, rerun
-2. **Before answering** - final iteration pass on the actual output
-3. **During evaluation** - judge by results, improve if gaps found
+1. **During development** - short loops: interact, improve, re-interact
+2. **Before answering** - full interaction test on the actual output
+3. **During evaluation** - judge by interaction results, improve if gaps found
 
 ### Iteration examples:
-- **Code**: `python script.py` → output missing edge case → add handling → rerun → confirm fixed
-- **Files**: Read generated file → content unclear → rewrite section → re-read → confirm improved
-- **Websites**: View in browser → layout broken on mobile → fix CSS → re-screenshot → confirm responsive
-- **APIs**: Test request → error handling weak → add try/catch → re-test → confirm robust
+- **Websites**: Visit all pages → click every nav link → found 2 broken links → fix routes → re-test all links → confirm working
+- **Games**: Play game → controls unresponsive → fix input handling → replay → confirm smooth gameplay
+- **Interactive tools**: Use all features → export fails on large files → add chunking → re-test export → confirm fixed
+- **Code**: Run with test inputs → crashes on empty array → add validation → rerun with edge cases → confirm robust
 
 ### Finalization:
-- Use `new_answer` when you produced work or iterated improvements based on output review.
-- Use `vote` only when an existing answer already meets the bar without needing changes."""
+- Use `new_answer` when you produced work or iterated improvements based on **interaction testing**.
+- Use `vote` only when an existing answer already meets the bar after **testing as a user would**."""
 
 
 class MultimodalToolsSection(SystemPromptSection):
@@ -1935,21 +2285,33 @@ class MultimodalToolsSection(SystemPromptSection):
         )
 
     def build_content(self) -> str:
-        return """## Visual Verification with read_media
+        return """## Visual & Interactive Verification
 
-For visual artifacts, use `read_media` to apply output-first verification:
+Use `read_media` for visual analysis, but remember: **interact first, screenshot second.**
 
-### When to use read_media:
-- **Websites/UIs**: Screenshot and analyze layout, styling, content
-- **Diagrams/Charts**: Verify labels are readable, data is correct
-- **Generated images**: Check quality and correctness
-- **Videos**: Verify content matches requirements
+### Key Principle
+Screenshots verify appearance. Interaction verifies functionality. Do both:
+1. **Interact** with the artifact as a user would (click, navigate, play, input)
+2. **Screenshot** key states during/after interaction
+3. **Analyze** with read_media using **critical prompts**
+
+### CRITICAL: Be Skeptical, Not Charitable
+When evaluating your own or others' work, use prompts that look for **flaws**:
+
+**BAD prompts (too charitable):**
+- "Does the layout look correct?"
+- "Describe this screenshot"
+
+**GOOD prompts (skeptical):**
+- "What flaws, issues, or missing elements do you see? Be critical."
+- "What would a demanding user complain about?"
+- "Does this fully meet the requirements, or are there gaps?"
 
 ### Tool usage:
 ```
-read_media(file_path="screenshot.png", prompt="Does the layout look correct?")
-read_media(file_path="diagram.png", prompt="Are all labels readable?")
-read_media(file_path="output.mp4", prompt="Does this show the expected content?")
+read_media(file_path="screenshot.png", prompt="What flaws or issues do you see? Be critical.")
+read_media(file_path="diagram.png", prompt="What's missing or poorly done?")
+read_media(file_path="output.mp4", prompt="What problems or gaps exist?")
 ```
 
 **Supported formats:**
@@ -1957,11 +2319,70 @@ read_media(file_path="output.mp4", prompt="Does this show the expected content?"
 - Audio: mp3, wav, m4a, ogg, flac, aac
 - Video: mp4, mov, avi, mkv, webm
 
-### Website verification workflow:
-1. Start server or open HTML file
-2. Take screenshot (Playwright or screenshot command)
-3. Analyze: `read_media(file_path="screenshot.png", prompt="Does this look professional?")`
-4. Fix issues based on what you SEE, not what code suggests"""
+A beautiful screenshot means nothing if buttons don't work. Test functionality, then verify visuals with a critical eye."""
+
+
+class TaskContextSection(SystemPromptSection):
+    """
+    Instructions for creating CONTEXT.md before using multimodal tools or subagents.
+
+    This ensures external API calls (to GPT-4.1, Gemini, etc.) have context about
+    what the user is trying to accomplish, preventing hallucinations about
+    task-specific terminology.
+
+    MEDIUM priority - included when multimodal tools or subagents are enabled.
+    """
+
+    def __init__(self):
+        super().__init__(
+            title="Task Context",
+            priority=Priority.MEDIUM,
+            xml_tag="task_context",
+        )
+
+    def build_content(self) -> str:
+        return """## Task Context for Tools and Subagents
+
+**REQUIRED**: Before spawning subagents or using multimodal tools (read_media, generate_media),
+you MUST create a `CONTEXT.md` file in your workspace with task context.
+
+### Why This Matters
+External APIs (like GPT-4.1 for image analysis) have no idea what you're working on.
+Without context, they will hallucinate - for example, interpreting "MassGen" as
+"Massachusetts General Hospital" instead of "multi-agent AI system".
+
+### What to Include in CONTEXT.md
+Write a brief file explaining:
+- **What we're building/doing** - the core task in 1-2 sentences
+- **Key terminology** - project-specific terms that could be misinterpreted
+- **Visual/brand details** - style, colors, aesthetic if relevant
+- **Any other context** tools or subagents need to understand the task
+
+### Example CONTEXT.md
+```markdown
+# Task Context
+
+Building a marketing website for MassGen - a multi-agent AI orchestration system
+that coordinates parallel AI agents through voting and consensus.
+
+## Key Terms
+- MassGen: Multi-agent AI coordination system (NOT Massachusetts General Hospital)
+- Agents: Individual AI instances that collaborate
+- Voting: Consensus mechanism where agents vote on best solutions
+
+## Visual Style
+- Dark theme with terminal aesthetic
+- Primary color: indigo (#4F46E5)
+- Modern, technical but approachable tone
+```
+
+### When to Create It
+Create CONTEXT.md **before** your first use of:
+- `spawn_subagents` - subagents will inherit this context
+- `read_media` - image/audio/video analysis will use this context
+- `generate_media` - image/video/audio generation will use this context
+
+The file will be read automatically and injected into external API calls."""
 
 
 class SystemPromptBuilder:

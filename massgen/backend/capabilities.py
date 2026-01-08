@@ -130,12 +130,12 @@ BACKEND_CAPABILITIES: Dict[str, BackendCapabilities] = {
             "gpt-4o-mini",
             "o4-mini",
         ],
-        default_model="gpt-5.1-codex",
+        default_model="gpt-5.2",
         env_var="OPENAI_API_KEY",
         notes=(
-            "Codex models (gpt-5.1-codex, gpt-5-codex) are recommended for coding tasks. "
-            "Reasoning support in GPT-5 and o-series models. Audio/video generation (v0.0.30+). "
-            "Video generation via Sora-2 API (v0.0.31)."
+            "GPT-5.2 is the recommended default. Codex models (gpt-5.1-codex, gpt-5-codex) are optimized "
+            "for shorter system messages and may not work well with MassGen's coordination prompts. "
+            "Reasoning support in GPT-5 and o-series models. Audio/video generation (v0.0.30+)."
         ),
         model_release_dates={
             "gpt-5.2": "2025-12",
@@ -447,11 +447,12 @@ BACKEND_CAPABILITIES: Dict[str, BackendCapabilities] = {
         builtin_tools=[],
         filesystem_support="mcp",
         models=[
+            "Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8",
             "meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo",
             "meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo",
             "mistralai/Mixtral-8x7B-Instruct-v0.1",
         ],
-        default_model="meta-llama/Meta-Llama-3.1-405B-Instruct-Turbo",
+        default_model="Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8",
         env_var="TOGETHER_API_KEY",
         notes="OpenAI-compatible API. Access to open-source models at scale.",
         base_url="https://api.together.xyz/v1",
@@ -496,17 +497,18 @@ BACKEND_CAPABILITIES: Dict[str, BackendCapabilities] = {
         backend_type="openrouter",
         provider_name="OpenRouter",
         supported_capabilities={
+            "web_search",  # Via plugins array (enable_web_search: true)
             "mcp",
             "audio_understanding",
             "video_understanding",
             "image_generation",
         },
-        builtin_tools=[],
+        builtin_tools=[],  # OpenRouter is a routing service, tools depend on underlying models
         filesystem_support="mcp",
-        models=["custom"],  # OpenRouter supports 300+ models
+        models=["custom"],  # User-specified OpenRouter model ID
         default_model="custom",
         env_var="OPENROUTER_API_KEY",
-        notes="OpenAI-compatible API. Unified access to 300+ AI models.",
+        notes="OpenAI-compatible API. Unified access to 300+ AI models. Web search via plugins array. Tool support depends on underlying model capabilities.",
         base_url="https://openrouter.ai/api/v1",
     ),
     "moonshot": BackendCapabilities(

@@ -62,7 +62,7 @@ def _validate_path_access(path: Path, allowed_paths: Optional[List[Path]] = None
     raise ValueError(f"Path not in allowed directories: {path}")
 
 
-@context_params("backend_type", "model")
+@context_params("backend_type", "model", "task_context")
 async def read_media(
     file_path: str,
     prompt: Optional[str] = None,
@@ -71,6 +71,7 @@ async def read_media(
     backend_type: Optional[str] = None,
     model: Optional[str] = None,
     multimodal_config: Optional[Dict[str, Any]] = None,
+    task_context: Optional[str] = None,
 ) -> ExecutionResult:
     """
     Read and analyze a media file using external API calls.
@@ -84,10 +85,27 @@ async def read_media(
     - Audio: mp3, wav, m4a, ogg, flac, aac
     - Video: mp4, mov, avi, mkv, webm
 
+    CRITICAL - Be Skeptical When Evaluating Work:
+        When using this tool to evaluate your own or others' work, you MUST be
+        critical and skeptical, not charitable. Look for flaws, not just strengths:
+
+        - What's MISSING or incomplete?
+        - What looks broken, misaligned, or poorly implemented?
+        - Does it actually meet the requirements, or just look superficially OK?
+        - What would a demanding user complain about?
+
+        Include critique-focused language in your prompt, e.g.:
+        - "What flaws, issues, or missing elements do you see?"
+        - "What would a critical reviewer complain about?"
+        - "Does this fully meet requirements or are there gaps?"
+
+        Do NOT just ask "describe this" - that yields overly charitable analysis.
+
     Args:
         file_path: Path to the media file (relative or absolute).
                    Relative paths are resolved from agent's working directory.
         prompt: Optional prompt/question about the media content.
+                For evaluation: include critical/skeptical framing in your prompt.
         agent_cwd: Agent's current working directory (automatically injected).
         allowed_paths: List of allowed base paths for validation (optional).
         backend_type: Backend type (automatically injected from ExecutionContext).
@@ -103,8 +121,14 @@ async def read_media(
         ExecutionResult containing text description/analysis of the media
 
     Examples:
+        # Basic analysis
         read_media("screenshot.png")
         → Returns description of the image
+
+        # Critical evaluation (RECOMMENDED for evaluating work)
+        read_media("website_screenshot.png",
+                   prompt="What flaws, missing elements, or issues do you see? Be critical.")
+        → Returns critique-focused analysis
 
         read_media("recording.mp3", prompt="Transcribe this audio")
         → Returns transcription of the audio
@@ -113,6 +137,28 @@ async def read_media(
         → Returns description based on video frame analysis
     """
     try:
+        # Load task_context dynamically from CONTEXT.md (it may be created during execution)
+        # This allows agents to create CONTEXT.md after the backend starts streaming
+        from massgen.context.task_context import load_task_context_with_warning
+
+        task_context, context_warning = load_task_context_with_warning(agent_cwd, task_context)
+
+        # Require CONTEXT.md for external API calls
+        if not task_context:
+            result = {
+                "success": False,
+                "operation": "read_media",
+                "error": (
+                    "CONTEXT.md not found in workspace. "
+                    "Before using read_media, create a CONTEXT.md file with task context. "
+                    "This helps external APIs understand what you're working on. "
+                    "See system prompt for instructions and examples."
+                ),
+            }
+            return ExecutionResult(
+                output_blocks=[TextContent(data=json.dumps(result, indent=2))],
+            )
+
         # Convert allowed_paths from strings to Path objects
         allowed_paths_list = [Path(p) for p in allowed_paths] if allowed_paths else None
 
@@ -164,37 +210,59 @@ async def read_media(
         if media_config:
             logger.info(f"Using multimodal_config override for {media_type}: {media_config}")
 
+        # Helper to add context warning to result if present
+        def _add_warning_to_result(exec_result: ExecutionResult) -> ExecutionResult:
+            """Add context warning to result if CONTEXT.md was truncated."""
+            if not context_warning:
+                return exec_result
+            # Parse the JSON, add warning, and re-serialize
+            for block in exec_result.output_blocks:
+                if isinstance(block, TextContent):
+                    try:
+                        data = json.loads(block.data)
+                        data["warning"] = context_warning
+                        block.data = json.dumps(data, indent=2)
+                    except (json.JSONDecodeError, AttributeError):
+                        pass
+            return exec_result
+
         if media_type == "image":
             from massgen.tool._multimodal_tools.understand_image import understand_image
 
-            return await understand_image(
+            result = await understand_image(
                 str(media_path),
                 prompt=default_prompt,
                 agent_cwd=agent_cwd,
                 allowed_paths=allowed_paths,
+                task_context=task_context,
             )
+            return _add_warning_to_result(result)
         elif media_type == "audio":
             from massgen.tool._multimodal_tools.understand_audio import understand_audio
 
-            return await understand_audio(
+            result = await understand_audio(
                 audio_paths=[str(media_path)],
                 prompt=default_prompt,
                 backend_type=override_backend,
                 model=override_model,
                 agent_cwd=agent_cwd,
                 allowed_paths=allowed_paths,
+                task_context=task_context,
             )
+            return _add_warning_to_result(result)
         elif media_type == "video":
             from massgen.tool._multimodal_tools.understand_video import understand_video
 
-            return await understand_video(
+            result = await understand_video(
                 video_path=str(media_path),
                 prompt=default_prompt,
                 backend_type=override_backend,
                 model=override_model,
                 agent_cwd=agent_cwd,
                 allowed_paths=allowed_paths,
+                task_context=task_context,
             )
+            return _add_warning_to_result(result)
 
     except ValueError as ve:
         # Path validation error

@@ -90,6 +90,7 @@ class APIParamsHandlerBase(ABC):
             "custom_tools_path",
             "auto_discover_custom_tools",
             "exclude_custom_tools",
+            "direct_mcp_servers",
             "shared_tools_directory",
             # Backend identification (handled by orchestrator)
             "type",
@@ -99,6 +100,8 @@ class APIParamsHandlerBase(ABC):
             "session_storage_base",
             # MCP configuration (handled by base class for MCP backends)
             "mcp_servers",
+            # Coordination parameters (handled by orchestrator, not passed to API)
+            "vote_only",  # Vote-only mode flag for coordination
             # NLIP configuration belongs to MassGen routing, never provider APIs
             "enable_nlip",
             "nlip",

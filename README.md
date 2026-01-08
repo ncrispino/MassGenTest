@@ -69,7 +69,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🆕 Latest Features</h3></summary>
 
-- [v0.1.28 Features](#-latest-features-v0128)
+- [v0.1.35 Features](#-latest-features-v0135)
 </details>
 
 <details open>
@@ -122,16 +122,15 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🗺️ Roadmap</h3></summary>
 
-- Recent Achievements
-  - [v0.1.28](#recent-achievements-v0128)
-  - [v0.0.3 - v0.1.27](#previous-achievements-v003---v0127)
+- [Recent Achievements (v0.1.35)](#recent-achievements-v0135)
+- [Previous Achievements (v0.0.3 - v0.1.34)](#previous-achievements-v003---v0134)
 - [Key Future Enhancements](#key-future-enhancements)
   - Bug Fixes & Backend Improvements
   - Advanced Agent Collaboration
   - Expanded Model, Tool & Agent Integrations
   - Improved Performance & Scalability
   - Enhanced Developer Experience
-- [v0.1.29 Roadmap](#v0129-roadmap)
+- [v0.1.36 Roadmap](#v0136-roadmap)
 </details>
 
 <details open>
@@ -156,31 +155,36 @@ This project started with the "threads of thought" and "iterative refinement" id
 
 ---
 
-## 🆕 Latest Features (v0.1.28)
+## 🆕 Latest Features (v0.1.35)
 
-**🎉 Released: December 22, 2025**
+**🎉 Released: January 7, 2026** | **Next Update: January 9, 2026**
 
-**What's New in v0.1.28:**
-- **🖼️ Unified Multimodal Tools** - Analyze media with `read_media` and create media with `generate_media` (images, audio, video)
-- **📄 Web UI Artifact Previewer** - Preview PDFs, DOCX, PPTX, images, HTML, SVG, Markdown, and Mermaid diagrams
+**What's New in v0.1.35:**
+- **📊 Log Analysis CLI** - New `massgen logs analyze` command with prompt mode and multi-agent self-analysis using MassGen
+- **🔍 Logfire Workflow Attributes** - Comprehensive observability with round context, vote reasoning, and local file references
+- **🔧 Direct MCP Servers** - New `direct_mcp_servers` config to keep specific MCPs as protocol tools when using code-based tools
+- **🐛 Tool Handling Fixes** - Unknown tools handled gracefully, vote-only mode improvements, Grok and Gemini backend fixes
 
-**Bug Fixes:**
-- Azure OpenAI tool calls and workflow integration
-- Web UI display and cancellation handling
-- Docker background shell and sudo configuration
-
-**Try v0.1.28 Features:**
+**Try v0.1.35 Features:**
 ```bash
 # Install or upgrade
 pip install --upgrade massgen
 
-# Unified multimodal tools - generate and analyze images, audio, video
-massgen --config @examples/tools/custom_tools/multimodal_tools/unified_multimodal \
-  "Create an image of two AI chatting with a human and then describe it in detail"
+# Or with uv (faster)
+uv pip install massgen
 
-# Multi-agent collaboration
-massgen --config @examples/basic/multi/three_agents_default \
-  "Analyze the impact of AI on software development"
+# List your runs and see which have been analyzed
+uv run massgen logs list
+
+# Generate an analysis prompt (defaults to most recent log)
+uv run massgen logs analyze
+
+# Run multi-agent self-analysis on your logs
+uv run massgen logs analyze --mode self
+
+# Use direct MCP servers with code-based tools for multi-agent log analysis
+uv run massgen --config massgen/configs/analysis/log_analysis_cli.yaml \
+  "Use the massgen-log-analyzer skill to analyze the log directory at .massgen/massgen_logs/log_20260107_123456. Read all relevant files and produce an ANALYSIS_REPORT.md"
 ```
 
 → [See full release history and examples](massgen/configs/README.md#release-history--examples)
@@ -450,7 +454,9 @@ MassGen automatically loads API keys from `.env` in your current directory.
 The system currently supports multiple model providers with advanced capabilities:
 
 **API-based Models:**
-- **OpenAI**: GPT-5.1-Codex series (gpt-5.1-codex-max, gpt-5.1-codex, gpt-5.1-codex-mini), GPT-5.2, GPT-5.1, GPT-5 series (GPT-5, GPT-5-mini, GPT-5-nano), GPT-4.1 series, GPT-4o, o4-mini with reasoning, web search, code interpreter, and computer-use support
+- **OpenAI**: GPT-5.2 (recommended default), GPT-5.1, GPT-5 series (GPT-5, GPT-5-mini, GPT-5-nano), GPT-5.1-Codex series, GPT-4.1 series, GPT-4o, o4-mini with reasoning, web search, code interpreter, and computer-use support
+  - **Note**: We recommend GPT-5.2/5.1/5 over Codex models. Codex models are [optimized for shorter system messages](https://cookbook.openai.com/examples/gpt-5-codex_prompting_guide) and may not work well with MassGen's coordination prompts.
+  - **Reasoning**: GPT-5.1 and GPT-5.2 default to `reasoning: none`. MassGen automatically sets `reasoning.effort: medium` when no reasoning config is provided, matching GPT-5's default behavior.
 - **Azure OpenAI**: Any Azure-deployed models (GPT-4, GPT-4o, GPT-35-turbo, etc.)
 - **Claude / Anthropic**: Claude Opus 4.5, Claude Haiku 4.5, Claude Sonnet 4.5, Claude Opus 4.1, Claude Sonnet 4
   - Advanced tooling: web search, code execution, Files API, programmatic tool calling, tool search with deferred loading
@@ -512,6 +518,53 @@ MassGen agents can leverage various tools to enhance their problem-solving capab
 | `--no-logs`        | Disable real-time logging.|
 | `--debug`          | Enable debug mode with verbose logging (NEW in v0.0.13). Shows detailed orchestrator activities, agent messages, backend operations, and tool calls. Debug logs are saved to `agent_outputs/log_{time}/massgen_debug.log`. |
 | `"<your question>"`         | Optional single-question input; if omitted, MassGen enters interactive chat mode. |
+
+#### **0. OpenAI-Compatible HTTP Server (NEW)**
+
+Run MassGen as an **OpenAI-compatible** HTTP API (FastAPI + Uvicorn). This is useful for integrating MassGen with existing tooling that expects `POST /v1/chat/completions`.
+
+```bash
+# Start server (defaults: host 0.0.0.0, port 4000)
+massgen serve
+
+# With explicit bind + defaults for model/config
+massgen serve --host 0.0.0.0 --port 4000 --config path/to/config.yaml --default-model gpt-5
+```
+
+**Endpoints**
+
+- `GET /health`
+- `POST /v1/chat/completions` (supports `stream: true` SSE and OpenAI-style tool calling)
+
+**cURL examples**
+
+```bash
+# Health
+curl http://localhost:4000/health
+
+# Non-streaming chat completion
+curl http://localhost:4000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "massgen",
+    "messages": [{"role": "user", "content": "hi"}],
+    "stream": false
+  }'
+
+# Streaming (Server-Sent Events)
+curl -N http://localhost:4000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "massgen",
+    "messages": [{"role": "user", "content": "hi"}],
+    "stream": true
+  }'
+```
+
+**Notes**
+
+- Client-provided `tools` are supported, but tool names that collide with MassGen workflow tools are rejected.
+- Environment variables (optional): `MASSGEN_SERVER_HOST`, `MASSGEN_SERVER_PORT`, `MASSGEN_SERVER_DEFAULT_CONFIG`, `MASSGEN_SERVER_DEFAULT_MODEL`, `MASSGEN_SERVER_DEBUG`.
 
 
 #### **1. Single Agent (Easiest Start)**
@@ -1165,24 +1218,45 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 ⚠️ **Early Stage Notice:** As MassGen is in active development, please expect upcoming breaking architecture changes as we continue to refine and improve the system.
 
-### Recent Achievements (v0.1.28)
+### Recent Achievements (v0.1.35)
 
-**🎉 Released: December 22, 2025**
+**🎉 Released: January 7, 2026**
 
-#### Multimodal Enhancements
-- **Unified Multimodal Understanding**: Consolidated `read_media` tool for image, audio, and video analysis
-- **Unified Media Generation**: Consolidated `generate_media` tool with provider selection for images (gpt-image-1, Imagen), videos (Sora, Veo), and audio (TTS)
-- **OpenRouter Model Filtering**: Automatic filtering to only display models that support tool calling
+#### Log Analysis CLI
+- **`massgen logs analyze` Command**: AI-assisted log analysis with prompt mode (for coding CLIs) and self-analysis mode (3-agent team)
+- **Per-Turn Reports**: Analysis reports at `turn_N/ANALYSIS_REPORT.md` with enhanced `massgen logs list` showing "Analyzed" status
 
-#### Web UI
-- **Artifact Previewer**: Preview workspace artifacts directly in the web interface (PDF, DOCX, PPTX, XLSX, images, HTML, SVG, Markdown, Mermaid)
+#### Logfire Workflow Observability
+- **Round Context**: `massgen.round.intent`, `available_answers`, `answer_previews` for understanding coordination decisions
+- **Vote Context**: Extended `massgen.vote.reason` (500 chars) and `answer_label_mapping` for vote analysis
+- **Local File References**: `massgen.log_path`, `agent.log_path`, `answer_path` for hybrid Logfire + local access
 
-#### Bug Fixes
-- Azure OpenAI tool calls, parameter filtering, and message validation
-- Web UI display and cancellation propagation
-- Docker background shell and sudo configuration
+#### Direct MCP Servers
+- **`direct_mcp_servers` Config**: Keep specific MCP servers as protocol tools when using `enable_code_based_tools: true`
+- **Subagent Inheritance**: Child agents automatically inherit direct MCP server configuration
 
-### Previous Achievements (v0.0.3 - v0.1.27)
+#### Tool Handling Fixes
+- **Unknown Tools**: Malformed tool names (e.g., Gemini's `default_api:` prefix) no longer cause agent termination
+- **Vote-Only Mode**: Fixed agents wasting rounds with rejected `new_answer` calls when at `max_new_answers_per_agent`
+- **Grok & Gemini**: Backend-specific tool handling and parameter fixes
+
+**New Files:** `massgen/configs/analysis/log_analysis.yaml`, `log_analysis_cli.yaml`
+
+### Previous Achievements (v0.0.3 - v0.1.34)
+
+✅ **OpenAI-Compatible Server & Model Discovery (v0.1.34)**: Local HTTP server with `massgen serve` compatible with any OpenAI SDK client, dynamic model discovery for Groq and Together backends via authenticated API calls, WebUI file diffs and answer refresh polling, subagent status tracking and cancellation recovery improvements
+
+✅ **Reactive Context Compression & Streaming Buffers (v0.1.33)**: Automatic conversation compression when context length errors occur, streaming buffer system tracking partial responses for recovery, file overwrite protection in `write_file` tool, task plan duplicate prevention, Grok MCP tools visibility fix, Gemini vote-only mode fix, GPT-5 model behavior improvements
+
+✅ **Multi-Turn Session Export & Per-Attempt Logging (v0.1.32)**: Turn range selection for session export (`--turns`), workspace export controls (`--no-workspace`, `--workspace-limit`), Logfire moved to optional `[observability]` extra, per-attempt isolated log files with handler reconfiguration, automatic DOCX/PPTX/XLSX to PDF conversion for session sharing
+
+✅ **Logfire Observability & Azure Tool Streaming (v0.1.31)**: Optional Logfire integration with automatic LLM instrumentation for OpenAI, Claude, and Gemini backends, Azure OpenAI tool calls yielded as structured chunks, `--logfire` CLI flag and `MASSGEN_LOGFIRE_ENABLED` environment variable
+
+✅ **OpenRouter Web Search & Persona Diversity (v0.1.30)**: Native web search via OpenRouter plugins with `enable_web_search`, persona diversity modes (`perspective`/`implementation`) with phase-based adaptation, Azure multi-endpoint auto-detection, environment variable expansion with `${VAR}` syntax
+
+✅ **Subagent System & Tool Metrics (v0.1.29)**: Spawn parallel child MassGen processes with isolated workspaces and automatic result aggregation, enhanced tool metrics with per-call averages and min/max/median distribution, CLI per-agent system messages via `massgen --quickstart`
+
+✅ **Unified Multimodal Tools & Artifact Previews (v0.1.28)**: Consolidated `read_media` tool for image/audio/video analysis, unified `generate_media` tool for media creation (images, videos, audio), Web UI artifact previewer for PDFs/DOCX/PPTX/images/HTML/SVG/Markdown/Mermaid, OpenRouter tool-capable model filtering, Azure OpenAI fixes
 
 ✅ **Session Sharing & Log Analysis (v0.1.27)**: Session sharing via GitHub Gist with `massgen export`, log analysis CLI with `massgen logs` command, per-LLM call timing metrics, Gemini 3 Flash model support, enhanced CLI config builder with per-agent web search and system messages
 
@@ -1382,19 +1456,19 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 We welcome community contributions to achieve these goals.
 
-### v0.1.29 Roadmap
+### v0.1.36 Roadmap
 
-Version 0.1.29 focuses on backend model auto-update and automatic context compression:
+Version 0.1.36 focuses on OpenAI Responses API improvements and computer use model support:
 
 #### Planned Features
-- **Backend Model List Auto-Update** (@ncrispino): Automatic model listing via provider APIs, third-party wrappers, or documented manual processes
-- **Automatic Context Compression** (@ncrispino): Automatic context compression to manage long conversations efficiently
+- **OpenAI Responses /compact Endpoint** (@ncrispino): Use OpenAI's native `/compact` endpoint for context compression instead of custom summarization
+- **Fara-7B for Computer Use** (@ncrispino): Support for Fara-7B model for GUI automation and computer use tasks
 
 Key technical approach:
-- **Backend Model List Auto-Update**: Native API implementation for OpenAI, Anthropic, Grok, Groq, Nebius; third-party wrappers where needed
-- **Automatic Context Compression**: Intelligent summarization with configurable thresholds and strategies
+- **Native Context Compression**: Leverage OpenAI's API-level compression for better token efficiency
+- **Alternative Computer Use Model**: Fara-7B integration with existing computer use infrastructure
 
-For detailed milestones and technical specifications, see the [full v0.1.29 roadmap](ROADMAP_v0.1.29.md).
+For detailed milestones and technical specifications, see the [full v0.1.36 roadmap](ROADMAP_v0.1.36.md).
 
 ---
 

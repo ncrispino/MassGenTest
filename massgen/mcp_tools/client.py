@@ -4,6 +4,7 @@ MCP client implementation for connecting to MCP servers. This module provides en
 functionality to connect with MCP servers and integrate external tools into the MassGen workflow.
 """
 import asyncio
+import json
 from dataclasses import dataclass
 from datetime import timedelta
 from enum import Enum
@@ -16,6 +17,7 @@ from mcp.client.stdio import get_default_environment, stdio_client
 from mcp.client.streamable_http import streamablehttp_client
 
 from ..logger_config import logger
+from ..structured_logging import get_current_round, get_tracer
 from .circuit_breaker import MCPCircuitBreaker
 from .config_validator import MCPConfigValidator
 from .exceptions import (
@@ -261,7 +263,11 @@ class MCPClient:
                 return True
 
             except Exception as e:
-                self._circuit_breaker.record_failure(server_name)
+                self._circuit_breaker.record_failure(
+                    server_name,
+                    error_type="connection",
+                    error_message=str(e),
+                )
                 server_client.connection_state = ConnectionState.FAILED
                 logger.error(f"Failed to connect to {server_name}: {e}")
 
@@ -540,13 +546,23 @@ class MCPClient:
         server_client.initialized = False
         server_client.connection_state = ConnectionState.DISCONNECTED
 
-    async def call_tool(self, tool_name: str, arguments: Dict[str, Any]) -> Any:
+    async def call_tool(
+        self,
+        tool_name: str,
+        arguments: Dict[str, Any],
+        agent_id: Optional[str] = None,
+        round_number: Optional[int] = None,
+        round_type: Optional[str] = None,
+    ) -> Any:
         """
         Call an MCP tool with validation and timeout handling.
 
         Args:
             tool_name: Name of the tool to call (always prefixed as mcp__server__toolname)
             arguments: Tool arguments
+            agent_id: Optional agent ID for observability attribution
+            round_number: Optional round number for observability attribution
+            round_type: Optional round type for observability attribution
 
         Returns:
             Tool execution result
@@ -617,13 +633,74 @@ class MCPClient:
                 },
             )
 
+        tracer = get_tracer()
+        start_time = asyncio.get_event_loop().time()
+
         try:
-            # Add timeout to tool calls
-            result = await asyncio.wait_for(
-                session.call_tool(original_tool_name, validated_arguments),
-                timeout=self.timeout_seconds,
-            )
+            # Add timeout to tool calls with tracing span
+            span_attributes = {
+                "tool.name": tool_name,
+                "tool.type": "mcp",
+                "mcp.server": server_name,
+                "mcp.tool": original_tool_name,
+            }
+            if agent_id:
+                span_attributes["massgen.agent_id"] = agent_id
+
+            # Get round context for tool call attribution
+            # First try explicit parameters, then fall back to contextvar
+            effective_round = round_number
+            effective_round_type = round_type
+            if effective_round is None or effective_round_type is None:
+                ctx_round, ctx_round_type = get_current_round()
+                if effective_round is None and ctx_round is not None:
+                    effective_round = ctx_round
+                if effective_round_type is None and ctx_round_type is not None:
+                    effective_round_type = ctx_round_type
+
+            if effective_round is not None:
+                span_attributes["massgen.round"] = effective_round
+            if effective_round_type is not None:
+                span_attributes["massgen.round_type"] = effective_round_type
+
+            # Add input preview to span attributes
+            try:
+                args_json = json.dumps(validated_arguments) if validated_arguments else ""
+                span_attributes["tool.input_preview"] = args_json[:500] if args_json else ""
+                span_attributes["tool.input_chars"] = len(args_json)
+            except (TypeError, ValueError):
+                span_attributes["tool.input_preview"] = "<non-serializable>"
+                span_attributes["tool.input_chars"] = 0
+
+            with tracer.span(
+                f"mcp.{server_name}.{original_tool_name}",
+                attributes=span_attributes,
+            ) as span:
+                result = await asyncio.wait_for(
+                    session.call_tool(original_tool_name, validated_arguments),
+                    timeout=self.timeout_seconds,
+                )
+                execution_time_ms = (asyncio.get_event_loop().time() - start_time) * 1000
+                span.set_attribute("tool.success", True)
+                span.set_attribute("tool.execution_time_ms", execution_time_ms)
+
+                # Add output preview to span
+                output_text = ""
+                output_chars = 0
+                if result and hasattr(result, "content"):
+                    for content_item in result.content:
+                        if hasattr(content_item, "text"):
+                            output_chars += len(content_item.text)
+                            output_text += content_item.text
+                span.set_attribute("tool.output_preview", output_text[:500] if output_text else "")
+                span.set_attribute("tool.output_chars", output_chars)
+
             logger.debug(f"Tool {original_tool_name} completed successfully on {server_name}")
+
+            # Note: log_tool_execution is NOT called here because the parent
+            # (base_with_custom_tool_and_mcp.py) already logs tool execution.
+            # The span above (mcp.{server_name}.{tool_name}) provides MCP-specific
+            # attributes while the parent handles consolidated logging.
 
             # Send tool call success status if callback is available
             if self.status_callback:
@@ -639,6 +716,12 @@ class MCPClient:
             return result
 
         except asyncio.TimeoutError:
+            # Note: log_tool_execution is NOT called here - parent handles logging
+            # Log the arguments that caused the timeout for debugging
+            logger.error(
+                f"Tool call timed out for {original_tool_name} on {server_name} after {self.timeout_seconds}s. " f"Arguments: {validated_arguments}",
+            )
+
             if self.status_callback:
                 await self.status_callback(
                     "tool_call_timeout",
@@ -647,23 +730,34 @@ class MCPClient:
                         "tool": original_tool_name,
                         "message": f"Tool '{original_tool_name}' timed out after {self.timeout_seconds} seconds",
                         "timeout": self.timeout_seconds,
+                        "arguments": validated_arguments,
                     },
                 )
 
-            # Record failure with circuit breaker
-            self._circuit_breaker.record_failure(server_name)
+            # Record failure with circuit breaker (include arguments for debugging)
+            args_preview = str(validated_arguments)[:500] if validated_arguments else ""
+            self._circuit_breaker.record_failure(
+                server_name,
+                error_type="timeout",
+                error_message=f"Tool '{original_tool_name}' timed out after {self.timeout_seconds}s. Args: {args_preview}",
+            )
 
             raise MCPTimeoutError(
                 f"Tool call timed out after {self.timeout_seconds} seconds",
                 timeout_seconds=self.timeout_seconds,
                 operation=f"call_tool({original_tool_name})",
-                context={"tool_name": original_tool_name, "server_name": server_name},
+                context={"tool_name": original_tool_name, "server_name": server_name, "arguments": validated_arguments},
             )
         except Exception as e:
+            # Note: log_tool_execution is NOT called here - parent handles logging
             logger.error(f"Tool call failed for {original_tool_name} on {server_name}: {e}", exc_info=True)
 
             # Record failure with circuit breaker
-            self._circuit_breaker.record_failure(server_name)
+            self._circuit_breaker.record_failure(
+                server_name,
+                error_type="execution",
+                error_message=f"Tool '{original_tool_name}' failed: {e}",
+            )
 
             if self.status_callback:
                 await self.status_callback(
@@ -789,7 +883,11 @@ class MCPClient:
                             break
                     except Exception as e:
                         logger.warning(f"Reconnection attempt {attempt + 1} failed for {server_name}: {e}")
-                        self._circuit_breaker.record_failure(server_name)
+                        self._circuit_breaker.record_failure(
+                            server_name,
+                            error_type="reconnection",
+                            error_message=f"Attempt {attempt + 1} failed: {e}",
+                        )
 
                 reconnect_results[server_name] = success
             else:

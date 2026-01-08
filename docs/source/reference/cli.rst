@@ -79,6 +79,8 @@ CLI Parameters
      - Don't auto-open browser when using ``--web`` with a question. Useful for automation or when running on servers
    * - ``--output-file PATH``
      - Write final answer to specified file path. Works in any mode (automation, interactive, etc.). Useful for capturing agent responses in scripts or pipelines
+   * - ``--logfire``
+     - Enable Logfire observability for structured tracing of LLM calls, tool executions, and orchestration. Requires Logfire token (via ``logfire auth login`` or ``LOGFIRE_TOKEN`` env var). See :doc:`../user_guide/logging` for setup details
    * - ``"<your question>"``
      - Optional single-question input. If omitted, MassGen enters interactive chat mode
 
@@ -215,6 +217,69 @@ WebUI Mode
    # Combine with debug mode
    massgen --web --debug --config my_config.yaml
 
+OpenAI-Compatible HTTP Server (``massgen serve``)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Run MassGen as an OpenAI-compatible HTTP API (FastAPI + Uvicorn).
+
+**Endpoints:**
+
+* ``GET /health`` - Health check endpoint
+* ``POST /v1/chat/completions`` - OpenAI-compatible chat completions (non-streaming only)
+
+.. note::
+
+   Streaming (``stream: true``) is not yet supported. The server will return HTTP 501
+   if streaming is requested. Use ``stream: false`` for all requests.
+
+.. code-block:: bash
+
+   # Start server (defaults: host 0.0.0.0, port 4000)
+   massgen serve
+
+   # Custom bind
+   massgen serve --host 127.0.0.1 --port 4000
+
+   # Provide a default config
+   massgen serve --config path/to/config.yaml
+
+   # Enable auto-reload for development
+   massgen serve --reload
+
+   # Health check
+   curl http://localhost:4000/health
+
+   # OpenAI-compatible Chat Completions
+   # Note: When running with --config, the "model" parameter is ignored
+   # to ensure the server uses the agent team defined in your YAML.
+   curl http://localhost:4000/v1/chat/completions \
+     -H "Content-Type: application/json" \
+     -d '{"model":"massgen","messages":[{"role":"user","content":"hi"}],"stream":false}'
+
+**Response Format:**
+
+The server returns responses with the final synthesized answer in ``content`` and all agent traces in ``reasoning_content``:
+
+.. code-block:: json
+
+   {
+     "choices": [{
+       "message": {
+         "role": "assistant",
+         "content": "The final answer from the agent team.",
+         "reasoning_content": "[system] Starting coordination...\n[agent_1] Analyzing...\n[orchestrator] Vote: agent_1"
+       },
+       "finish_reason": "stop"
+     }]
+   }
+
+**Environment variables (optional):**
+
+* ``MASSGEN_SERVER_HOST`` (default: ``0.0.0.0``)
+* ``MASSGEN_SERVER_PORT`` (default: ``4000``)
+* ``MASSGEN_SERVER_DEFAULT_CONFIG`` (default: unset)
+* ``MASSGEN_SERVER_DEBUG`` (default: ``false``)
+
 Output to File
 ~~~~~~~~~~~~~~
 
@@ -226,6 +291,22 @@ Output to File
    # With config and output file
    massgen --config my_config.yaml --output-file report.md "Generate a project report"
 
+Logfire Observability
+~~~~~~~~~~~~~~~~~~~~~
+
+.. code-block:: bash
+
+   # Enable structured tracing with Logfire
+   massgen --logfire --config your_config.yaml "Your question"
+
+   # Combine with debug mode for maximum observability
+   massgen --logfire --debug --config your_config.yaml "Your question"
+
+   # Or enable via environment variable
+   export MASSGEN_LOGFIRE_ENABLED=true
+   massgen --config your_config.yaml "Your question"
+
+See :doc:`../user_guide/logging` for detailed Logfire setup instructions.
 
 Additional Commands
 -------------------
@@ -262,9 +343,17 @@ Analyze and browse session logs without manual file navigation.
    * - ``massgen logs tools --sort calls``
      - Sort tools by call count instead of time
    * - ``massgen logs list``
-     - List recent runs with timestamps, costs, and questions
+     - List recent runs with timestamps, costs, questions, and analysis status
+   * - ``massgen logs list --analyzed``
+     - Show only logs with ANALYSIS_REPORT.md
+   * - ``massgen logs list --unanalyzed``
+     - Show only logs without analysis
    * - ``massgen logs list --limit 20``
      - Show more runs (default: 10)
+   * - ``massgen logs analyze``
+     - Generate analysis prompt for use in coding CLIs
+   * - ``massgen logs analyze --mode self``
+     - Run multi-agent self-analysis using a preset MassGen team (customizable via ``--config``)
    * - ``massgen logs open``
      - Open log directory in system file manager
 
@@ -280,6 +369,12 @@ Analyze and browse session logs without manual file navigation.
      - Analyze a specific log directory instead of the most recent
    * - ``--json``
      - Output raw JSON for scripting
+   * - ``--mode {prompt,self}``
+     - For ``analyze``: ``prompt`` (default) outputs a prompt; ``self`` runs multi-agent analysis
+   * - ``--ui {automation,rich_terminal,webui}``
+     - For ``analyze --mode self``: UI mode (default: ``rich_terminal``)
+   * - ``--config PATH``
+     - For ``analyze --mode self``: Custom analysis config file
 
 Share Session (``massgen export``)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

@@ -199,10 +199,12 @@ export interface AgentState {
   displayRoundId: string;  // What the dropdown shows (user-selectable)
   voteTarget?: string;
   voteReason?: string;
+  voteRound?: number;  // Which voting round this vote was cast in (for invalidation tracking)
   answerCount: number;
   voteCount: number;  // Track votes for labeling
   files: FileInfo[];
   toolCalls: ToolCallInfo[];
+  workspacePath?: string;  // Current workspace path for this agent (from status.json)
 }
 
 export interface FileInfo {
@@ -262,6 +264,16 @@ export interface ConversationMessage {
 }
 
 // Full session state
+// Record of a vote for history tracking
+export interface VoteRecord {
+  voterId: string;
+  targetId: string;
+  reason: string;
+  voteRound: number;
+  timestamp: number;
+  votedAnswerLabel?: string;  // e.g., "answer1.2"
+}
+
 export interface SessionState {
   sessionId: string;
   question: string;
@@ -269,6 +281,8 @@ export interface SessionState {
   agentOrder: string[];
   answers: Answer[];
   voteDistribution: Record<string, number>;
+  voteHistory: VoteRecord[];  // All votes across all rounds (for history display)
+  currentVotingRound: number;  // Track which voting round we're in (increments when new answer submitted)
   selectedAgent?: string;
   finalAnswer?: string;
   orchestratorEvents: string[];
@@ -359,6 +373,7 @@ export interface TimelineData {
   agents: string[];
   startTime: number;
   endTime?: number;
+  currentVotingRound?: number;  // For determining which votes are superseded
 }
 
 // ============================================================================
@@ -374,3 +389,72 @@ export interface FileContentResponse {
   language: string;  // For syntax highlighting (e.g., "python", "typescript")
   error?: string;
 }
+
+// ============================================================================
+// Workspace Browser WebSocket Types (for pre-fetched workspace file lists)
+// ============================================================================
+
+/**
+ * WebSocket event types for workspace file listing.
+ * File lists are pre-fetched on connect and refreshed on-demand.
+ * No live file monitoring - uses simple pre-fetch + cache pattern.
+ */
+export type WorkspaceWSEventType =
+  | 'workspace_connected'
+  | 'workspace_error'
+  | 'workspace_refresh';
+
+/**
+ * Base message for workspace WebSocket communication.
+ */
+export interface WorkspaceWSMessage {
+  type: WorkspaceWSEventType;
+  session_id: string;
+  timestamp: number;
+}
+
+/**
+ * Event sent when WebSocket connection is established.
+ * Includes initial file lists for each workspace to enable instant modal open.
+ */
+export interface WorkspaceConnectedEvent extends WorkspaceWSMessage {
+  type: 'workspace_connected';
+  watched_paths: string[];
+  /** Initial file lists keyed by workspace path - sent on connect for instant display */
+  initial_files?: Record<string, WorkspaceFileInfo[]>;
+}
+
+/**
+ * Event sent when an error occurs in workspace operations.
+ */
+export interface WorkspaceErrorEvent extends WorkspaceWSMessage {
+  type: 'workspace_error';
+  error: string;
+  workspace_path?: string;
+}
+
+/**
+ * Event sent in response to a refresh request with updated file list.
+ */
+export interface WorkspaceRefreshEvent extends WorkspaceWSMessage {
+  type: 'workspace_refresh';
+  workspace_path: string;
+  files: WorkspaceFileInfo[];
+}
+
+/**
+ * File metadata for workspace browser.
+ */
+export interface WorkspaceFileInfo {
+  path: string;
+  size: number;
+  modified: number;
+}
+
+/**
+ * Union type for all workspace WebSocket events.
+ */
+export type WorkspaceWSEvent =
+  | WorkspaceConnectedEvent
+  | WorkspaceErrorEvent
+  | WorkspaceRefreshEvent;

@@ -25,13 +25,17 @@ from massgen.system_prompt_sections import (
     FileSearchSection,
     FilesystemBestPracticesSection,
     FilesystemOperationsSection,
+    GPT5GuidanceSection,
+    GrokGuidanceSection,
     MemorySection,
     MultimodalToolsSection,
     OutputFirstVerificationSection,
     PlanningModeSection,
     PostEvaluationSection,
     SkillsSection,
+    SubagentSection,
     SystemPromptBuilder,
+    TaskContextSection,
     TaskPlanningSection,
     WorkspaceStructureSection,
 )
@@ -89,6 +93,7 @@ class SystemMessageBuilder:
         enable_task_planning: bool,
         previous_turns: List[Dict[str, Any]],
         human_qa_history: Optional[List[Dict[str, str]]] = None,
+        vote_only: bool = False,
     ) -> str:
         """Build system message for coordination phase.
 
@@ -105,6 +110,7 @@ class SystemMessageBuilder:
             enable_task_planning: Whether to include task planning guidance
             previous_turns: List of previous turn data for filesystem context
             human_qa_history: List of human Q&A pairs from broadcast channel (human mode only)
+            vote_only: If True, agent has reached max answers and can only vote
 
         Returns:
             Complete system prompt string with XML structure
@@ -121,6 +127,19 @@ class SystemMessageBuilder:
         # PRIORITY 1 (CRITICAL): Core Behaviors - HOW to act
         builder.add_section(CoreBehaviorsSection())
 
+        # PRIORITY 4: File Persistence Guidance (solution persistence + tool preambles)
+        # Added for models that tend to output file contents in answers instead of using file tools
+        # GPT-5.x: Based on OpenAI's prompting guides
+        # Grok: Observed behavior of embedding HTML in answers instead of writing to files
+        model_name = agent.backend.config.get("model", "").lower()
+        if model_name.startswith("gpt-5") or model_name.startswith("grok"):
+            builder.add_section(GPT5GuidanceSection())
+            logger.info(f"[SystemMessageBuilder] Added GPT-5 guidance section for {agent_id} (model: {model_name})")
+        # Grok-specific: Prevent HTML-escaping of file content (known Grok 4.1 issue with SVG/XML/HTML)
+        if model_name.startswith("grok"):
+            builder.add_section(GrokGuidanceSection())
+            logger.info(f"[SystemMessageBuilder] Added Grok file encoding guidance for {agent_id} (model: {model_name})")
+
         # PRIORITY 1 (HIGH): Output-First Verification - verify outcomes, not implementations
         builder.add_section(OutputFirstVerificationSection())
 
@@ -131,6 +150,7 @@ class SystemMessageBuilder:
             EvaluationSection(
                 voting_sensitivity=voting_sensitivity,
                 answer_novelty_requirement=answer_novelty_requirement,
+                vote_only=vote_only,
             ),
         )
 
@@ -208,14 +228,17 @@ class SystemMessageBuilder:
             enable_command_execution = False
             docker_mode = False
             enable_sudo = False
+            concurrent_tool_execution = False
             if hasattr(agent, "config") and agent.config:
                 enable_command_execution = agent.config.backend_params.get("enable_mcp_command_line", False)
                 docker_mode = agent.config.backend_params.get("command_line_execution_mode", "local") == "docker"
                 enable_sudo = agent.config.backend_params.get("command_line_docker_enable_sudo", False)
+                concurrent_tool_execution = agent.config.backend_params.get("concurrent_tool_execution", False)
             elif hasattr(agent, "backend") and hasattr(agent.backend, "backend_params"):
                 enable_command_execution = agent.backend.backend_params.get("enable_mcp_command_line", False)
                 docker_mode = agent.backend.backend_params.get("command_line_execution_mode", "local") == "docker"
                 enable_sudo = agent.backend.backend_params.get("command_line_docker_enable_sudo", False)
+                concurrent_tool_execution = agent.backend.backend_params.get("concurrent_tool_execution", False)
 
             # Build and add filesystem sections using consolidated helper
             fs_ops, fs_best, cmd_exec = self._build_filesystem_sections(
@@ -225,6 +248,7 @@ class SystemMessageBuilder:
                 enable_command_execution=enable_command_execution,
                 docker_mode=docker_mode,
                 enable_sudo=enable_sudo,
+                concurrent_tool_execution=concurrent_tool_execution,
             )
 
             builder.add_section(fs_ops)
@@ -254,6 +278,27 @@ class SystemMessageBuilder:
 
                 builder.add_section(CodeBasedToolsSection(workspace_path, shared_tools_path, mcp_servers))
                 logger.info(f"[SystemMessageBuilder] Added code-based tools section for {agent_id}")
+
+        # PRIORITY 10 (MEDIUM): Subagent Delegation (conditional)
+        enable_subagents = False
+        if hasattr(self.config, "coordination_config") and hasattr(self.config.coordination_config, "enable_subagents"):
+            enable_subagents = self.config.coordination_config.enable_subagents
+            if enable_subagents:
+                # Get workspace path for subagent section
+                workspace_path = ""
+                if agent.backend.filesystem_manager:
+                    workspace_path = str(agent.backend.filesystem_manager.get_current_workspace())
+                # Get max concurrent from config, default to 3
+                max_concurrent = getattr(self.config.coordination_config, "subagent_max_concurrent", 3)
+                builder.add_section(SubagentSection(workspace_path, max_concurrent))
+                logger.info(f"[SystemMessageBuilder] Added subagent section for {agent_id} (max_concurrent: {max_concurrent})")
+
+        # PRIORITY 10 (MEDIUM): Task Context (when multimodal tools OR subagents are enabled)
+        # This instructs agents to create CONTEXT.md before using tools that make external API calls
+        enable_multimodal = agent.backend.config.get("enable_multimodal_tools", False) if agent.backend else False
+        if enable_multimodal or enable_subagents:
+            builder.add_section(TaskContextSection())
+            logger.info(f"[SystemMessageBuilder] Added task context section for {agent_id} (multimodal: {enable_multimodal}, subagents: {enable_subagents})")
 
         # PRIORITY 10 (MEDIUM): Task Planning
         if enable_task_planning:
@@ -312,6 +357,7 @@ class SystemMessageBuilder:
         enable_command_execution: bool = False,
         docker_mode: bool = False,
         enable_sudo: bool = False,
+        concurrent_tool_execution: bool = False,
     ) -> str:
         """Build system message for final presentation phase.
 
@@ -330,6 +376,7 @@ class SystemMessageBuilder:
             enable_command_execution: Whether command execution is enabled
             docker_mode: Whether commands run in Docker
             enable_sudo: Whether sudo is available
+            concurrent_tool_execution: Whether tools execute in parallel
 
         Returns:
             Complete system message string
@@ -361,6 +408,7 @@ class SystemMessageBuilder:
                 enable_command_execution=enable_command_execution,
                 docker_mode=docker_mode,
                 enable_sudo=enable_sudo,
+                concurrent_tool_execution=concurrent_tool_execution,
             )
 
             # Build sections list
@@ -489,6 +537,7 @@ This makes the work reusable for similar future tasks."""
         enable_command_execution: bool,
         docker_mode: bool = False,
         enable_sudo: bool = False,
+        concurrent_tool_execution: bool = False,
     ) -> Tuple[Any, Any, Optional[Any]]:  # Tuple[FilesystemOperationsSection, FilesystemBestPracticesSection, Optional[CommandExecutionSection]]
         """Build filesystem-related sections.
 
@@ -502,6 +551,7 @@ This makes the work reusable for similar future tasks."""
             enable_command_execution: Whether to include command execution section
             docker_mode: Whether commands run in Docker
             enable_sudo: Whether sudo is available
+            concurrent_tool_execution: Whether tools execute in parallel
 
         Returns:
             Tuple of (FilesystemOperationsSection, FilesystemBestPracticesSection, Optional[CommandExecutionSection])
@@ -536,7 +586,11 @@ This makes the work reusable for similar future tasks."""
         # Build command execution section if enabled
         cmd_exec = None
         if enable_command_execution:
-            cmd_exec = CommandExecutionSection(docker_mode=docker_mode, enable_sudo=enable_sudo)
+            cmd_exec = CommandExecutionSection(
+                docker_mode=docker_mode,
+                enable_sudo=enable_sudo,
+                concurrent_tool_execution=concurrent_tool_execution,
+            )
 
         return fs_ops, fs_best, cmd_exec
 

@@ -19,6 +19,14 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from .logger_config import logger
+from .structured_logging import (
+    log_agent_answer,
+    log_agent_restart,
+    log_agent_vote,
+    log_final_answer,
+    log_winner_selected,
+    trace_coordination_session,
+)
 from .utils import ActionType, AgentStatus
 
 
@@ -41,6 +49,7 @@ class EventType(str, Enum):
     AGENT_TIMEOUT = "agent_timeout"
     AGENT_CANCELLED = "agent_cancelled"
     UPDATE_INJECTED = "update_injected"
+    VOTE_IGNORED = "vote_ignored"
 
     # Broadcast/communication events
     BROADCAST_CREATED = "broadcast_created"
@@ -55,6 +64,7 @@ ACTION_TO_EVENT = {
     ActionType.TIMEOUT: EventType.AGENT_TIMEOUT,
     ActionType.CANCELLED: EventType.AGENT_CANCELLED,
     ActionType.UPDATE_INJECTED: EventType.UPDATE_INJECTED,
+    ActionType.VOTE_IGNORED: EventType.VOTE_IGNORED,
 }
 
 
@@ -159,6 +169,7 @@ class CoordinationTracker:
         self.final_context: Optional[Dict[str, Any]] = None  # Context provided to final agent
         self.is_final_round: bool = False  # Track if we're in the final presentation round
         self.user_prompt: Optional[str] = None  # Store the initial user prompt
+        self.log_path: Optional[str] = None  # MAS-199: Path to log directory for hybrid access
 
         # Agent mappings - coordination tracker is the single source of truth
         self.agent_context_labels: Dict[
@@ -171,6 +182,9 @@ class CoordinationTracker:
             str,
             Dict[str, Any],
         ] = {}  # label/vote_id -> snapshot info
+
+        # Logfire tracing - context manager for session span
+        self._session_span_context = None
 
     def _make_snapshot_path(self, kind: str, agent_id: str, timestamp: str) -> str:
         """Generate standardized snapshot paths.
@@ -195,12 +209,15 @@ class CoordinationTracker:
         self,
         agent_ids: List[str],
         user_prompt: Optional[str] = None,
+        # New workflow analysis fields (MAS-199)
+        log_path: Optional[str] = None,
     ):
         """Initialize a new coordination session."""
         self.start_time = time.time()
         self.agent_ids = agent_ids.copy()
         self.answers_by_agent = {aid: [] for aid in agent_ids}
         self.user_prompt = user_prompt
+        self.log_path = log_path  # Store for later use (MAS-199)
 
         # Initialize per-agent round tracking
         self.agent_rounds = {aid: 0 for aid in agent_ids}
@@ -215,6 +232,19 @@ class CoordinationTracker:
             None,
             f"Started with agents: {agent_ids}",
         )
+
+        # Start Logfire session span for hierarchical tracing (MAS-199: includes log_path)
+        self._session_span_context = trace_coordination_session(
+            task=user_prompt or "",
+            num_agents=len(agent_ids),
+            agent_ids=agent_ids,
+            log_path=log_path,
+        )
+        try:
+            self._session_span_context.__enter__()
+        except Exception:
+            # Gracefully handle if Logfire is not enabled
+            self._session_span_context = None
 
     # Agent ID utility methods
     def get_anonymous_id(self, agent_id: str) -> str:
@@ -304,6 +334,17 @@ class CoordinationTracker:
                 "available_answers": self.iteration_available_labels.copy(),
             },
         )
+        # Note: We don't create Logfire spans for every iteration - only meaningful
+        # events (answers, votes, winner selection) are logged to avoid noise
+
+    def _close_session_span(self):
+        """Close the session span if one exists."""
+        if self._session_span_context is not None:
+            try:
+                self._session_span_context.__exit__(None, None, None)
+            except Exception:
+                pass
+            self._session_span_context = None
 
     def end_iteration(self, reason: str, details: Optional[Dict[str, Any]] = None):
         """Record how an iteration ended."""
@@ -321,6 +362,8 @@ class CoordinationTracker:
             f"Iteration {self.current_iteration} ended: {reason}",
             context,
         )
+        # Note: We don't log every iteration end to Logfire - only meaningful
+        # events are logged (answers, votes, winner selection)
 
     def set_user_prompt(self, prompt: str):
         """Set or update the user prompt."""
@@ -426,6 +469,17 @@ class CoordinationTracker:
             context,
         )
 
+        # Log to Logfire for observability
+        for agent_id in agents_restarted:
+            restart_count = self.agent_rounds.get(agent_id, 0) + 1
+            log_agent_restart(
+                agent_id=agent_id,
+                reason="new_answer_available",
+                triggering_agent=triggering_agent,
+                restart_count=restart_count,
+                affected_agents=agents_restarted,
+            )
+
     def complete_agent_restart(self, agent_id: str):
         """Record when an agent has completed its restart and increment their round.
 
@@ -510,6 +564,21 @@ class CoordinationTracker:
             agent_id,
             f"Provided answer {label}",
             context,
+        )
+
+        # Log to Logfire for structured tracing (MAS-199: add answer_path for hybrid access)
+        # Build answer path from log_path and snapshot path if available
+        answer_path = None
+        if self.log_path and snapshot_timestamp:
+            relative_path = self._make_snapshot_path("answer", agent_id, snapshot_timestamp)
+            answer_path = f"{self.log_path}/{relative_path}"
+        log_agent_answer(
+            agent_id=agent_id,
+            answer_label=label,
+            iteration=self.current_iteration,
+            round_number=self.get_agent_round(agent_id),
+            answer_preview=answer[:200] if answer else None,
+            answer_path=answer_path,
         )
 
     def add_agent_vote(
@@ -597,6 +666,29 @@ class CoordinationTracker:
             context,
         )
 
+        # Log to Logfire for structured tracing (MAS-199: add vote context for workflow analysis)
+        # Count agents who have submitted at least one answer
+        agents_with_answers = sum(1 for aid in self.agent_ids if self.answers_by_agent.get(aid))
+        # Build mapping of answer labels to agent IDs for the available answers
+        answer_label_mapping = {}
+        for label in self.iteration_available_labels:
+            # Find which agent owns this label
+            for aid, answers_list in self.answers_by_agent.items():
+                for ans in answers_list:
+                    if ans.label == label:
+                        answer_label_mapping[label] = aid
+                        break
+        log_agent_vote(
+            agent_id=agent_id,
+            voted_for_label=voted_for_label,
+            iteration=self.current_iteration,
+            round_number=self.get_agent_round(agent_id),
+            reason=reason,
+            available_answers=self.iteration_available_labels.copy(),
+            agents_with_answers=agents_with_answers,
+            answer_label_mapping=answer_label_mapping,
+        )
+
     def set_final_agent(
         self,
         agent_id: str,
@@ -627,6 +719,25 @@ class CoordinationTracker:
             agent_id,
             "Selected as final presenter",
             self.final_context,
+        )
+
+        # Log to Logfire for structured tracing
+        # Get the winning agent's latest answer label
+        winner_label = "unknown"
+        if agent_id in self.answers_by_agent and self.answers_by_agent[agent_id]:
+            winner_label = self.answers_by_agent[agent_id][-1].label
+
+        # Calculate vote counts from stored votes
+        vote_counts = {}
+        for vote in self.votes:
+            label = vote.voted_for_label
+            vote_counts[label] = vote_counts.get(label, 0) + 1
+
+        log_winner_selected(
+            winner_agent_id=agent_id,
+            winner_label=winner_label,
+            vote_counts=vote_counts,
+            total_iterations=self.current_iteration,
         )
 
     def set_final_answer(
@@ -681,6 +792,16 @@ class CoordinationTracker:
             f"Presented final answer {label}",
             context,
         )
+
+        # Log to Logfire for structured tracing
+        log_final_answer(
+            agent_id=agent_id,
+            iteration=self.current_iteration,
+            answer_preview=final_answer[:200] if final_answer else None,
+        )
+
+        # Close session span when final answer is provided
+        self._close_session_span()
 
     def start_final_round(self, selected_agent_id: str):
         """Start the final presentation round."""
@@ -811,6 +932,8 @@ class CoordinationTracker:
             None,
             f"Session completed in {duration:.1f}s",
         )
+        # Ensure session span is closed
+        self._close_session_span()
 
     @property
     def all_answers(self) -> Dict[str, str]:
