@@ -311,28 +311,7 @@ cd MassGen
 
 **Install in editable mode with pip**
 
-**Option 1: Using traditional Python env**
-
-```bash
-pip install -e .
-
-# Optional: External framework integration
-pip install -e ".[external]"
-
-# Automated setup (works on all platforms) - installs dependencies, skills, Docker images, also sets up API keys
-massgen --setup
-
-# Or use the bash script (Unix/Linux/macOS only), need manually config API keys, see sections below
-./scripts/init.sh
-
-# If you would like to install other dependencies later
-# Here is a light-weighted setup script which only installs skills (works on all platforms)
-massgen --setup-skills
-
-# Or use the bash script (Unix/Linux/macOS only)
-./scripts/init_skills.sh
-```
-**Option 2 (recommended): Installing with uv (faster)**
+**Option 1 (recommended): Installing with uv (faster)**
 
 ```bash
 uv venv
@@ -354,6 +333,28 @@ uv run massgen --setup-skills
 
 # Or use the bash script (Unix/Linux/macOS only)
 uv run ./scripts/init_skills.sh
+```
+
+**Option 2: Using traditional Python env**
+
+```bash
+pip install -e .
+
+# Optional: External framework integration
+pip install -e ".[external]"
+
+# Automated setup (works on all platforms) - installs dependencies, skills, Docker images, also sets up API keys
+massgen --setup
+
+# Or use the bash script (Unix/Linux/macOS only), need manually config API keys, see sections below
+./scripts/init.sh
+
+# If you would like to install other dependencies later
+# Here is a light-weighted setup script which only installs skills (works on all platforms)
+massgen --setup-skills
+
+# Or use the bash script (Unix/Linux/macOS only)
+./scripts/init_skills.sh
 ```
 
 > **Note:** The `--setup` and `--setup-skills` commands work cross-platform (Windows, macOS, Linux). The bash scripts (`init.sh`, `init_skills.sh`) are Unix-only but provide additional dev setup like Docker image builds.
@@ -1482,7 +1483,9 @@ We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.
 
 We thank AgentWeb
 
-<img width="196" height="51" alt="68dacef628cd7a44dfb97814_agentweb-logo" src="https://github.com/user-attachments/assets/312f1d67-b342-4f62-b8ad-65cc9f54dc65" />
+<a href="https://www.agentweb.pro/">
+  <img width="196" height="51" alt="68dacef628cd7a44dfb97814_agentweb-logo" src="https://github.com/user-attachments/assets/312f1d67-b342-4f62-b8ad-65cc9f54dc65" />
+</a>
 
 for their kind sponsorship.
 
