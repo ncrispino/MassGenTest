@@ -157,17 +157,17 @@ Key Features
 Recent Releases
 ---------------
 
-**v0.1.26 (December 17, 2025)** - Docker Diagnostics & Web UI Setup
+**v0.1.36 (January 9, 2026)** - @path Context Handling & Hook Framework
 
-Docker diagnostics module with platform-specific error detection and resolution. Web UI setup wizard for guided first-run experience with API key management. Shadow agent response depth for test-time compute scaling. Model registry updates with GPT-5.1-Codex family and Claude alias notation.
+Reference files inline with ``@path`` syntax - just type ``@`` to trigger an autocomplete file picker (like Claude Code). Extend agent behavior with PreToolUse/PostToolUse hooks for permission validation, content injection, and custom processing. Built-in ``MidStreamInjectionHook`` and ``HighPriorityTaskReminderHook``. Plus: Claude Code native hooks integration and improved Docker resource management.
 
-**v0.1.25 (December 15, 2025)** - UI-TARS & Evolving Skills
+**v0.1.35 (January 7, 2026)** - Log Analysis & Workflow Observability
 
-UI-TARS backend for GUI automation with visual understanding. GPT-5.2 model support via OpenRouter. Evolving skill creator system for reusable workflows. Textual terminal display with adaptive dark/light themes.
+New ``massgen logs analyze`` command generates analysis prompts or launches multi-agent self-analysis using MassGen. Logfire workflow attributes capture round intent, vote reasoning, and local file references. ``direct_mcp_servers`` config option for code-based tools mode to keep specific MCPs as protocol tools. Tool handling fixes for Grok, Gemini, unknown tools, and vote-only mode.
 
-**v0.1.24 (December 12, 2025)** - Enhanced Cost Tracking
+**v0.1.34 (January 5, 2026)** - OpenAI-Compatible Server & Model Discovery
 
-Real-time token counting and cost calculation for OpenRouter, xAI/Grok, Gemini, and Claude Code backends. New ``/inspect c`` command displays detailed per-agent cost breakdown with input, output, reasoning, and cached tokens.
+Run MassGen as a local HTTP server with ``massgen serve`` compatible with any OpenAI SDK client. Dynamic model discovery for Groq and Together backends via authenticated API calls. WebUI improvements: file diffs, answer refresh polling, faster workspace browser. Subagent reliability enhancements for status tracking and cancellation recovery.
 
 :doc:`Full changelog → <changelog>`
 

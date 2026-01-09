@@ -69,7 +69,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🆕 Latest Features</h3></summary>
 
-- [v0.1.26 Features](#-latest-features-v0126)
+- [v0.1.36 Features](#-latest-features-v0136)
 </details>
 
 <details open>
@@ -122,16 +122,15 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🗺️ Roadmap</h3></summary>
 
-- Recent Achievements
-  - [v0.1.26](#recent-achievements-v0126)
-  - [v0.0.3 - v0.1.25](#previous-achievements-v003---v0125)
+- [Recent Achievements (v0.1.36)](#recent-achievements-v0136)
+- [Previous Achievements (v0.0.3 - v0.1.35)](#previous-achievements-v003---v0135)
 - [Key Future Enhancements](#key-future-enhancements)
   - Bug Fixes & Backend Improvements
   - Advanced Agent Collaboration
   - Expanded Model, Tool & Agent Integrations
   - Improved Performance & Scalability
   - Enhanced Developer Experience
-- [v0.1.27 Roadmap](#v0127-roadmap)
+- [v0.1.37 Roadmap](#v0137-roadmap)
 </details>
 
 <details open>
@@ -156,21 +155,16 @@ This project started with the "threads of thought" and "iterative refinement" id
 
 ---
 
-## 🆕 Latest Features (v0.1.26)
+## 🆕 Latest Features (v0.1.36)
 
-**🎉 Released: December 17, 2025**
+**🎉 Released: January 9, 2026** | **Next Update: January 12, 2026**
 
-**What's New in v0.1.26:**
-- **🐳 Docker Diagnostics** - Platform-specific error detection and resolution for Docker issues
-- **🖥️ Web UI Setup Wizard** - Guided first-run setup with API key management and environment checks
-- **⚡ Shadow Agent Response Depth** - Test-time compute scaling for broadcast responses (`low`/`medium`/`high`)
-- **🔧 Model Registry Updates** - GPT-5.1-Codex family, Claude alias notation, updated defaults
+**What's New in v0.1.36:**
+- **📁 @path Context Handling** - Reference files inline with `@path` syntax - just type `@` to trigger an autocomplete file picker (like Claude Code)
+- **🪝 Hook Framework** - Extend agent behavior with PreToolUse/PostToolUse hooks for permission validation, content injection, and custom processing
+- **🔗 Claude Code Integration** - Native Claude Code hooks compatibility and improved Docker resource management
 
-**Key Improvements:**
-- Claude Code API key handling and configuration fixes
-- Web UI asset loading and static path resolution (MAS-160)
-
-**Try v0.1.26 Features:**
+**Try v0.1.36 Features:**
 ```bash
 # Install or upgrade
 pip install --upgrade massgen
@@ -178,13 +172,14 @@ pip install --upgrade massgen
 # Or with uv (faster)
 uv pip install massgen
 
-# Use response depth for test-time compute scaling in agent broadcasts
-# response_depth: "high" makes shadow agents provide more thorough solutions
-massgen --config @examples/broadcast/test_broadcast_agents \
-  "Create a website about Bob Dylan. Please ask_others for what framework to use first"
+# Reference files with @path syntax - autocomplete file picker
+uv run massgen
+# Then type: Analyze @src/main.py and suggest improvements
 
-# Launch Web UI with guided setup wizard (first-run experience)
-massgen --web
+# Test hook framework with built-in hooks
+uv run massgen --config massgen/configs/debug/injection_delay_test.yaml \
+  "Create a simple poem and write it into a file"
+# View logs for MidStreamInjectionHook (cross-agent updates) and HighPriorityTaskReminderHook (system reminders)
 ```
 
 → [See full release history and examples](massgen/configs/README.md#release-history--examples)
@@ -249,7 +244,12 @@ This collaborative approach ensures that the final output leverages collective i
 pip install massgen
 
 # Or with uv (faster)
+pip install uv
+uv venv && source .venv/bin/activate
 uv pip install massgen
+
+# If you install massgen in uv, make sure you either activate your venv using source .venv/bin/activate
+# Or include "uv run" before all commands
 ```
 
 **Quickstart Setup** (Fastest way to get running):
@@ -277,7 +277,7 @@ The `--quickstart` command will:
 
 For more control, use the full configuration wizard:
 ```bash
-massgen --init
+uv run massgen --init
 ```
 
 This guides you through use case selection (Research, Code, Q&A, etc.) and advanced configuration options.
@@ -285,44 +285,74 @@ This guides you through use case selection (Research, Code, Q&A, etc.) and advan
 **After setup:**
 ```bash
 # Interactive mode
-massgen
+uv run massgen
 
 # Single query
-massgen "Your question here"
+uv run massgen "Your question here"
 
 # With example configurations
-massgen --config @examples/basic/multi/three_agents_default "Your question"
+uv run massgen --config @examples/basic/multi/three_agents_default "Your question"
 ```
 
 → See [Installation Guide](https://docs.massgen.ai/en/latest/quickstart/installation.html) for complete setup instructions.
 
 **Method 2: Development Installation** (for contributors):
 
+**Clone the repository**
 ```bash
-# Clone the repository
 git clone https://github.com/Leezekun/MassGen.git
 cd MassGen
+```
 
-# Install in editable mode with pip
-pip install -e .
+**Install in editable mode with pip**
 
-# Or with uv (faster)
+**Option 1 (recommended): Installing with uv (faster)**
+
+```bash
+uv venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
 uv pip install -e .
+
+# If you install massgen in uv, make sure you either activate your venv using source .venv/bin/activate
+# Or include "uv run" before all commands
+
+# Automated setup (works on all platforms) - installs dependencies, skills, Docker images, also sets up API keys
+uv run massgen --setup
+
+# Or use the bash script (Unix/Linux/macOS only), need manually config API keys, see sections below
+uv run ./scripts/init.sh
+
+# If you would like to install other dependencies later
+# Here is a light-weighted setup script which only installs skills (works on all platforms)
+uv run massgen --setup-skills
+
+# Or use the bash script (Unix/Linux/macOS only)
+uv run ./scripts/init_skills.sh
+```
+
+**Option 2: Using traditional Python env**
+
+```bash
+pip install -e .
 
 # Optional: External framework integration
 pip install -e ".[external]"
 
-# Automated setup (Unix/Linux/macOS) - installs dependencies, skills, Docker images
+# Automated setup (works on all platforms) - installs dependencies, skills, Docker images, also sets up API keys
+massgen --setup
+
+# Or use the bash script (Unix/Linux/macOS only), need manually config API keys, see sections below
 ./scripts/init.sh
 
-# Or just install skills (works on all platforms)
+# If you would like to install other dependencies later
+# Here is a light-weighted setup script which only installs skills (works on all platforms)
 massgen --setup-skills
 
 # Or use the bash script (Unix/Linux/macOS only)
 ./scripts/init_skills.sh
 ```
 
-> **Note:** The `--setup-skills` command works cross-platform (Windows, macOS, Linux). The bash scripts (`init.sh`, `init_skills.sh`) are Unix-only but provide additional dev setup like Docker image builds.
+> **Note:** The `--setup` and `--setup-skills` commands work cross-platform (Windows, macOS, Linux). The bash scripts (`init.sh`, `init_skills.sh`) are Unix-only but provide additional dev setup like Docker image builds.
 
 <details>
 <summary><b>Alternative Installation Methods</b> (click to expand)</summary>
@@ -375,6 +405,18 @@ sudo ~/.lmstudio/bin/lms bootstrap
 cmd /c %USERPROFILE%\.lmstudio\bin\lms.exe bootstrap
 ```
 
+**After setup:**
+```bash
+# Interactive mode
+uv run massgen
+
+# Single query
+uv run massgen "Your question here"
+
+# With example configurations
+uv run massgen --config @examples/basic/multi/three_agents_default "Your question"
+```
+
 ### 2. 🔐 API Configuration
 
 **Create a `.env` file in your working directory with your API keys:**
@@ -399,7 +441,7 @@ MassGen automatically loads API keys from `.env` in your current directory.
 
 **Get API keys:**
  - [OpenAI](https://platform.openai.com/api-keys) | [Claude](https://docs.anthropic.com/en/api/overview) | [Gemini](https://ai.google.dev/gemini-api/docs) | [Grok](https://docs.x.ai/docs/overview)
- - [Azure OpenAI](https://learn.microsoft.com/en-us/azure/ai-services/openai/) | [Cerebras](https://inference-docs.cerebras.ai/introduction) | [More providers...](https://docs.massgen.ai/en/latest/reference/supported_models.html)
+ - [Azure OpenAI](https://learn.microsoft.com/en-us/azure/ai-services/openai/) | [Cerebras](https://inference-docs.cerebras.ai/introduction) | [OpenRouter](https://openrouter.ai/docs/api/api-reference/api-keys/create-keys) | [More providers...](https://docs.massgen.ai/en/latest/reference/supported_models.html)
 
 ### 3. 🧩 Supported Models and Tools
 
@@ -408,7 +450,9 @@ MassGen automatically loads API keys from `.env` in your current directory.
 The system currently supports multiple model providers with advanced capabilities:
 
 **API-based Models:**
-- **OpenAI**: GPT-5.1-Codex series (gpt-5.1-codex-max, gpt-5.1-codex, gpt-5.1-codex-mini), GPT-5.2, GPT-5.1, GPT-5 series (GPT-5, GPT-5-mini, GPT-5-nano), GPT-4.1 series, GPT-4o, o4-mini with reasoning, web search, code interpreter, and computer-use support
+- **OpenAI**: GPT-5.2 (recommended default), GPT-5.1, GPT-5 series (GPT-5, GPT-5-mini, GPT-5-nano), GPT-5.1-Codex series, GPT-4.1 series, GPT-4o, o4-mini with reasoning, web search, code interpreter, and computer-use support
+  - **Note**: We recommend GPT-5.2/5.1/5 over Codex models. Codex models are [optimized for shorter system messages](https://cookbook.openai.com/examples/gpt-5-codex_prompting_guide) and may not work well with MassGen's coordination prompts.
+  - **Reasoning**: GPT-5.1 and GPT-5.2 default to `reasoning: none`. MassGen automatically sets `reasoning.effort: medium` when no reasoning config is provided, matching GPT-5's default behavior.
 - **Azure OpenAI**: Any Azure-deployed models (GPT-4, GPT-4o, GPT-35-turbo, etc.)
 - **Claude / Anthropic**: Claude Opus 4.5, Claude Haiku 4.5, Claude Sonnet 4.5, Claude Opus 4.1, Claude Sonnet 4
   - Advanced tooling: web search, code execution, Files API, programmatic tool calling, tool search with deferred loading
@@ -470,6 +514,53 @@ MassGen agents can leverage various tools to enhance their problem-solving capab
 | `--no-logs`        | Disable real-time logging.|
 | `--debug`          | Enable debug mode with verbose logging (NEW in v0.0.13). Shows detailed orchestrator activities, agent messages, backend operations, and tool calls. Debug logs are saved to `agent_outputs/log_{time}/massgen_debug.log`. |
 | `"<your question>"`         | Optional single-question input; if omitted, MassGen enters interactive chat mode. |
+
+#### **0. OpenAI-Compatible HTTP Server (NEW)**
+
+Run MassGen as an **OpenAI-compatible** HTTP API (FastAPI + Uvicorn). This is useful for integrating MassGen with existing tooling that expects `POST /v1/chat/completions`.
+
+```bash
+# Start server (defaults: host 0.0.0.0, port 4000)
+massgen serve
+
+# With explicit bind + defaults for model/config
+massgen serve --host 0.0.0.0 --port 4000 --config path/to/config.yaml --default-model gpt-5
+```
+
+**Endpoints**
+
+- `GET /health`
+- `POST /v1/chat/completions` (supports `stream: true` SSE and OpenAI-style tool calling)
+
+**cURL examples**
+
+```bash
+# Health
+curl http://localhost:4000/health
+
+# Non-streaming chat completion
+curl http://localhost:4000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "massgen",
+    "messages": [{"role": "user", "content": "hi"}],
+    "stream": false
+  }'
+
+# Streaming (Server-Sent Events)
+curl -N http://localhost:4000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "massgen",
+    "messages": [{"role": "user", "content": "hi"}],
+    "stream": true
+  }'
+```
+
+**Notes**
+
+- Client-provided `tools` are supported, but tool names that collide with MassGen workflow tools are rejected.
+- Environment variables (optional): `MASSGEN_SERVER_HOST`, `MASSGEN_SERVER_PORT`, `MASSGEN_SERVER_DEFAULT_CONFIG`, `MASSGEN_SERVER_DEFAULT_MODEL`, `MASSGEN_SERVER_DEBUG`.
 
 
 #### **1. Single Agent (Easiest Start)**
@@ -1123,26 +1214,44 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 ⚠️ **Early Stage Notice:** As MassGen is in active development, please expect upcoming breaking architecture changes as we continue to refine and improve the system.
 
-### Recent Achievements (v0.1.26)
+### Recent Achievements (v0.1.36)
 
-**🎉 Released: December 17, 2025**
+**🎉 Released: January 9, 2026**
 
-#### Web UI & Setup
-- **Web UI Setup Wizard**: Guided first-run experience with `SetupPage`, `ConfigEditorModal`, and `CoordinationStep` components for API key management and environment configuration
-- **Docker Diagnostics Module**: Comprehensive error detection distinguishing binary not installed, daemon not running, permission denied, and image missing with platform-specific resolution steps
+#### @path Context Handling
+- **Inline File Picker**: Reference files with `@path` syntax - type `@` to trigger autocomplete file picker (like Claude Code)
+- **Path Validation**: Automatic validation ensures context paths exist before injection
 
-#### Shadow Agent Enhancement
-- **Response Depth Scaling**: Test-time compute scaling via `response_depth` parameter controlling solution complexity in broadcast responses
+#### Hook Framework
+- **PreToolUse/PostToolUse Events**: Extend agent behavior with hooks for permission validation, content injection, and custom processing
+- **Global and Per-Agent Hooks**: Register hooks at top-level (all agents) or per-agent with override capability
+- **Built-in Hooks**: `MidStreamInjectionHook` for cross-agent updates and `HighPriorityTaskReminderHook` for system reminders
 
-#### Model Registry
-- **GPT-5.1-Codex Family**: Added `gpt-5.1-codex-max`, `gpt-5.1-codex`, `gpt-5.1-codex-mini` with `gpt-5.1-codex` as new default
-- **Claude Alias Notation**: Updated naming from dot notation to alias notation (`claude-opus-4-5` instead of `claude-opus-4.5`)
+#### Claude Code Integration
+- **Native Hooks Compatibility**: Claude Code hooks work seamlessly within MassGen's hook framework
+- **Improved Docker Resource Management**: Better container lifecycle and resource handling
 
-#### Bug Fixes
-- **Claude Code API Keys**: Fixed API key configuration and environment variable handling
-- **Web UI Assets**: Fixed configuration and static asset paths (MAS-160, MAS-161)
+### Previous Achievements (v0.0.3 - v0.1.35)
 
-### Previous Achievements (v0.0.3 - v0.1.25)
+✅ **Log Analysis CLI & Logfire Observability (v0.1.35)**: `massgen logs analyze` command with prompt mode and multi-agent self-analysis, Logfire workflow attributes for round context and vote reasoning, `direct_mcp_servers` config for keeping specific MCPs as protocol tools, improved tool handling for unknown tools and vote-only mode fixes
+
+✅ **OpenAI-Compatible Server & Model Discovery (v0.1.34)**: Local HTTP server with `massgen serve` compatible with any OpenAI SDK client, dynamic model discovery for Groq and Together backends via authenticated API calls, WebUI file diffs and answer refresh polling, subagent status tracking and cancellation recovery improvements
+
+✅ **Reactive Context Compression & Streaming Buffers (v0.1.33)**: Automatic conversation compression when context length errors occur, streaming buffer system tracking partial responses for recovery, file overwrite protection in `write_file` tool, task plan duplicate prevention, Grok MCP tools visibility fix, Gemini vote-only mode fix, GPT-5 model behavior improvements
+
+✅ **Multi-Turn Session Export & Per-Attempt Logging (v0.1.32)**: Turn range selection for session export (`--turns`), workspace export controls (`--no-workspace`, `--workspace-limit`), Logfire moved to optional `[observability]` extra, per-attempt isolated log files with handler reconfiguration, automatic DOCX/PPTX/XLSX to PDF conversion for session sharing
+
+✅ **Logfire Observability & Azure Tool Streaming (v0.1.31)**: Optional Logfire integration with automatic LLM instrumentation for OpenAI, Claude, and Gemini backends, Azure OpenAI tool calls yielded as structured chunks, `--logfire` CLI flag and `MASSGEN_LOGFIRE_ENABLED` environment variable
+
+✅ **OpenRouter Web Search & Persona Diversity (v0.1.30)**: Native web search via OpenRouter plugins with `enable_web_search`, persona diversity modes (`perspective`/`implementation`) with phase-based adaptation, Azure multi-endpoint auto-detection, environment variable expansion with `${VAR}` syntax
+
+✅ **Subagent System & Tool Metrics (v0.1.29)**: Spawn parallel child MassGen processes with isolated workspaces and automatic result aggregation, enhanced tool metrics with per-call averages and min/max/median distribution, CLI per-agent system messages via `massgen --quickstart`
+
+✅ **Unified Multimodal Tools & Artifact Previews (v0.1.28)**: Consolidated `read_media` tool for image/audio/video analysis, unified `generate_media` tool for media creation (images, videos, audio), Web UI artifact previewer for PDFs/DOCX/PPTX/images/HTML/SVG/Markdown/Mermaid, OpenRouter tool-capable model filtering, Azure OpenAI fixes
+
+✅ **Session Sharing & Log Analysis (v0.1.27)**: Session sharing via GitHub Gist with `massgen export`, log analysis CLI with `massgen logs` command, per-LLM call timing metrics, Gemini 3 Flash model support, enhanced CLI config builder with per-agent web search and system messages
+
+✅ **Web UI Setup & Shadow Agent Depth (v0.1.26)**: Docker diagnostics module, Web UI setup wizard with guided first-run experience, shadow agent response depth for test-time compute scaling, GPT-5.1-Codex family models
 
 ✅ **UI-TARS & Evolving Skills (v0.1.25)**: ByteDance's UI-TARS-1.5-7B for GUI automation, GPT-5.2 model support, evolving skill creator system with session persistence, enhanced Textual terminal with adaptive layouts
 
@@ -1338,27 +1447,37 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 We welcome community contributions to achieve these goals.
 
-### v0.1.27 Roadmap
+### v0.1.37 Roadmap
 
-Version 0.1.27 focuses on system reminders and memory as callable tools:
+Version 0.1.37 focuses on OpenAI Responses API improvements and computer use model support:
 
 #### Planned Features
-- **Add system reminders** (@ncrispino): Framework for injecting system reminders mid-run during LLM streaming
-- **Memory as Tools** (@ncrispino): Include memory (including filesystem) as callable tools for agents
+- **OpenAI Responses /compact Endpoint** (@ncrispino): Use OpenAI's native `/compact` endpoint for context compression instead of custom summarization
+- **Fara-7B for Computer Use** (@ncrispino): Support for Fara-7B model for GUI automation and computer use tasks
 
 Key technical approach:
-- **System Reminders**: Mid-run injection during LLM streaming, support for context awareness, human feedback, safety, and memory reminders
-- **Memory as Tools**: Unified memory tool interface with store/retrieve/search operations, filesystem and vector store backends
+- **Native Context Compression**: Leverage OpenAI's API-level compression for better token efficiency
+- **Alternative Computer Use Model**: Fara-7B integration with existing computer use infrastructure
 
-**Target Release**: December 19, 2025 (Friday @ 9am PT)
-
-For detailed milestones and technical specifications, see the [full v0.1.27 roadmap](ROADMAP_v0.1.27.md).
+For detailed milestones and technical specifications, see the [full v0.1.37 roadmap](ROADMAP_v0.1.37.md).
 
 ---
 
 ## 🤝 Contributing
 
 We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.md) for details.
+
+---
+
+## 🤝 Acknowledge
+
+We thank AgentWeb
+
+<a href="https://www.agentweb.pro/">
+  <img width="196" height="51" alt="68dacef628cd7a44dfb97814_agentweb-logo" src="https://github.com/user-attachments/assets/312f1d67-b342-4f62-b8ad-65cc9f54dc65" />
+</a>
+
+for their kind sponsorship.
 
 ---
 

@@ -25,6 +25,7 @@ ENV PYTHONUNBUFFERED=1 \
 # - ffmpeg: Video encoding (for VHS terminal recording)
 # - golang-go: Go runtime (for VHS installation)
 # - wget: For downloading ttyd binary
+# - jq: JSON processing in shell scripts
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     curl \
@@ -35,6 +36,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     golang-go \
     wget \
+    jq \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install document processing tools for skills (DOCX, PPTX, XLSX, PDF)
+# - libreoffice: Convert documents to PDF (soffice --headless --convert-to pdf)
+# - poppler-utils: PDF to images (pdftoppm), text extraction (pdftotext)
+# - pandoc: Document format conversions (optional, for markdown)
+# - qpdf: PDF manipulation and optimization
+# Note: LibreOffice is large (~500MB) but essential for accurate document rendering
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libreoffice \
+    poppler-utils \
+    pandoc \
+    qpdf \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js 20.x (LTS) for JavaScript execution
@@ -85,6 +100,10 @@ WORKDIR /app
 # - Pillow: Image processing for _multimodal_tools
 # - opencv-python-headless: Video processing for _video_tools (headless = no GUI deps)
 # - playwright, crawl4ai: Browser automation and web scraping for _browser_automation/_web_tools
+# Skills dependencies:
+# - pypdf, pdfplumber, reportlab: PDF skill (parsing, extraction, creation)
+# - defusedxml: Secure XML parsing for DOCX/PPTX skills
+# - imageio: GIF creation for slack-gif-creator skill
 # Note: fastmcp will be installed later with MassGen package
 RUN pip install --no-cache-dir \
     'pytest>=7.0.0' \
@@ -98,7 +117,12 @@ RUN pip install --no-cache-dir \
     'Pillow>=10.0.0' \
     'opencv-python-headless>=4.8.0' \
     'playwright>=1.40.0' \
-    'crawl4ai>=0.2.0'
+    'crawl4ai>=0.2.0' \
+    'pypdf>=3.0.0' \
+    'pdfplumber>=0.10.0' \
+    'reportlab>=4.0.0' \
+    'defusedxml>=0.7.0' \
+    'imageio>=2.30.0'
 
 # Install Playwright system dependencies (requires root)
 # This installs fonts, libraries needed by browsers

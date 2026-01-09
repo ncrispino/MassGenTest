@@ -179,6 +179,7 @@ sync.sh
 .coverage
 .pytest_cache/
 .tox/
+test_workspace/
 
 # Documentation builds
 docs/_build/
@@ -220,7 +221,6 @@ workspace*/
 .massgen/sessions/
 **/sessions/session_*
 .claude/
-CLAUDE.md
 massgen/tests/demo_terminal_evaluation_workspace/
 .agent/
 shared_tools/
@@ -229,3 +229,5 @@ shared_tools/
 webui/node_modules/
 webui/dist/
 webui/mockups/
+
+node_modules/

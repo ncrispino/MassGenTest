@@ -36,6 +36,8 @@ from ..api_params_handler import ClaudeAPIParamsHandler
 from ..formatter import ClaudeFormatter
 from ..logger_config import log_backend_agent_message, log_stream_chunk, logger
 from ..mcp_tools.backend_utils import MCPErrorHandler
+from ..structured_logging import trace_llm_api_call
+from ._streaming_buffer_mixin import StreamingBufferMixin
 from .base import FilesystemSupport, StreamChunk
 from .base_with_custom_tool_and_mcp import (
     CustomToolAndMCPBackend,
@@ -45,7 +47,7 @@ from .base_with_custom_tool_and_mcp import (
 )
 
 
-class ClaudeBackend(CustomToolAndMCPBackend):
+class ClaudeBackend(StreamingBufferMixin, CustomToolAndMCPBackend):
     """Claude backend using Anthropic's Messages API with full multi-tool support."""
 
     def __init__(self, api_key: Optional[str] = None, **kwargs):
@@ -69,14 +71,18 @@ class ClaudeBackend(CustomToolAndMCPBackend):
         **kwargs,
     ) -> AsyncGenerator[StreamChunk, None]:
         """Override to ensure Files API cleanup happens after streaming completes."""
+        self._clear_streaming_buffer(**kwargs)
         if self._nlip_enabled:
             logger.info(
                 f"[Claude] NLIP routing enabled for agent {kwargs.get('agent_id', self.agent_id)}",
             )
+        agent_id = kwargs.get("agent_id", self.agent_id)
         try:
             async for chunk in super().stream_with_tools(messages, tools, **kwargs):
                 yield chunk
         finally:
+            # Save streaming buffer before cleanup
+            self._finalize_streaming_buffer(agent_id=agent_id)
             await self._cleanup_files_api_resources(**kwargs)
 
     async def _process_upload_files(
@@ -486,6 +492,9 @@ class ClaudeBackend(CustomToolAndMCPBackend):
         **kwargs,
     ) -> AsyncGenerator[StreamChunk, None]:
         """Override to integrate Files API uploads into non-MCP streaming."""
+        # Extract internal flags before merging kwargs (prevents API errors from unknown params)
+        kwargs.pop("_compression_retry", None)
+
         agent_id = kwargs.get("agent_id", None)
         all_params = {**self.config, **kwargs}
 
@@ -569,11 +578,44 @@ class ClaudeBackend(CustomToolAndMCPBackend):
             else:
                 api_params.pop("tools", None)
 
-        # Create stream (handle betas)
-        if "betas" in api_params:
-            stream = await client.beta.messages.create(**api_params)
-        else:
-            stream = await client.messages.create(**api_params)
+        # Add custom tool schemas (they were filtered out above, now add them back)
+        if self._custom_tool_names:
+            custom_tool_schemas = self._get_custom_tools_schemas()
+            if custom_tool_schemas:
+                if "tools" not in api_params:
+                    api_params["tools"] = []
+                # Convert from OpenAI format to Claude format
+                for schema in custom_tool_schemas:
+                    if schema.get("type") == "function":
+                        func = schema.get("function", {})
+                        claude_tool = {
+                            "name": func.get("name"),
+                            "description": func.get("description", ""),
+                            "input_schema": func.get("parameters", {"type": "object", "properties": {}}),
+                        }
+                        api_params["tools"].append(claude_tool)
+                logger.debug(f"[Claude] Added {len(custom_tool_schemas)} custom tool schemas")
+
+        # Start API call timing
+        model = api_params.get("model", "unknown")
+        self.start_api_call_timing(model)
+
+        # Wrap LLM API call with tracing for agent attribution
+        with trace_llm_api_call(
+            agent_id=agent_id or "unknown",
+            provider="anthropic",
+            model=model,
+            operation="stream",
+        ):
+            # Create stream (handle betas)
+            try:
+                if "betas" in api_params:
+                    stream = await client.beta.messages.create(**api_params)
+                else:
+                    stream = await client.messages.create(**api_params)
+            except Exception as e:
+                self.end_api_call_timing(success=False, error=str(e))
+                raise
 
         # Process stream chunks
         async for chunk in self._process_stream(stream, all_params, agent_id):
@@ -596,12 +638,20 @@ class ClaudeBackend(CustomToolAndMCPBackend):
 
         Note:
             Claude uses tool_result format with tool_use_id.
-            All tool_result blocks for a given assistant turn MUST be in a SINGLE user message immediately after the assistant message with tool_use blocks
+            All tool_result blocks for a given assistant turn MUST be in a SINGLE user message immediately after the assistant message with tool_use blocks.
         """
+        # Extract text from result - handle MCP CallToolResult objects properly
+        if hasattr(result, "content") and not isinstance(result, (dict, str)):
+            # MCP CallToolResult - extract text from content list
+            extracted = self._extract_text_from_content(result.content)
+            result_text = extracted if extracted is not None else str(result)
+        else:
+            result_text = getattr(result, "text", None) or str(result)
+
         tool_result_block = {
             "type": "tool_result",
             "tool_use_id": call.get("call_id", "") or call.get("id", ""),
-            "content": str(result),
+            "content": result_text,
         }
 
         tool_result_msg_idx = None
@@ -626,6 +676,10 @@ class ClaudeBackend(CustomToolAndMCPBackend):
             "content": [tool_result_block],
         }
         updated_messages.append(tool_result_msg)
+
+        # Track in streaming buffer for compression recovery
+        tool_name = call.get("name", "unknown")
+        self._append_tool_to_buffer(tool_name, result_text)
 
     def _append_tool_error_message(
         self,
@@ -673,6 +727,10 @@ class ClaudeBackend(CustomToolAndMCPBackend):
             "content": [error_result_block],
         }
         updated_messages.append(error_result_msg)
+
+        # Track in streaming buffer for compression recovery
+        tool_name = call.get("name", "unknown")
+        self._append_tool_to_buffer(tool_name, error_msg, is_error=True)
 
     async def _execute_custom_tool(self, call: Dict[str, Any]) -> AsyncGenerator[CustomToolChunk, None]:
         """Execute custom tool with streaming support - async generator for base class.
@@ -773,11 +831,26 @@ class ClaudeBackend(CustomToolAndMCPBackend):
             )
             kwargs["_strict_tool_use_logged"] = True
 
-        # Create stream (handle code execution beta)
-        if "betas" in api_params:
-            stream = await client.beta.messages.create(**api_params)
-        else:
-            stream = await client.messages.create(**api_params)
+        # Start API call timing
+        model = api_params.get("model", "unknown")
+        self.start_api_call_timing(model)
+
+        # Wrap LLM API call with tracing for agent attribution
+        with trace_llm_api_call(
+            agent_id=agent_id or "unknown",
+            provider="anthropic",
+            model=model,
+            operation="stream",
+        ):
+            # Create stream (handle code execution beta)
+            try:
+                if "betas" in api_params:
+                    stream = await client.beta.messages.create(**api_params)
+                else:
+                    stream = await client.messages.create(**api_params)
+            except Exception as e:
+                self.end_api_call_timing(success=False, error=str(e))
+                raise
 
         content = ""
         current_tool_uses: Dict[str, Dict[str, Any]] = {}
@@ -872,8 +945,10 @@ class ClaudeBackend(CustomToolAndMCPBackend):
                 elif event.type == "content_block_delta":
                     if hasattr(event, "delta"):
                         if event.delta.type == "text_delta":
+                            self.record_first_token()  # Record TTFT on first content
                             text_chunk = event.delta.text
                             content += text_chunk
+                            self._append_to_streaming_buffer(text_chunk)
                             log_backend_agent_message(
                                 agent_id or "default",
                                 "RECV",
@@ -882,6 +957,12 @@ class ClaudeBackend(CustomToolAndMCPBackend):
                             )
                             log_stream_chunk("backend.claude", "content", text_chunk, agent_id)
                             yield StreamChunk(type="content", content=text_chunk)
+                        elif event.delta.type == "thinking_delta":
+                            # Handle extended thinking content from Claude models
+                            thinking_chunk = event.delta.thinking
+                            self._append_reasoning_to_buffer(thinking_chunk)
+                            log_stream_chunk("backend.claude", "reasoning", thinking_chunk, agent_id)
+                            yield StreamChunk(type="reasoning", content=thinking_chunk)
                         elif event.delta.type == "input_json_delta":
                             if hasattr(event, "index"):
                                 for tool_id, tool_data in current_tool_uses.items():
@@ -1028,7 +1109,9 @@ class ClaudeBackend(CustomToolAndMCPBackend):
                     # Emit non-MCP/non-custom tool calls for the caller to execute
                     if non_mcp_non_custom_tool_calls:
                         log_stream_chunk("backend.claude", "tool_calls", non_mcp_non_custom_tool_calls, agent_id)
+                        self._append_tool_call_to_buffer(non_mcp_non_custom_tool_calls)
                         yield StreamChunk(type="tool_calls", tool_calls=non_mcp_non_custom_tool_calls)
+                    self.end_api_call_timing(success=True)
                     response_completed = True
                     break
             except Exception as event_error:
@@ -1347,8 +1430,10 @@ class ClaudeBackend(CustomToolAndMCPBackend):
                 elif chunk.type == "content_block_delta":
                     if hasattr(chunk, "delta"):
                         if chunk.delta.type == "text_delta":
+                            self.record_first_token()  # Record TTFT on first content
                             text_chunk = chunk.delta.text
                             content_local += text_chunk
+                            self._append_to_streaming_buffer(text_chunk)
                             log_backend_agent_message(
                                 agent_id or "default",
                                 "RECV",
@@ -1362,6 +1447,12 @@ class ClaudeBackend(CustomToolAndMCPBackend):
                                 agent_id,
                             )
                             yield StreamChunk(type="content", content=text_chunk)
+                        elif chunk.delta.type == "thinking_delta":
+                            # Handle extended thinking content from Claude models
+                            thinking_chunk = chunk.delta.thinking
+                            self._append_reasoning_to_buffer(thinking_chunk)
+                            log_stream_chunk("backend.claude", "reasoning", thinking_chunk, agent_id)
+                            yield StreamChunk(type="reasoning", content=thinking_chunk)
                         elif chunk.delta.type == "input_json_delta":
                             if hasattr(chunk, "index"):
                                 for (
@@ -1497,6 +1588,7 @@ class ClaudeBackend(CustomToolAndMCPBackend):
                     if all_params.get("enable_code_execution", False):
                         self.code_session_hours += 0.083
 
+                    self.end_api_call_timing(success=True)
                     log_stream_chunk("backend.claude", "done", None, agent_id)
                     yield StreamChunk(type="done")
                     return
@@ -1600,7 +1692,18 @@ class ClaudeBackend(CustomToolAndMCPBackend):
         super().reset_token_usage()
 
     def _create_client(self, **kwargs):
-        return anthropic.AsyncAnthropic(api_key=self.api_key)
+        client = anthropic.AsyncAnthropic(api_key=self.api_key)
+        # Instrument client for Logfire observability if enabled
+        try:
+            from massgen.structured_logging import get_tracer, is_observability_enabled
+
+            if is_observability_enabled():
+                get_tracer().instrument_anthropic(client)
+        except ImportError:
+            pass  # structured_logging module not available
+        except Exception as e:
+            logger.warning(f"Failed to instrument Anthropic client for observability: {e}")
+        return client
 
     def get_provider_name(self) -> str:
         """Get the provider name."""

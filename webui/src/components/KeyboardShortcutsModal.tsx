@@ -9,6 +9,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { X, Keyboard } from 'lucide-react';
 import type { KeyboardShortcut } from '../hooks/useKeyboardShortcuts';
 import { getShortcutsByCategory } from '../hooks/useKeyboardShortcuts';
+import { MODAL_SHORTCUTS } from '../hooks/useModalKeyboardNavigation';
 
 interface KeyboardShortcutsModalProps {
   isOpen: boolean;
@@ -21,9 +22,10 @@ const categoryLabels: Record<string, string> = {
   agents: 'Agent Selection',
   modal: 'Modal Controls',
   general: 'General',
+  'in-modal': 'In-Modal Navigation',
 };
 
-const categoryOrder = ['navigation', 'agents', 'general', 'modal'];
+const categoryOrder = ['navigation', 'agents', 'general', 'modal', 'in-modal'];
 
 function KeyBadge({ keyName, modifier }: { keyName: string; modifier?: string }) {
   return (
@@ -48,6 +50,14 @@ function KeyBadge({ keyName, modifier }: { keyName: string; modifier?: string })
 
 export function KeyboardShortcutsModal({ isOpen, onClose, shortcuts }: KeyboardShortcutsModalProps) {
   const groupedShortcuts = getShortcutsByCategory(shortcuts);
+
+  // Group in-modal shortcuts by category
+  const inModalByCategory = MODAL_SHORTCUTS.reduce((acc, shortcut) => {
+    const category = shortcut.category;
+    if (!acc[category]) acc[category] = [];
+    acc[category].push(shortcut);
+    return acc;
+  }, {} as Record<string, typeof MODAL_SHORTCUTS>);
 
   return (
     <AnimatePresence>
@@ -87,6 +97,74 @@ export function KeyboardShortcutsModal({ isOpen, onClose, shortcuts }: KeyboardS
             {/* Shortcuts List */}
             <div className="p-6 max-h-[60vh] overflow-y-auto custom-scrollbar space-y-6">
               {categoryOrder.map((category) => {
+                // Handle in-modal shortcuts separately
+                if (category === 'in-modal') {
+                  return (
+                    <div key={category}>
+                      <h3 className="text-sm font-medium text-gray-400 mb-3 uppercase tracking-wider">
+                        {categoryLabels[category]}
+                      </h3>
+                      <p className="text-xs text-gray-500 mb-3">
+                        These shortcuts work when the Browser modal is open
+                      </p>
+
+                      {/* Tab switching */}
+                      {inModalByCategory['tabs'] && (
+                        <div className="mb-4">
+                          <h4 className="text-xs text-gray-500 mb-2">Tab Switching</h4>
+                          <div className="space-y-2">
+                            {inModalByCategory['tabs'].map((shortcut) => (
+                              <div
+                                key={shortcut.key + shortcut.description}
+                                className="flex items-center justify-between py-2 px-3 bg-gray-700/30 rounded-lg"
+                              >
+                                <span className="text-sm text-gray-300">{shortcut.description}</span>
+                                <KeyBadge keyName={shortcut.key} />
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Navigation */}
+                      {inModalByCategory['navigation'] && (
+                        <div className="mb-4">
+                          <h4 className="text-xs text-gray-500 mb-2">List Navigation</h4>
+                          <div className="space-y-2">
+                            {inModalByCategory['navigation'].map((shortcut) => (
+                              <div
+                                key={shortcut.key + shortcut.description}
+                                className="flex items-center justify-between py-2 px-3 bg-gray-700/30 rounded-lg"
+                              >
+                                <span className="text-sm text-gray-300">{shortcut.description}</span>
+                                <KeyBadge keyName={shortcut.key} />
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Actions */}
+                      {inModalByCategory['actions'] && (
+                        <div>
+                          <h4 className="text-xs text-gray-500 mb-2">Actions</h4>
+                          <div className="space-y-2">
+                            {inModalByCategory['actions'].map((shortcut) => (
+                              <div
+                                key={shortcut.key + shortcut.description}
+                                className="flex items-center justify-between py-2 px-3 bg-gray-700/30 rounded-lg"
+                              >
+                                <span className="text-sm text-gray-300">{shortcut.description}</span>
+                                <KeyBadge keyName={shortcut.key} />
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                }
+
                 const categoryShortcuts = groupedShortcuts[category];
                 if (!categoryShortcuts || categoryShortcuts.length === 0) return null;
 

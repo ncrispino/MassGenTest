@@ -227,7 +227,239 @@ Most configurations use environment variables for API keys:so
 
 ## Release History & Examples
 
-### v0.1.26 - Latest
+### v0.1.36 - Latest
+**New Features:** @path Context Handling, Hook Framework, Claude Code Integration
+
+**Key Features:**
+- **@path Context Handling**: Reference files inline with `@path` syntax - type `@` to trigger autocomplete file picker (like Claude Code)
+- **Hook Framework**: Extend agent behavior with PreToolUse/PostToolUse hooks for permission validation, content injection, and custom processing
+- **Claude Code Integration**: Native Claude Code hooks compatibility and improved Docker resource management
+
+**Try It:**
+```bash
+# Install or upgrade
+pip install --upgrade massgen
+
+# Reference files with @path syntax - autocomplete file picker
+uv run massgen
+# Then type: Analyze @src/main.py and suggest improvements
+
+# Test hook framework with built-in hooks
+uv run massgen --config massgen/configs/debug/injection_delay_test.yaml \
+  "Create a simple poem and write it into a file"
+# View logs for MidStreamInjectionHook (cross-agent updates) and HighPriorityTaskReminderHook (system reminders)
+```
+
+### v0.1.35
+**New Features:** Log Analysis CLI, Logfire Workflow Observability, Direct MCP Servers, Tool Handling Fixes
+
+**Key Features:**
+- **Log Analysis CLI**: New `massgen logs analyze` command with prompt mode and multi-agent self-analysis using MassGen
+- **Logfire Workflow Attributes**: Round context, vote reasoning, and local file references for observability
+- **Direct MCP Servers**: Keep specific MCPs as protocol tools when using code-based tools
+- **Tool Handling Fixes**: Unknown tools handled gracefully, vote-only mode improvements
+
+**Try It:**
+```bash
+# Install or upgrade
+pip install --upgrade massgen
+
+# List your runs and see which have been analyzed
+uv run massgen logs list
+
+# Generate an analysis prompt (defaults to most recent log)
+uv run massgen logs analyze
+
+# Run multi-agent self-analysis on your logs
+uv run massgen logs analyze --mode self
+
+# Use direct MCP servers with code-based tools for multi-agent log analysis
+uv run massgen --config massgen/configs/analysis/log_analysis_cli.yaml \
+  "Use the massgen-log-analyzer skill to analyze the log directory at .massgen/massgen_logs/log_20260107_123456. Read all relevant files and produce an ANALYSIS_REPORT.md"
+```
+
+### v0.1.34
+**New Features:** OpenAI-Compatible Server, Dynamic Model Discovery, WebUI Improvements, Subagent Reliability
+
+**Key Features:**
+- **OpenAI-Compatible Server**: Run MassGen as a local HTTP server with `massgen serve` command
+- **Dynamic Model Discovery**: Groq and Together backends fetch available models via authenticated API calls
+- **WebUI File Diffs**: View workspace file changes with diff highlighting
+- **Answer Refresh Polling**: Real-time answer display with polling-based updates
+- **Subagent Status Tracking**: Improved status monitoring and error handling for subagent workflows
+- **Cancellation Recovery**: Better handling of cancelled subagent operations
+
+**Try It:**
+```bash
+# Install or upgrade
+pip install --upgrade massgen
+
+# Start OpenAI-compatible server with default config
+massgen serve --host 0.0.0.0 --port 4000
+
+# Or specify a custom config
+massgen serve --config @examples/basic/multi/three_agents_default
+
+# Use with any OpenAI SDK client
+curl http://localhost:4000/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{"model": "massgen", "messages": [{"role": "user", "content": "Explain multi-agent systems in LLMs"}]}'
+```
+
+### v0.1.33
+**New Features:** Reactive Context Compression, Streaming Buffer System, MCP Tool Protections
+
+**Key Features:**
+- **Reactive Context Compression**: Automatic conversation compression when context length errors occur
+- **Streaming Buffer System**: Tracks partial agent responses for compression recovery
+- **File Overwrite Protection**: `write_file` tool refuses to overwrite existing files
+- **Task Plan Duplicate Prevention**: `create_task_plan` blocks duplicate plans after recovery
+- **Grok MCP Tools**: Fixed MCP tool visibility by adjusting tool handling in chat completions
+- **Gemini Vote-Only Mode**: Fixed `vote_only` parameter handling in Gemini backend streaming
+- **GPT-5 Model Behavior**: System prompt adjustments and default reasoning set for newer models
+
+**Try It:**
+```bash
+# Install or upgrade
+pip install --upgrade massgen
+
+# Test reactive context compression (automatically handles long conversations)
+uv run massgen --debug --save-llm-calls \
+  --config massgen/configs/tools/filesystem/test_reactive_compression.yaml \
+  "Read all Python files in massgen/backend/ and summarize what each one does"
+
+# Compression activates automatically when context limits are reached
+# Agent progress is preserved through the streaming buffer system
+# Debug logs saved to .massgen/massgen_logs/<session>/compression_debug/
+```
+
+### v0.1.32
+**New Features:** Multi-Turn Session Export, Logfire Optional, Per-Attempt Logging
+
+**Key Features:**
+- **Multi-Turn Session Export**: Share sessions with turn range selection, workspace options, and export controls
+- **Logfire Optional Dependency**: Moved to `[observability]` extra for smaller default installs
+- **Per-Attempt Logging**: Each restart attempt gets separate log files for cleaner debugging
+- **Office PDF Conversion**: Automatic DOCX/PPTX/XLSX to PDF when sharing sessions
+
+**Try It:**
+```bash
+# Install or upgrade
+pip install --upgrade massgen
+
+# Share a multi-turn session with turn selection
+massgen export --turns 1-3              # Export turns 1-3
+massgen export --turns latest           # Export only the latest turn
+massgen export --dry-run --verbose      # Preview what would be shared
+
+# Install with observability support (optional)
+pip install "massgen[observability]"
+massgen --logfire --config massgen/configs/basic/multi/three_agents_default.yaml \
+  "What are the benefits of multi-agent AI systems?"
+```
+
+### v0.1.31
+**New Features:** Logfire Observability, Azure Tool Call Streaming
+
+**Key Features:**
+- **Logfire Observability Integration**: Comprehensive logging and tracing via [Logfire](https://logfire.pydantic.dev/) with automatic LLM instrumentation
+- **Azure OpenAI Tool Call Streaming**: Tool calls now accumulated and yielded as structured chunks
+
+**Try It:**
+```bash
+# Enable Logfire observability
+massgen --logfire --config massgen/configs/basic/multi/three_agents_default.yaml \
+  "What are the benefits of multi-agent AI systems?"
+```
+
+### v0.1.30
+**New Features:** OpenRouter Web Search, Persona Diversity Modes, Azure Multi-Endpoint Support
+
+**Key Features:**
+- **OpenRouter Web Search Plugin**: Add real-time web search to OpenRouter models with `enable_web_search: true`
+- **Persona Diversity Modes**: Agents get unique personalities - prioritize different values or create different solution styles, with automatic softening when evaluating others' work
+- **Azure Multi-Endpoint**: Support both Azure-specific and OpenAI-compatible endpoints with auto-detection
+- **Environment Variable Expansion**: Keep API keys in `.env` and reference them with `${VAR}` syntax - safer to share configs
+
+**Try It:**
+```bash
+# Install or upgrade
+pip install --upgrade massgen
+
+# OpenRouter web search - search the web with any OpenRouter model
+uv run massgen --config massgen/configs/basic/single/single_openrouter_web_search.yaml \
+  "What are the latest developments in quantum computing?"
+
+# Persona diversity - automatic diverse personas for multi-agent collaboration
+uv run massgen --config massgen/configs/basic/multi/persona_diversity_example.yaml \
+  "Create a website about Bob Dylan"
+```
+
+### v0.1.29
+**New Features:** Subagent System, Tool Metrics Distribution, Per-Agent System Messages
+
+**Key Features:**
+- **Subagent System**: Spawn parallel child MassGen processes for independent tasks with isolated workspaces
+- **Tool Metrics Distribution**: Enhanced metrics with per-call averages and min/max/median output distribution
+- **Per-Agent System Messages**: Configure different system messages for each agent via `massgen --quickstart`
+
+**Try It:**
+```bash
+# Subagent system - spawn parallel child processes for independent tasks
+massgen --config massgen/configs/features/test_subagent_orchestrator.yaml \
+  "Spawn a subagent to research Python async best practices"
+
+# Subagent with code-based tools and Docker execution
+massgen --config massgen/configs/features/test_subagent_orchestrator_code_mode.yaml \
+  "Spawn a subagent to write a Python script that fetches the current weather"
+```
+
+### v0.1.28
+**New Features:** Unified Multimodal Tools, Web UI Artifact Previewer
+
+**Key Features:**
+- **Unified Multimodal Tools**: Consolidated `read_media` for understanding and `generate_media` for generation (images, audio, video)
+- **Web UI Artifact Previewer**: Preview PDFs, DOCX, PPTX, images, HTML, SVG, Markdown, and Mermaid diagrams
+- **OpenRouter Model Filtering**: Automatic filtering to only show tool-capable models
+
+**Try It:**
+```bash
+# Unified multimodal tools - generate and analyze images, audio, video
+massgen --config @examples/tools/custom_tools/multimodal_tools/unified_multimodal \
+  "Create an image of two AI chatting with a human and then describe it in detail"
+```
+
+### v0.1.27
+**New Features:** Session Sharing, Log Analysis CLI, Per-LLM Call Timing, Gemini 3 Flash
+
+**Key Features:**
+- **Session Sharing via GitHub Gist**: Share sessions with `massgen export`, manage with `massgen shares list/delete`
+- **Log Analysis CLI**: New `massgen logs` command for viewing, filtering, and exporting run logs
+- **Per-LLM Call Timing**: Detailed timing metrics for individual LLM API calls across all backends
+- **Gemini 3 Flash Model**: Google's Gemini 3 Flash model added to provider registry
+- **CLI Config Builder**: Per-agent web search toggle, system messages, coordination settings
+- **Web UI Context Paths Wizard**: New `ContextPathsStep` component for workspace configuration
+
+**Try It:**
+```bash
+# Install or upgrade
+pip install --upgrade massgen
+
+# Share a session via GitHub Gist (requires gh CLI)
+massgen export                            # Share most recent session
+massgen export log_20251218_134125        # Share specific session
+massgen shares list                       # List your shared sessions
+
+# Analyze your run logs
+massgen logs list                         # List all runs
+massgen logs view <log_id>                # View detailed run info with LLM timing
+
+# Try Gemini 3 Flash
+massgen --config @examples/providers/gemini/gemini_3_flash \
+  "Create a simple Python script that demonstrates async programming"
+```
+
+### v0.1.26
 **New Features:** Docker Diagnostics Module, Web UI Setup System, Shadow Agent Response Depth
 
 **Key Features:**

@@ -26,6 +26,7 @@ from ..mcp_tools.client import HookType
 from . import _code_execution_server as ce_module
 from . import _workspace_tools_server as wc_module
 from ._base import Permission
+from ._constants import FRAMEWORK_MCPS
 from ._path_permission_manager import PathPermissionManager
 
 
@@ -61,10 +62,13 @@ class FilesystemManager:
         enable_audio_generation: bool = False,
         enable_file_generation: bool = False,
         exclude_file_operation_mcps: bool = False,
+        use_mcpwrapped_for_tool_filtering: bool = False,
+        use_no_roots_wrapper: bool = False,
         enable_code_based_tools: bool = False,
         custom_tools_path: Optional[str] = None,
         auto_discover_custom_tools: bool = False,
         exclude_custom_tools: Optional[List[str]] = None,
+        direct_mcp_servers: Optional[List[str]] = None,
         shared_tools_directory: Optional[str] = None,
         instance_id: Optional[str] = None,
         filesystem_session_id: Optional[str] = None,
@@ -93,11 +97,22 @@ class FilesystemManager:
             command_line_docker_packages: Package management configuration dict
             exclude_file_operation_mcps: If True, exclude file operation MCP tools (filesystem and workspace_tools file ops).
                                          Agents use command-line tools instead. Keeps command execution, media generation, and planning MCPs.
+            use_mcpwrapped_for_tool_filtering: If True, use mcpwrapped to filter MCP tools at protocol level.
+                                              Required for Claude Code backend which doesn't support allowed_tools for MCP tools.
+                                              See: https://github.com/anthropics/claude-code/issues/7328
+                                              Requires: npm i -g mcpwrapped (https://github.com/VitoLin/mcpwrapped)
+            use_no_roots_wrapper: If True, wrap MCP filesystem server with no-roots wrapper that intercepts
+                                  and removes the MCP roots protocol. This prevents clients (like Claude Code SDK)
+                                  from overriding our command-line paths with their own roots.
+                                  Required for Claude Code backend to access temp_workspaces.
             enable_code_based_tools: If True, generate Python wrapper code for MCP tools in servers/ directory.
                                      Agents discover and call tools via filesystem (CodeAct paradigm).
             custom_tools_path: Optional path to custom tools directory to copy into workspace
             auto_discover_custom_tools: If True and custom_tools_path is not set, automatically use default path 'massgen/tool/'
             exclude_custom_tools: Optional list of directory names to exclude when copying custom tools (e.g., ['_claude_computer_use', '_gemini_computer_use'])
+            direct_mcp_servers: Optional list of MCP server names to keep as direct protocol tools when enable_code_based_tools is True.
+                               These servers remain callable as native tools in the prompt rather than being filtered to code-only access.
+                               Example: ['logfire', 'context7']
             shared_tools_directory: Optional shared directory for code-based tools (servers/, custom_tools/, .mcp/).
                                     If provided, tools are generated once in shared location (read-only for all agents).
                                     If None, tools are generated in each agent's workspace (per-agent, in snapshots).
@@ -112,8 +127,11 @@ class FilesystemManager:
         self.enable_image_generation = enable_image_generation
         self.enable_mcp_command_line = enable_mcp_command_line
         self.exclude_file_operation_mcps = exclude_file_operation_mcps
+        self.use_mcpwrapped_for_tool_filtering = use_mcpwrapped_for_tool_filtering
+        self.use_no_roots_wrapper = use_no_roots_wrapper
         self.enable_code_based_tools = enable_code_based_tools
         self.exclude_custom_tools = exclude_custom_tools if exclude_custom_tools else []
+        self.direct_mcp_servers = direct_mcp_servers if direct_mcp_servers else []
 
         # Handle custom_tools_path with auto-discovery
         if custom_tools_path:
@@ -232,6 +250,11 @@ class FilesystemManager:
         # Add workspace to path manager (workspace is typically writable)
         self.path_permission_manager.add_path(self.cwd, Permission.WRITE, "workspace")
         # Add temporary workspace to path manager (read-only)
+        # Create the directory if it doesn't exist - MCP filesystem server requires
+        # directories to exist when validating allowed paths
+        if self.agent_temporary_workspace_parent and not self.agent_temporary_workspace_parent.exists():
+            self.agent_temporary_workspace_parent.mkdir(parents=True, exist_ok=True)
+            logger.info(f"[FilesystemManager] Created temp workspace parent directory: {self.agent_temporary_workspace_parent}")
         self.path_permission_manager.add_path(self.agent_temporary_workspace_parent, Permission.READ, "temp_workspace")
 
         # Orchestration-specific paths (set by setup_orchestration_paths)
@@ -794,8 +817,8 @@ class FilesystemManager:
     def _extract_mcp_tool_schemas(self, mcp_client) -> List[Dict[str, Any]]:
         """Extract tool schemas from MCP client, organized by server.
 
-        Only extracts user-added MCP servers. Framework MCPs (command_line, workspace_tools,
-        filesystem, planning, memory) are excluded as they're handled separately.
+        Only extracts user-added MCP servers. Framework MCPs (defined in FRAMEWORK_MCPS
+        constant) are excluded as they're handled separately.
 
         Args:
             mcp_client: MCPClient instance with connected tools
@@ -820,16 +843,6 @@ class FilesystemManager:
                 ...
             ]
         """
-        # Framework MCPs that should NOT be converted to code
-        # These are automatically available or handled by the framework
-        FRAMEWORK_MCPS = {
-            "command_line",  # Command execution (already available via bash)
-            "workspace_tools",  # Workspace operations (file ops, media generation)
-            "filesystem",  # Filesystem operations
-            "planning",  # Task planning MCP
-            "memory",  # Memory management MCP
-        }
-
         servers_with_tools = {}
 
         # Group tools by server
@@ -845,6 +858,12 @@ class FilesystemManager:
             is_framework_mcp = server_name in FRAMEWORK_MCPS or any(server_name.startswith(f"{fmcp}_") for fmcp in FRAMEWORK_MCPS)
             if is_framework_mcp:
                 logger.debug(f"[FilesystemManager] Skipping framework MCP: {server_name}")
+                continue
+
+            # Skip direct MCP servers - they remain as protocol tools, not code-based
+            is_direct_mcp = server_name in (self.direct_mcp_servers or [])
+            if is_direct_mcp:
+                logger.debug(f"[FilesystemManager] Skipping direct MCP (kept as protocol tool): {server_name}")
                 continue
 
             # Initialize server entry if needed
@@ -1028,7 +1047,12 @@ class FilesystemManager:
 
         return workspace
 
-    def get_mcp_filesystem_config(self, include_only_write_tools: bool = False) -> Dict[str, Any]:
+    def get_mcp_filesystem_config(
+        self,
+        include_only_write_tools: bool = False,
+        use_mcpwrapped: bool = False,
+        use_no_roots_wrapper: bool = False,
+    ) -> Dict[str, Any]:
         """
         Generate MCP filesystem server configuration.
 
@@ -1037,12 +1061,22 @@ class FilesystemManager:
                                      Used with code-based tools to provide clean file creation
                                      without shell escaping issues, while using command-line
                                      for other file operations.
+            use_mcpwrapped: If True, wrap the server with mcpwrapped to filter tools at the
+                           MCP protocol level. This hides tools from Claude's context entirely.
+                           Required for Claude Code backend since it doesn't support allowed_tools
+                           for MCP tools. See: https://github.com/anthropics/claude-code/issues/7328
+                           Uses: https://github.com/VitoLin/mcpwrapped
+            use_no_roots_wrapper: If True, wrap the server with our no-roots wrapper that
+                                  intercepts and removes the MCP roots protocol. This prevents
+                                  clients (like Claude Code SDK) from overriding our command-line
+                                  paths with their own roots. Required for Claude Code backend.
 
         Returns:
             Dictionary with MCP server configuration for filesystem access
         """
         # Get all managed paths
         paths = self.path_permission_manager.get_mcp_filesystem_paths()
+        logger.debug(f"[FilesystemManager.get_mcp_filesystem_config] MCP filesystem paths for agent: {paths}")
 
         # Check if we should use globally installed package (Docker) vs npx (local)
         # In Docker, we pre-install with the zod-to-json-schema fix
@@ -1050,39 +1084,70 @@ class FilesystemManager:
 
         use_global = shutil.which("mcp-server-filesystem") is not None
 
-        # Build MCP server configuration with all managed paths
+        # Build base MCP server configuration
         if use_global:
-            # Use globally installed package (Docker with fixed zod version)
-            config = {
-                "name": "filesystem",
-                "type": "stdio",
-                "command": "mcp-server-filesystem",
-                "args": paths,
-                "cwd": str(self.cwd),
-            }
+            base_command = "mcp-server-filesystem"
+            base_args = paths
         else:
-            # Use npx for local development
+            base_command = "npx"
+            base_args = ["-y", "@modelcontextprotocol/server-filesystem"] + paths
+
+        # When filtering tools and using mcpwrapped, wrap the command
+        if include_only_write_tools and use_mcpwrapped:
+            # Use mcpwrapped to filter tools at the MCP protocol level
+            # This prevents filtered tools from appearing in Claude's context
+            # See: https://github.com/VitoLin/mcpwrapped
+            # We use npx to auto-download if not installed (like we do for server-filesystem)
+            visible_tools = "write_file,edit_file"
             config = {
                 "name": "filesystem",
                 "type": "stdio",
                 "command": "npx",
-                "args": [
-                    "-y",
-                    "@modelcontextprotocol/server-filesystem",
-                ]
-                + paths,
-                "cwd": str(self.cwd),  # Set working directory for filesystem server (important for relative paths)
+                "args": ["-y", "mcpwrapped@1.0.4", f"--visible_tools={visible_tools}", base_command] + base_args,
+                "cwd": str(self.cwd),
             }
-
-        if include_only_write_tools:
-            # Code-based tools mode: Only include write_file and edit_file
-            # This avoids shell escaping nightmares when creating Python scripts
-            # Other file operations use command-line tools (more efficient for CodeAct)
-            config["allowed_tools"] = ["write_file", "edit_file"]
+            logger.info(
+                f"[FilesystemManager] Using mcpwrapped (via npx) to filter filesystem tools to: {visible_tools}",
+            )
         else:
-            # Normal mode: Exclude read_media_file since we have our own implementation
-            # Note: Tool names here are unprefixed (before server name is added)
-            config["exclude_tools"] = ["read_media_file"]
+            # Standard configuration without mcpwrapped
+            # Note: ALLOWED_PATHS env var is NOT supported by @modelcontextprotocol/server-filesystem
+            # (it's only a proposal: https://github.com/modelcontextprotocol/servers/issues/1879)
+            # Paths MUST be passed as command-line args
+
+            # Use no-roots wrapper to prevent MCP roots protocol from overriding our paths
+            # The MCP filesystem server supports "roots" protocol where client-provided roots
+            # completely replace command-line args. Claude Code SDK uses this, which breaks our
+            # multi-path setup (workspace + temp_workspaces). The wrapper intercepts and removes
+            # roots capability, forcing the server to use our command-line args.
+            if use_no_roots_wrapper:
+                wrapper_path = Path(__file__).parent.parent / "mcp_tools" / "filesystem_no_roots.py"
+                config = {
+                    "name": "filesystem",
+                    "type": "stdio",
+                    "command": "python3",
+                    "args": [str(wrapper_path)] + paths,
+                    "cwd": str(self.cwd),
+                }
+                logger.info(f"[FilesystemManager] Using no-roots wrapper for filesystem: {paths}")
+            else:
+                config = {
+                    "name": "filesystem",
+                    "type": "stdio",
+                    "command": base_command,
+                    "args": base_args,  # base_args includes the paths
+                    "cwd": str(self.cwd),
+                }
+                logger.info(f"[FilesystemManager] MCP filesystem config: {paths}")
+
+            if include_only_write_tools:
+                # Code-based tools mode: Only include write_file and edit_file
+                # Note: This sets allowed_tools in config, but Claude Code SDK doesn't respect it
+                # for MCP tools. Use use_mcpwrapped=True for Claude Code backend.
+                config["allowed_tools"] = ["write_file", "edit_file"]
+            else:
+                # Normal mode: Exclude read_media_file since we have our own implementation
+                config["exclude_tools"] = ["read_media_file"]
 
         return config
 
@@ -1252,6 +1317,15 @@ class FilesystemManager:
         # The servers need to connect so we can extract their tool schemas for code generation
         # Tool filtering happens later in the backend after conversion to Function objects
 
+        # Validate direct_mcp_servers - warn if any aren't in configured mcp_servers
+        if self.direct_mcp_servers:
+            configured_server_names = set(existing_names)
+            for direct_server in self.direct_mcp_servers:
+                if direct_server not in configured_server_names:
+                    logger.warning(
+                        f"[FilesystemManager] direct_mcp_servers contains '{direct_server}' " f"but no MCP server with that name is configured in mcp_servers",
+                    )
+
         try:
             # Add filesystem server if missing
             if "filesystem" not in existing_names:
@@ -1260,10 +1334,13 @@ class FilesystemManager:
                 mcp_servers.append(
                     self.get_mcp_filesystem_config(
                         include_only_write_tools=self.exclude_file_operation_mcps,
+                        use_mcpwrapped=self.use_mcpwrapped_for_tool_filtering,
+                        use_no_roots_wrapper=self.use_no_roots_wrapper,
                     ),
                 )
                 if self.exclude_file_operation_mcps:
-                    logger.info("[FilesystemManager.inject_filesystem_mcp] Added filesystem MCP with write_file and edit_file only (exclude_file_operation_mcps=True)")
+                    wrapper_note = " (using mcpwrapped)" if self.use_mcpwrapped_for_tool_filtering else ""
+                    logger.info(f"[FilesystemManager.inject_filesystem_mcp] Added filesystem MCP with write_file and edit_file only{wrapper_note}")
             else:
                 logger.warning("[FilesystemManager.inject_filesystem_mcp] Custom filesystem MCP server already present")
 
@@ -1293,6 +1370,13 @@ class FilesystemManager:
 
         # Update backend config
         backend_config["mcp_servers"] = mcp_servers
+
+        # Log the final MCP server configs for debugging
+        for server in mcp_servers:
+            if isinstance(server, dict):
+                server_name = server.get("name", "unknown")
+                server_args = server.get("args", [])
+                logger.debug(f"[FilesystemManager.inject_filesystem_mcp] Server '{server_name}' args: {server_args}")
 
         return backend_config
 
@@ -1443,7 +1527,14 @@ class FilesystemManager:
                         if item.is_file():
                             shutil.copy2(item, self.snapshot_storage / item.name)
                         elif item.is_dir():
-                            shutil.copytree(item, self.snapshot_storage / item.name)
+                            # Use symlinks=True to copy symlinks as symlinks, not follow them
+                            # Use ignore_dangling_symlinks=True to handle broken symlinks in subdirectories (e.g., from subagent workspaces)
+                            shutil.copytree(
+                                item,
+                                self.snapshot_storage / item.name,
+                                symlinks=True,
+                                ignore_dangling_symlinks=True,
+                            )
                         items_copied += 1
 
                     logger.info(f"[FilesystemManager] Saved snapshot with {items_copied} items to {self.snapshot_storage}")
@@ -1472,7 +1563,15 @@ class FilesystemManager:
                     if item.is_file():
                         shutil.copy2(item, dest_dir / item.name)
                     elif item.is_dir():
-                        shutil.copytree(item, dest_dir / item.name, dirs_exist_ok=True)
+                        # Use symlinks=True to copy symlinks as symlinks, not follow them
+                        # Use ignore_dangling_symlinks=True to handle broken symlinks in subdirectories (e.g., from subagent workspaces)
+                        shutil.copytree(
+                            item,
+                            dest_dir / item.name,
+                            dirs_exist_ok=True,
+                            symlinks=True,
+                            ignore_dangling_symlinks=True,
+                        )
                     items_copied += 1
 
                 logger.info(f"[FilesystemManager] Saved {'final' if is_final else 'regular'} " f"log snapshot with {items_copied} items to {dest_dir}")
@@ -1593,8 +1692,16 @@ class FilesystemManager:
                 dest_dir = self.agent_temporary_workspace / anon_id
 
                 # Copy snapshot content if not empty
+                # Use symlinks=True to copy symlinks as symlinks, not follow them
+                # Use ignore_dangling_symlinks=True to handle broken symlinks in subdirectories
                 if any(snapshot_path.iterdir()):
-                    shutil.copytree(snapshot_path, dest_dir, dirs_exist_ok=True)
+                    shutil.copytree(
+                        snapshot_path,
+                        dest_dir,
+                        dirs_exist_ok=True,
+                        symlinks=True,
+                        ignore_dangling_symlinks=True,
+                    )
 
         return self.agent_temporary_workspace
 
@@ -1607,20 +1714,50 @@ class FilesystemManager:
             workspace_name: Human-readable name for the workspace
             context: Additional context (e.g., "before execution", "after execution")
         """
+        from ._constants import MAX_LOG_DEPTH, MAX_LOG_ITEMS, SKIP_DIRS_FOR_LOGGING
+
         if not workspace_path or not workspace_path.exists():
             logger.info(f"[FilesystemManager.{workspace_name}] {context} - Workspace does not exist: {workspace_path}")
             return
 
         try:
-            files = list(workspace_path.rglob("*"))
-            file_paths = [str(f.relative_to(workspace_path)) for f in files if f.is_file()]
-            dir_paths = [str(f.relative_to(workspace_path)) for f in files if f.is_dir()]
+            # Collect paths while skipping large dependency directories
+            file_paths: list[str] = []
+            dir_paths: list[str] = []
+            skipped_dirs: list[str] = []
+
+            def collect_paths(base: Path, rel_prefix: str = "") -> None:
+                try:
+                    for item in base.iterdir():
+                        rel_path = f"{rel_prefix}/{item.name}" if rel_prefix else item.name
+                        if item.is_dir():
+                            if item.name in SKIP_DIRS_FOR_LOGGING:
+                                skipped_dirs.append(rel_path)
+                            else:
+                                dir_paths.append(rel_path)
+                                # Recurse but limit depth to avoid explosion
+                                if rel_path.count("/") < MAX_LOG_DEPTH:
+                                    collect_paths(item, rel_path)
+                        else:
+                            file_paths.append(rel_path)
+                except PermissionError:
+                    pass
+
+            collect_paths(workspace_path)
 
             logger.info(f"[FilesystemManager.{workspace_name}] {context} - Workspace: {workspace_path}")
+
+            # Truncate lists if too large
             if file_paths:
-                logger.info(f"[FilesystemManager.{workspace_name}] {context} - Files ({len(file_paths)}): {file_paths}")
+                display_files = file_paths[:MAX_LOG_ITEMS]
+                suffix = f" ... and {len(file_paths) - MAX_LOG_ITEMS} more" if len(file_paths) > MAX_LOG_ITEMS else ""
+                logger.info(f"[FilesystemManager.{workspace_name}] {context} - Files ({len(file_paths)}): {display_files}{suffix}")
             if dir_paths:
-                logger.info(f"[FilesystemManager.{workspace_name}] {context} - Directories ({len(dir_paths)}): {dir_paths}")
+                display_dirs = dir_paths[:MAX_LOG_ITEMS]
+                suffix = f" ... and {len(dir_paths) - MAX_LOG_ITEMS} more" if len(dir_paths) > MAX_LOG_ITEMS else ""
+                logger.info(f"[FilesystemManager.{workspace_name}] {context} - Directories ({len(dir_paths)}): {display_dirs}{suffix}")
+            if skipped_dirs:
+                logger.info(f"[FilesystemManager.{workspace_name}] {context} - Skipped large dirs: {skipped_dirs}")
             if not file_paths and not dir_paths:
                 logger.info(f"[FilesystemManager.{workspace_name}] {context} - Empty workspace")
         except Exception as e:

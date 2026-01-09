@@ -9,16 +9,458 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Recent Releases
 
-**v0.1.26 (December 17, 2025)** - Web UI Setup & Shadow Agent Depth Scaling
-New Web UI setup wizard for guided first-run configuration, Docker diagnostics module with platform-specific resolution, and shadow agent response depth for test-time compute scaling.
+**v0.1.36 (January 9, 2026)** - Hook Framework & Unified @path Context Handling
+General hook framework for agent lifecycle events with PreToolUse/PostToolUse hooks, content injection strategies, and custom hook support. Unified `@path` syntax for inline context path references in CLI and Web UI with autocomplete file picker. Claude Code native hooks integration. Docker resource cleanup improvements when recreating agents for new path references.
 
-**v0.1.25 (December 15, 2025)** - UI-TARS Computer Use & Evolving Skills
-Added UI-TARS custom tool for GUI automation, GPT-5.2 model support, and evolving skill creator system. Enhanced Textual terminal with adaptive layouts and improved OpenRouter Gemini reasoning details handling.
+**v0.1.35 (January 7, 2026)** - Enhanced Log Analysis & Workflow Observability
+New `massgen logs analyze` command generates analysis prompts or launches multi-agent self-analysis using MassGen. Comprehensive Logfire attributes for workflow explanation including round context, vote context, and local file references. New `direct_mcp_servers` config option for code-based tools mode to keep specific MCP servers as direct protocol tools. Grok and Gemini tool fixes, vote-only mode improvements.
 
-**v0.1.24 (December 12, 2025)** - Enhanced Cost Tracking
-Expanded real-time cost tracking across multiple backends (OpenRouter, xAI, Gemini, Grok, Claude Code) with per-agent token breakdown, cost inspection command, and aggregated session totals.
+**v0.1.34 (January 5, 2026)** - OpenAI-Compatible Server & Model Discovery
+Local OpenAI-compatible HTTP server enables integration with any OpenAI SDK client. Dynamic model discovery for Groq and Together backends fetches available models via authenticated API calls. WebUI improvements include file diffs, answer refresh polling, and workspace browser optimizations. Subagent reliability enhancements for status tracking, cancellation recovery, and error handling.
 
 ---
+
+## [0.1.36] - 2026-01-09
+
+### Added
+- **Hook Framework**: General hook framework for extending agent behavior at key execution points ([MAS-215](https://linear.app/massgen-ai/issue/MAS-215))
+  - **PreToolUse hooks**: Execute before tool invocation for permission validation and argument modification
+  - **PostToolUse hooks**: Execute after tool results for content injection and processing
+  - **Injection strategies**: `tool_result` (append to output) and `user_message` (separate message)
+  - **Built-in hooks**: MidStreamInjectionHook for cross-agent updates, HighPriorityTaskReminderHook for task completion
+  - **Custom hooks**: Python callable hooks with glob-style pattern matching (`*`, `Write|Edit`, `mcp__*`)
+  - **Error handling**: Configurable fail-open (default) or fail-closed behavior for security-critical hooks
+  - **Debug support**: `debug_delay_seconds` and `debug_delay_after_n_tools` for testing mid-stream injection
+
+- **Unified `@path` Context Handling**: Inline context path references in prompts
+  - **Inline file picker**: Type `@` in CLI to trigger autocomplete popup (like Claude Code)
+  - **Syntax support**: `@path` (read), `@path:w` (write), `@dir/` (directory)
+  - **Context accumulation**: Paths from earlier turns remain accessible in later turns
+  - **Permission upgrade**: `@file` in turn 1, `@file:w` in turn 2 grants write permission
+  - **Deferred agent creation**: Docker containers launch once with all paths from first prompt
+
+- **Claude Code Native Hooks**: Integration with Claude Code's hook system
+  - Support for Claude Code temp filesystem tools permission handling
+
+### Changed
+- **Docker Resource Management**: Clean up Docker resources when recreating agents for new `@path` references
+  - Prevents resource leaks during interactive sessions with path changes
+
+- **Installation Instructions**: Revised README with clearer `uv` installation steps
+  - Streamlined quickstart guide for faster onboarding
+
+### Fixed
+- **Path Handling**: Fixed path reference handling for Web UI and Rich CLI
+  - Consistent behavior across CLI interactive mode, automation mode, and Web UI
+
+### Documentations, Configurations and Resources
+- **Hook Framework Guide**: New `docs/source/user_guide/advanced/hooks.rst` with comprehensive hook documentation
+- **File Operations Guide**: Updated `docs/source/user_guide/files/file_operations.rst` with `@path` syntax
+- **Installation Guide**: Updated `docs/source/quickstart/installation.rst` with `uv` instructions
+- **Hook Config Example**: New `massgen/configs/hooks/example_hooks.yaml` for hook configuration
+- **Debug Config**: New `massgen/configs/debug/injection_delay_test.yaml` for testing mid-stream injection
+- **OpenSpec**: New `openspec/changes/add-hook-framework/` and `openspec/changes/unify-context-path-handling/` proposals
+
+### Technical Details
+- **Major Focus**: Hook framework for agent lifecycle events, unified `@path` syntax, Claude Code integration
+- **Contributors**: @ncrispino, @franklinnwren, @HenryQi and the MassGen team
+
+## [0.1.35] - 2026-01-07
+
+### Added
+- **Log Analysis CLI Command**: New `massgen logs analyze` for AI-assisted log analysis ([MAS-227](https://linear.app/massgen-ai/issue/MAS-227))
+  - **Prompt mode** (default): Generates analysis prompt referencing `massgen-log-analyzer` skill for coding CLIs
+  - **Self-analysis mode** (`--mode self`): Runs 3-agent MassGen team for multi-perspective analysis
+  - **Per-turn analysis reports**: Reports placed at `turn_N/ANALYSIS_REPORT.md` instead of per-attempt
+  - Supports `--turn/-t` for specific turn, `--force/-f` for overwrite, `--ui` for UI mode selection
+  - Enhanced `massgen logs list` with "Analyzed" column and `--analyzed`/`--unanalyzed` filters
+
+- **Logfire Workflow Analysis Attributes**: Comprehensive observability for understanding agent behavior ([MAS-199](https://linear.app/massgen-ai/issue/MAS-199))
+  - **Round context**: `massgen.round.intent`, `available_answers`, `answer_previews` for workflow explanation
+  - **Vote context**: Extended `massgen.vote.reason` (500 chars), `answer_label_mapping` for vote analysis
+  - **Agent work products**: `massgen.agent.files_created`, `file_count` for detecting repeated work
+  - **Restart context**: `massgen.restart.reason`, `trigger`, `triggered_by_agent`
+  - **Local file references**: `massgen.log_path`, `agent.log_path`, `answer_path` for hybrid access
+
+- **`direct_mcp_servers` Config Option**: Keep specific MCP servers as direct protocol tools
+  - When `enable_code_based_tools: true`, exempts specified servers from code-only filtering
+  - Useful for debugging/monitoring tools (e.g., Logfire) that need immediate access
+  - Subagents automatically inherit `direct_mcp_servers` from parent
+  - Logs warning if server not found in `mcp_servers`
+
+- **Task Context Module**: New `massgen/context/` package for unified context management
+  - `TaskContext` class for managing agent task state and context
+
+### Changed
+- **Skill & Voting Improvements**: Enhanced skill execution and voting coordination
+  - MCPs can now run directly in certain scenarios
+  - Improved skill parameter handling
+
+- **Analysis Per-Turn**: Log analysis now operates at turn level rather than attempt level
+  - More intuitive organization of analysis reports
+
+### Fixed
+- **Unknown Tool Handling**: Unknown/malformed tool names (e.g., Gemini's `default_api:` prefix) no longer cause agent termination ([MAS-225](https://linear.app/massgen-ai/issue/MAS-225))
+  - Only client-provided external tools trigger external tool call path
+  - Unknown tools logged and skipped gracefully
+
+- **Vote-Only Mode**: Fixed agents wasting rounds when reaching `max_new_answers_per_agent`
+  - System message now correctly omits `new_answer` tool
+  - Internal tool filtering uses agent-specific tools
+  - Prevents hallucinated `new_answer` calls from passing validation
+
+- **Grok Backend**: Fixed tool handling issues
+
+- **Gemini Backend**: Fixed tool-related problems and parameter handling
+
+- **Metadata Saving**: Config loader now returns raw/unexpanded config to avoid logging secrets
+
+### Documentations, Configurations and Resources
+- **Logging Guide**: Updated `docs/source/user_guide/logging.rst` with CLI quick reference and analysis workflow
+- **Code-Based Tools Guide**: New "Direct MCP Servers" section in `docs/source/user_guide/tools/code_based_tools.rst`
+- **CLI Reference**: Updated `docs/source/reference/cli.rst` with `logs analyze` command documentation
+- **YAML Schema**: Added `direct_mcp_servers` parameter in `docs/source/reference/yaml_schema.rst`
+- **Analysis Configs**: New `massgen/configs/analysis/log_analysis.yaml` and `log_analysis_cli.yaml`
+- **Skill Update**: Comprehensive update to `massgen/skills/massgen-log-analyzer/SKILL.md`
+- **OpenSpec**: New `openspec/changes/add-logfire-workflow-analysis/` with proposal and specs
+
+### Technical Details
+- **Major Focus**: Log analysis CLI, Logfire workflow attributes, direct MCP servers, tool handling fixes
+- **Contributors**: @ncrispino, @chiwang, @HenryQi and the MassGen team
+
+## [0.1.34] - 2026-01-05
+
+### Added
+- **OpenAI-Compatible Server**: Local HTTP server exposing MassGen as an OpenAI-compatible API
+  - Run with `massgen server` or `python -m massgen.openai_server`
+  - Compatible with any OpenAI SDK client for easy integration
+  - Aggregates usage statistics in server responses
+  - Uses `massgen run` backend for feature parity with CLI
+
+- **Dynamic Model Discovery**: Authenticated model listing for Groq and Together backends
+  - Fetches available models via API instead of hardcoded lists
+  - Supports OpenAI-compatible model discovery endpoints
+  - Design documentation in `docs/dev_notes/discovery/`
+
+- **Review Skill**: New skill for code review workflows
+
+### Changed
+- **WebUI Improvements**: Enhanced frontend experience
+  - File diff display for workspace changes
+  - Answer refresh polling for real-time updates
+  - Optimized workspace browser timing and performance
+  - Better caching for office documents and scanning
+  - Removed unnecessary workspace browser elements
+
+- **Subagent System Reliability**: Improved multi-agent coordination
+  - Better status tracking and error handling
+  - Cancellation recovery improvements
+  - Context and media handling fixes
+  - Warning improvements for subagent operations
+
+- **Pre-commit Workflow**: Added convenience scripts for pre-commit hooks
+
+### Fixed
+- **OpenAI Server**: Fixed null args handling in server responses
+
+- **WebUI Status Tracking**: Fixed "Done" status tracking error
+
+- **Responses Compression**: Fixed compression input issue
+
+- **Superseded Vote Tracking**: Fixed vote tracking for superseded responses
+
+- **Historical Workspace**: Fixed workspace history retrieval problems
+
+- **Logfire Optional**: Made Logfire truly optional in base_with_custom_tool_and_mcp.py
+
+- **Persona Handling**: Use persona JSONs even if generation not finished
+
+### Documentations, Configurations and Resources
+- **HTTP Server Integration Guide**: New `docs/source/user_guide/integration/http_server.rst` for OpenAI-compatible server usage
+- **Model Discovery Design**: New `docs/dev_notes/backend_model_listing.md` design document for backend model listing (MAS-163)
+- **Subagent Documentation**: Updated `docs/source/user_guide/advanced/subagents.rst` with status tracking and recovery details
+- **CLI Reference**: Updated `docs/source/reference/cli.rst` with server command documentation
+- **Skills**: New `massgen/skills/release-prep/SKILL.md` for release automation, new `massgen/skills/pr-checks/SKILL.md` for code review
+
+### Technical Details
+- **Major Focus**: OpenAI-compatible server, dynamic model discovery, WebUI improvements, subagent reliability
+- **Contributors**: @ncrispino, @Angela, @maxim-saplin, @chiwang, @randombet, @HenryQi and the MassGen team
+
+## [0.1.33] - 2026-01-02
+
+### Added
+- **Reactive Context Compression**: Automatic conversation compression when context length errors are detected
+  - Summarizes older messages while preserving recent context
+  - Supports all major backends: OpenAI, Claude, Gemini, OpenRouter, Grok
+  - Includes message truncation fallback when compression alone is insufficient
+
+- **Streaming Buffer System**: Tracks accumulated streaming content for compression recovery
+  - Captures text deltas, tool calls, tool results, and reasoning/thinking content
+  - New `--save-streaming-buffers` CLI flag to save buffers for debugging
+  - New `persist_conversation_buffers` config option for cross-agent buffer inspection
+
+### Changed
+- **File Overwrite Protection**: `write_file` tool now refuses to overwrite existing files (use `edit_file` instead)
+
+- **Task Plan Duplicate Protection**: `create_task_plan` MCP tool prevents re-creating plans after recovery, avoiding duplicate work
+
+- **Grok Backend MCP Tools**: Fixed MCP tools visibility by removing incorrect stream method override
+
+- **Circuit Breaker Debugging**: Added `agent_id`, `error_type`, and `error_message` parameters for better failure diagnostics
+
+- **Voting Prompts**: Improved agent coordination prompts to encourage answer synthesis before voting
+
+- **Subagent Failure Handling**: Results now include both `workspace` and `log_path` for debugging failed/timed-out subagents
+
+### Fixed
+- **GPT-5 Model Behavior**: System prompt adjustments ensure MassGen task planning is used over native model planning
+
+- **Gemini Vote-Only Mode**: Fixed `vote_only` parameter handling in Gemini backend streaming
+
+- **Subagent Failed Paths**: Fixed subagent MCP server handling of failed subagent results
+
+- **Incomplete Response Recovery**: Added recovery mechanism when API streams end early, preserving partial content
+
+### Documentations, Configurations and Resources
+- **Context Compression Design Doc**: New `docs/dev_notes/context_compression_design.md` with architecture, testing, and backend-specific notes
+- **Test Configurations**: New `test_reactive_compression.yaml` for compression testing
+
+### Technical Details
+- **Major Focus**: Reactive context compression, streaming buffer system, MCP tool protections
+- **Contributors**: @ncrispino and the MassGen team
+
+## [0.1.32] - 2025-12-31
+
+### Changed
+- **Session Export Multi-Turn Support**: Enhanced `massgen export` command with multi-turn session handling
+  - New `--turns` flag for turn range selection (`all`, `N`, `N-M`, `latest`)
+  - Workspace options: `--no-workspace`, `--workspace-limit` (default 500KB per agent)
+  - Export controls: `--yes` (skip prompts), `--dry-run`, `--verbose`, `--json`
+  - Multi-turn file collection preserves turn/attempt structure in exported gists
+
+- **Logfire Optional Dependency**: Moved Logfire from required to optional `[observability]` dependency
+  - Install with `pip install massgen[observability]` to enable Logfire tracing
+  - Helpful error message when `--logfire` flag used without Logfire installed
+  - Reduces default installation size for users who don't need observability
+
+- **Per-Attempt Logging**: Each orchestration restart attempt now has isolated log files
+  - Separate `massgen.log` and `execution_metadata.yaml` per attempt directory
+  - Log handlers reconfigured on restart via `set_log_attempt()` function
+  - Viewer adjusted to handle multiple attempt directories
+
+- **Office Document PDF Conversion**: Automatic PDF conversion for DOCX/PPTX/XLSX when sharing sessions
+  - Uses Docker + LibreOffice for headless conversion
+  - Includes both original file (for download) and PDF (for preview) in gists
+  - Tries sudo image first (`mcp-runtime-sudo`), falls back to standard image
+
+### Documentations, Configurations and Resources
+- **Installation Documentation**: Clarified `uv run` commands for tests and examples in README and quickstart docs
+- **Logfire Documentation**: Updated installation instructions for observability optional extra
+
+### Technical Details
+- **Major Focus**: Multi-turn session export, Logfire optional dependency, per-attempt logging
+- **Contributors**: @ncrispino @AbhimanyuAryan and the MassGen team
+
+## [0.1.31] - 2025-12-29
+
+### Added
+- **Logfire Observability Integration**: Comprehensive structured logging and tracing via [Logfire](https://logfire.pydantic.dev/)
+  - Automatic LLM instrumentation for OpenAI, Anthropic Claude, and Google Gemini backends
+  - Tool execution tracing for MCP and custom tools with timing metrics
+  - Agent coordination observability with per-round spans and token usage logging
+  - Enable via `--logfire` CLI flag or `MASSGEN_LOGFIRE_ENABLED=true` environment variable
+  - Graceful degradation to loguru when Logfire is disabled
+  - New `massgen-log-analyzer` skill for AI-assisted log analysis
+
+### Fixed
+- **Azure OpenAI Native Tool Call Streaming**: Tool calls now accumulated and yielded as structured `tool_calls` chunks instead of plain content
+
+- **OpenRouter Web Search Logging**: Fixed logging output for web search operations
+
+### Documentations, Configurations and Resources
+- **Logfire Documentation**: New `docs/source/user_guide/logging.rst` with usage guide and SQL query examples
+- **Python Installation Guide**: Added link to Python installation guide in quickstart docs
+
+### Technical Details
+- **Major Focus**: Logfire observability integration, Azure OpenAI tool call streaming
+- **Contributors**: @ncrispino @AbhimanyuAryan @shubham2345 @franklinnwren and the MassGen team
+
+## [0.1.30] - 2025-12-26
+
+### Added
+- **OpenRouter Web Search Plugin**: Native web search integration via OpenRouter's plugins array
+  - Maps `enable_web_search` to `{"id": "web"}` plugin format
+  - Configurable search engine (`exa`/`native`) and `max_results` parameters
+  - Added to research preset's auto-enabled web search backends
+
+### Changed
+- **Persona Generator Diversity Modes**: Enhanced persona generation with two diversity modes and phase-based adaptation
+  - New `diversity_mode`: `perspective` (different values/priorities) or `implementation` (different solution types)
+  - Phase-based adaptation: strong personas for exploration, softened for convergence
+  - Multi-turn persistence via `persist_across_turns` option
+  - Web UI integration with toggle in coordination settings
+
+- **Azure OpenAI Multi-Endpoint Support**: Support both Azure-specific and OpenAI-compatible endpoints
+  - Auto-detect endpoint format and use appropriate client (`AsyncAzureOpenAI` vs `AsyncOpenAI`)
+  - Conditionally disable `stream_options` for Ministral/Mistral models
+
+- **Environment Variable Expansion in Configs**: Use `${VAR}` syntax in YAML/JSON config files for flexible configuration
+
+### Fixed
+- **Azure OpenAI Workflow Tool Extraction**: Improved JSON parsing with fallback patterns for models outputting tool arguments without `tool_name` wrapper
+
+- **Persistent Memory Retrieval**: Fixed regression by enabling retrieval on first turn
+
+- **Backend Tool Registration**: Fixed tool registration and updated binary file extensions list
+
+### Documentations, Configurations and Resources
+- **OpenRouter Web Search Configs**: New `single_openrouter_web_search.yaml` and `openrouter_web_search.yaml`
+- **Azure Multi-Endpoint Config**: Updated `azure_openai_multi.yaml` with env var examples
+- **Diversity Documentation**: Updated `docs/source/user_guide/advanced/diversity.rst` with new diversity modes
+
+### Technical Details
+- **Major Focus**: OpenRouter web search, persona diversity modes, Azure OpenAI compatibility
+- **Contributors**: @ncrispino @shubham2345 @AbhimanyuAryan @maxim-saplin and the MassGen team
+
+## [0.1.29] - 2025-12-24
+
+### Added
+- **Subagent System**: Spawn parallel child MassGen processes for independent task execution
+  - New `spawn_subagents` tool for agents to delegate parallelizable work
+  - Process isolation with independent workspaces per subagent
+  - Automatic inheritance of parent agent's backend configuration
+  - Result aggregation with workspace paths and token usage tracking
+  - Configurable via `enable_subagents`, `subagent_default_timeout`, and `subagent_max_concurrent`
+
+### Changed
+- **Tool Metrics with Distribution Statistics**: Enhanced `get_tool_metrics_summary()` with per-call averages and output distribution stats (min/max/median)
+
+- **CLI Config Builder Per-Agent System Messages**: New mode in `massgen --quickstart` for assigning different system messages per agent ("Skip", "Same for all", "Different per agent")
+
+### Fixed
+- **OpenAI Responses API Duplicate Items**: Fixed duplicate item errors when using `previous_response_id` by skipping manual item addition when response ID is passed
+
+- **Response Formatter Function Call ID Preservation**: Preserved 'id' field in function_call messages for proper pairing with reasoning items (required by OpenAI Responses API)
+
+### Documentations, Configurations and Resources
+
+- **Subagent Documentation**: New `docs/source/user_guide/advanced/subagents.rst` with usage guide, configuration examples, and best practices
+- **Subagent Example Configs**: New `massgen/configs/features/test_subagent_orchestrator.yaml` and `test_subagent_orchestrator_code_mode.yaml`
+
+### Technical Details
+- **Major Focus**: Subagent parallel execution system, OpenAI Responses API compatibility
+- **Contributors**: @ncrispino and the MassGen team
+
+## [0.1.28] - 2025-12-22
+
+### Added
+- **Web UI Artifact Previewer**: Preview workspace artifacts directly in the web interface
+  - Support for multiple formats: PDF, DOCX, PPTX, XLSX, images, HTML, SVG, Markdown, Mermaid diagrams
+  - New `ArtifactPreviewModal` and `InlineArtifactPreview` components with Sandpack code preview
+
+### Changed
+- **Unified Multimodal Tools**: Consolidated `read_media` for understanding and `generate_media` for generation
+  - Understanding: Image, audio, and video analysis with backend selector routing to Gemini, OpenAI, or OpenRouter
+  - Generation: Create images (gpt-image-1, Imagen), videos (Sora, Veo), and audio (TTS) with provider selection
+  - New `generation/` module with modular `_image.py`, `_video.py`, `_audio.py` implementations
+
+- **OpenRouter Tool-Capable Model Filtering**: Model list now filters to only show models supporting tool calling
+  - Checks `supported_parameters` for "tools" capability before including models
+
+### Fixed
+- **Azure OpenAI Tool Calls and Workflow Integration**: Comprehensive fixes for Azure OpenAI backend
+  - Parameter filtering to exclude unsupported Azure parameters (`api_version`, `azure_endpoint`, `enable_rate_limit`)
+  - Fixed `tool_choice` parameter handling (only set when tools are provided)
+  - Message filtering for Azure's tool message validation requirements
+  - Fallback extraction for Azure's `{"content":"..."}` response format
+
+- **Web UI Display and Cancellation**: Fixed display issues and proper cancellation handling
+  - Coordination tracker display fixes
+  - Proper cancellation propagation in web server
+
+- **Docker Background Shell**: Fixed background shell execution in Docker environments
+
+- **Docker Sudo Configuration**: Fixed `Dockerfile.sudo` configuration
+
+### Documentations, Configurations and Resources
+
+- **Multimodal Tools Documentation**: Updated `massgen/tool/_multimodal_tools/TOOL.md` with generation capabilities
+- **Web UI Components**: New artifact renderer components in `webui/src/components/artifactRenderers/`
+
+### Technical Details
+- **Major Focus**: Multimodal backend integration, artifact preview system, Azure OpenAI compatibility
+- **Contributors**: @ncrispino @shubham2345 @AbhimanyuAryan and the MassGen team
+
+## [0.1.27] - 2025-12-19
+
+### Added
+- **Session Sharing via GitHub Gist**: Share MassGen sessions with collaborators using `massgen export` (MAS-16)
+  - Uploads session logs to GitHub Gist (requires `gh` CLI authenticated)
+  - Returns shareable URL to MassGen Viewer (`https://massgen.github.io/MassGen-Viewer/?gist=...`)
+  - Manage shares with `massgen shares list` and `massgen shares delete <gist_id>`
+  - Auto-excludes large files, debug logs, and redacts API keys
+  - New `massgen/share.py` module (373 lines)
+  - New `massgen/session_exporter.py` for session export logic
+
+- **Log Analysis CLI Command**: New `massgen logs` command for analyzing run logs with metrics visualization, tool breakdown, and export to JSON/CSV formats
+  - New `massgen/logs_analyzer.py` with `LogAnalyzer` class (433 lines)
+  - Enhanced `massgen/cli.py` with logs subcommand integration
+
+- **Per-LLM Call Time Tracking**: Detailed timing metrics for individual LLM API calls
+  - Track time spent on each API call across all backends (Claude, Gemini, OpenAI, Grok)
+  - Aggregate timing statistics in metrics summary
+  - Enhanced `massgen/backend/base.py` with timing instrumentation
+  - New timing fields in `massgen/backend/response.py`
+
+- **Gemini 3 Flash Model Support**: Added `gemini-3-flash-preview` model
+  - Enhanced `massgen/backend/capabilities.py` with new models and release dates
+  - New config: `massgen/configs/providers/gemini/gemini_3_flash.yaml`
+
+- **Web UI Context Paths Wizard**: New `ContextPathsStep` component in quickstart wizard for configuring file context paths
+
+- **Web UI "Open in Browser" Button**: Added button to open workspaces directly in browser from answer views
+  - Enhanced `massgen/frontend/web/server.py` with browser open endpoint
+
+### Changed
+- **CLI Config Builder Enhancements**: Per-agent web search toggles, system message configuration, and improved default model selection
+  - Enhanced `massgen/config_builder.py` with `_get_provider_capabilities()` helper (+234 lines)
+  - Added per-agent `enable_web_search` toggle and system message prompts during quickstart
+
+- **Logging System Improvements**: Enhanced logger configuration with better formatting and file output (`logger_config.py`)
+
+### Fixed
+- **Web Search Call Message Preservation**: Fixed response formatter to preserve `web_search_call` messages like reasoning messages (`_response_formatter.py`)
+
+- **Claude Code Tool Permissions**: Fixed tool allow issue for Claude Code backend
+  - Fixed `massgen/backend/claude_code.py`
+  - Fixed `massgen/filesystem_manager/_filesystem_manager.py`
+
+- **Orchestrator Workflow Timeout**: Fixed timeout handling in orchestrator error respawn logic (`massgen/orchestrator.py`)
+
+- **Workflow Restart Loop**: Fixed issue where workflow would search first then keep running into workflow restarted errors (`massgen/backend/response.py`)
+
+### Documentations, Configurations and Resources
+
+- **Session Sharing Documentation**:
+  - Updated `docs/source/user_guide/logging.rst`: Sharing sessions guide
+  - Updated `docs/source/reference/cli.rst`: Export and shares CLI reference
+  - Updated `docs/source/quickstart/running-massgen.rst`: Quickstart sharing guide
+
+- **Log Analysis Documentation**:
+  - Updated `docs/source/user_guide/logging.rst`: `massgen logs` command guide
+
+- **Configuration Examples**:
+  - `massgen/configs/providers/gemini/gemini_3_flash.yaml`: Gemini 3 Flash configuration
+  - `massgen/configs/debug/error_respawn_test.yaml`: Orchestrator error respawn testing
+
+- **Web UI Components**:
+  - New `webui/src/components/wizard/ContextPathsStep.tsx` (234 lines): Context paths wizard step
+  - Enhanced `webui/src/stores/wizardStore.ts`: Context path state management
+  - Enhanced `webui/src/components/FinalAnswerView.tsx`: Share and open in browser buttons
+
+### Technical Details
+- **Major Focus**: Session sharing, log analysis tooling, per-LLM timing, CLI config builder UX, Web UI enhancements
+- **Contributors**: @ncrispino @praneeth999 and the MassGen team
 
 ## [0.1.26] - 2025-12-17
 

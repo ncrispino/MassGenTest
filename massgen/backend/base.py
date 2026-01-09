@@ -14,7 +14,12 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 from ..filesystem_manager import FilesystemManager, PathPermissionManagerHook
 from ..mcp_tools.hooks import FunctionHookManager, HookType
-from ..token_manager import RoundTokenUsage, TokenCostCalculator, TokenUsage
+from ..token_manager import (
+    APICallMetric,
+    RoundTokenUsage,
+    TokenCostCalculator,
+    TokenUsage,
+)
 from ..utils import CoordinationStage
 
 logger = logging.getLogger(__name__)
@@ -34,11 +39,12 @@ class StreamChunk:
 
     type: str  # "content", "tool_calls", "complete_message", "complete_response", "done",
     # "error", "agent_status", "reasoning", "reasoning_done", "reasoning_summary",
-    # "reasoning_summary_done", "backend_status"
+    # "reasoning_summary_done", "backend_status", "compression_status"
     content: Optional[str] = None
     tool_calls: Optional[List[Dict[str, Any]]] = None  # User-defined function tools (need execution)
     complete_message: Optional[Dict[str, Any]] = None  # Complete assistant message
     response: Optional[Dict[str, Any]] = None  # Raw Responses API response
+    usage: Optional[Dict[str, Any]] = None  # Token usage metadata (prompt/completion/total)
     error: Optional[str] = None
     source: Optional[str] = None  # Source identifier (e.g., agent_id, "orchestrator")
     status: Optional[str] = None  # For agent status updates
@@ -68,6 +74,10 @@ class LLMBackend(ABC):
         # Initialize utility classes
         self.token_usage = TokenUsage()
 
+        # Track last API call's input tokens (for compression decisions)
+        # This is different from token_usage.input_tokens which is cumulative
+        self._last_call_input_tokens: int = 0
+
         # Round-level token tracking
         self._round_token_history: List[RoundTokenUsage] = []
         self._current_round_number: int = 0
@@ -75,6 +85,12 @@ class LLMBackend(ABC):
         self._round_start_snapshot: Optional[Dict[str, Any]] = None
         self._round_start_tool_count: int = 0
         self._round_used_fallback_estimation: bool = False  # Track if fallback was used in current round
+
+        # API call timing (pure LLM time, excluding tool execution)
+        self._api_call_history: List[APICallMetric] = []
+        self._current_api_call: Optional[APICallMetric] = None
+        self._api_call_index: int = 0
+        self._current_agent_id: Optional[str] = None
 
         # # Initialize tool manager
         # self.custom_tool_manager = ToolManager()
@@ -93,6 +109,11 @@ class LLMBackend(ABC):
         self._planning_mode_blocked_tools: set = set()
 
         self.token_calculator = TokenCostCalculator()
+
+        # Compression target ratio for reactive compression (context limit recovery)
+        # Default 0.2 = preserve 20% of messages, summarize 80%
+        # This is set by Orchestrator from CoordinationConfig.compression_target_ratio
+        self._compression_target_ratio: float = 0.20
 
         # Filesystem manager integration
         self.filesystem_manager = None
@@ -135,10 +156,13 @@ class LLMBackend(ABC):
                     "command_line_docker_packages": kwargs.get("command_line_docker_packages"),
                     "enable_audio_generation": kwargs.get("enable_audio_generation", False),
                     "exclude_file_operation_mcps": kwargs.get("exclude_file_operation_mcps", False),
+                    "use_mcpwrapped_for_tool_filtering": kwargs.get("use_mcpwrapped_for_tool_filtering", False),
+                    "use_no_roots_wrapper": kwargs.get("use_no_roots_wrapper", False),
                     "enable_code_based_tools": kwargs.get("enable_code_based_tools", False),
                     "custom_tools_path": kwargs.get("custom_tools_path"),
                     "auto_discover_custom_tools": kwargs.get("auto_discover_custom_tools", False),
                     "exclude_custom_tools": kwargs.get("exclude_custom_tools"),
+                    "direct_mcp_servers": kwargs.get("direct_mcp_servers"),
                     "shared_tools_directory": kwargs.get("shared_tools_directory"),
                     # Instance ID for parallel execution (Docker container naming)
                     "instance_id": self._instance_id,
@@ -241,11 +265,14 @@ class LLMBackend(ABC):
             "command_line_docker_credentials",
             "command_line_docker_packages",
             "exclude_file_operation_mcps",
+            "use_mcpwrapped_for_tool_filtering",
+            "use_no_roots_wrapper",
             # Code-based tools (CodeAct paradigm)
             "enable_code_based_tools",
             "custom_tools_path",
             "auto_discover_custom_tools",
             "exclude_custom_tools",
+            "direct_mcp_servers",
             "shared_tools_directory",
             # Backend identification (handled by orchestrator)
             "type",
@@ -255,6 +282,22 @@ class LLMBackend(ABC):
             "session_storage_base",
             # MCP configuration (handled by base class for MCP backends)
             "mcp_servers",
+            # Coordination parameters (handled by orchestrator, not passed to API)
+            "vote_only",  # Vote-only mode flag for coordination
+            # Multimodal tools configuration (handled by CustomToolAndMCPBackend)
+            "enable_multimodal_tools",
+            "multimodal_config",
+            "image_generation_backend",
+            "image_generation_model",
+            "video_generation_backend",
+            "video_generation_model",
+            "audio_generation_backend",
+            "audio_generation_model",
+            # Hook framework (handled by base class)
+            "hooks",
+            # Debug options (not passed to API)
+            "debug_delay_seconds",
+            "debug_delay_after_n_tools",
         }
 
     @abstractmethod
@@ -443,6 +486,82 @@ class LLMBackend(ABC):
         """Get the current round number."""
         return self._current_round_number
 
+    def get_current_round_type(self) -> str:
+        """Get the current round type (e.g., 'initial_answer', 'voting', 'presentation')."""
+        return self._current_round_type
+
+    # ==============================================================
+    # API Call Timing
+    # ==============================================================
+
+    def set_current_agent_id(self, agent_id: str) -> None:
+        """Set the current agent ID for API call tracking."""
+        self._current_agent_id = agent_id
+
+    def start_api_call_timing(self, model: str) -> None:
+        """Start timing an API call.
+
+        Call this immediately before making the API request.
+
+        Args:
+            model: The model name being called
+        """
+        self._current_api_call = APICallMetric(
+            agent_id=self._current_agent_id or "unknown",
+            round_number=self._current_round_number,
+            call_index=self._api_call_index,
+            backend_name=self.get_provider_name(),
+            model=model,
+            start_time=time.time(),
+        )
+
+    def record_first_token(self) -> None:
+        """Record time to first token (TTFT).
+
+        Call this when the first content token is received from the stream.
+        Only records the first call per API request.
+        """
+        if self._current_api_call and self._current_api_call.time_to_first_token_ms == 0:
+            self._current_api_call.time_to_first_token_ms = (time.time() - self._current_api_call.start_time) * 1000
+
+    def end_api_call_timing(self, success: bool = True, error: Optional[str] = None) -> None:
+        """End timing and record the API call.
+
+        Call this when the stream completes or an error occurs.
+
+        Args:
+            success: Whether the API call completed successfully
+            error: Error message if the call failed
+        """
+        if self._current_api_call:
+            self._current_api_call.end_time = time.time()
+            self._current_api_call.success = success
+            self._current_api_call.error_message = error
+            self._api_call_history.append(self._current_api_call)
+            self._api_call_index += 1
+            logger.debug(
+                f"[{self.get_provider_name()}] API call completed: "
+                f"duration={self._current_api_call.duration_ms:.0f}ms, "
+                f"ttft={self._current_api_call.time_to_first_token_ms:.0f}ms, "
+                f"success={success}",
+            )
+            self._current_api_call = None
+
+    def get_api_call_history(self) -> List[APICallMetric]:
+        """Get all API call metrics.
+
+        Returns:
+            List of APICallMetric objects for all API calls made by this backend
+        """
+        return self._api_call_history
+
+    def reset_api_call_tracking_for_round(self) -> None:
+        """Reset API call index for a new round.
+
+        Call this at the start of each coordination round to reset the call index.
+        """
+        self._api_call_index = 0
+
     # ==============================================================
 
     def _update_token_usage_from_api_response(self, usage: Any, model: str) -> None:
@@ -482,7 +601,10 @@ class LLMBackend(ABC):
         # Extract detailed token breakdown for visibility
         breakdown = self.token_calculator.extract_token_breakdown(usage)
 
-        # Update all TokenUsage fields
+        # Track last call's input tokens (for compression - need per-call, not cumulative)
+        self._last_call_input_tokens = breakdown.get("input_tokens", 0)
+
+        # Update all TokenUsage fields (cumulative)
         self.token_usage.input_tokens += breakdown.get("input_tokens", 0)
         self.token_usage.output_tokens += breakdown.get("output_tokens", 0)
         self.token_usage.estimated_cost += cost
@@ -707,6 +829,9 @@ class LLMBackend(ABC):
         For stateful backends, this clears conversation history and session state.
         """
         pass  # Default implementation for stateless backends
+
+    # Note: Mid-stream injection is now handled via the hook framework.
+    # See MidStreamInjectionHook in mcp_tools/hooks.py
 
     def set_planning_mode(self, enabled: bool) -> None:
         """

@@ -37,6 +37,9 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import questionary
 import yaml
 from dotenv import load_dotenv
+from prompt_toolkit import PromptSession
+from prompt_toolkit.formatted_text import ANSI
+from prompt_toolkit.patch_stdout import patch_stdout
 from prompt_toolkit.styles import Style
 from rich.console import Console
 from rich.panel import Panel
@@ -63,6 +66,7 @@ from .dspy_paraphraser import (
 from .frontend.coordination_ui import CoordinationUI
 from .logger_config import _DEBUG_MODE, logger, save_execution_metadata, setup_logging
 from .orchestrator import Orchestrator
+from .path_handling import AtPathCompleter
 from .utils import get_backend_type_from_model
 
 # Session storage is internal state management - HARDCODED, NOT CONFIGURABLE
@@ -77,16 +81,54 @@ def load_env_file():
     Search order (later files override earlier ones):
     1. MassGen package .env (development fallback)
     2. User home ~/.massgen/.env (global user config)
-    3. Current directory .env (project-specific, highest priority)
+    3. User config ~/.config/massgen/.env
+    4. Project configs/.env (project-specific, optional)
+    5. Current directory .env (project-specific, highest priority)
     """
     # Load in priority order (later overrides earlier)
     load_dotenv(Path(__file__).parent / ".env")  # Package fallback
     load_dotenv(Path.home() / ".massgen" / ".env")  # User global
+    load_dotenv(Path.home() / ".config" / "massgen" / ".env")  # User config
+    load_dotenv(Path.cwd() / "configs" / ".env")  # Project configs
     load_dotenv()  # Current directory (highest priority)
 
 
 # Load .env file at module import
 load_env_file()
+
+
+def _setup_logfire_observability() -> bool:
+    """Configure Logfire observability and instrument all LLM providers.
+
+    This sets up structured logging/tracing via Logfire and instruments
+    all supported LLM provider clients (OpenAI, Anthropic, Google GenAI).
+
+    Returns:
+        True if Logfire was successfully configured, False otherwise.
+    """
+    try:
+        import logfire  # noqa: F401 - Check if logfire is installed
+    except ImportError:
+        print(
+            f"{BRIGHT_YELLOW}⚠️  Logfire not installed. " f"Install with: pip install massgen[observability]{RESET}",
+        )
+        return False
+
+    from .logger_config import integrate_logfire_with_loguru
+    from .structured_logging import configure_observability, get_tracer
+
+    success = configure_observability(enabled=True)
+    if not success:
+        return False
+
+    integrate_logfire_with_loguru()
+    # Instrument all LLM providers globally
+    tracer = get_tracer()
+    tracer.instrument_google_genai()  # Gemini
+    tracer.instrument_openai()  # OpenAI-compatible APIs
+    tracer.instrument_anthropic()  # Claude
+    return True
+
 
 # Add project root to path for imports
 project_root = Path(__file__).parent.parent.parent.parent
@@ -172,21 +214,128 @@ def _restore_terminal_for_input() -> None:
         pass  # Best effort
 
 
-def read_multiline_input(prompt: str) -> str:
-    """Read user input with support for multi-line input using triple quotes.
+# Global PromptSession instance (reused across prompts for better terminal handling)
+_prompt_session: Optional[PromptSession] = None
 
+
+def _get_prompt_session() -> PromptSession:
+    """Get or create the PromptSession instance with AtPathCompleter."""
+    global _prompt_session
+    if _prompt_session is None:
+        _prompt_session = PromptSession(
+            completer=AtPathCompleter(),
+            complete_while_typing=True,
+        )
+    return _prompt_session
+
+
+async def read_multiline_input_async(
+    prompt: str,
+    enable_path_completion: bool = True,
+    use_ansi_prompt: bool = False,
+) -> str:
+    """Async version of read_multiline_input for use in async contexts.
+
+    Uses prompt_toolkit's async prompt_async() method which works correctly
+    inside an already-running event loop.
+
+    Args:
+        prompt: The prompt string (can contain ANSI codes if use_ansi_prompt=True)
+        enable_path_completion: Whether to enable @path autocomplete
+        use_ansi_prompt: If True, interpret prompt as ANSI-formatted text
+    """
+    try:
+        session = _get_prompt_session()
+        # Wrap prompt in ANSI() if it contains escape codes
+        formatted_prompt = ANSI(prompt) if use_ansi_prompt else prompt
+        with patch_stdout():
+            if not enable_path_completion:
+                first_line = (await session.prompt_async(formatted_prompt, completer=None)).strip()
+            else:
+                first_line = (await session.prompt_async(formatted_prompt)).strip()
+    except (EOFError, KeyboardInterrupt):
+        raise
+    except Exception as e:
+        if _DEBUG_MODE:
+            logger.debug(f"prompt_toolkit async failed; falling back to input(): {e}")
+        # Fallback to basic input - run in executor to not block
+        loop = asyncio.get_running_loop()
+        # Strip ANSI codes for fallback
+        plain_prompt = prompt if not use_ansi_prompt else "User: "
+        first_line = await loop.run_in_executor(None, lambda: input(plain_prompt).strip())
+
+    # Check for multi-line delimiters
+    if first_line.startswith('"""'):
+        delimiter = '"""'
+        content = first_line[3:]
+    elif first_line.startswith("'''"):
+        delimiter = "'''"
+        content = first_line[3:]
+    else:
+        return first_line
+
+    # Check if closing delimiter is on the same line
+    if delimiter in content:
+        return content[: content.index(delimiter)]
+
+    # Collect multi-line input
+    lines = [content] if content else []
+    loop = asyncio.get_running_loop()
+    while True:
+        try:
+            line = await loop.run_in_executor(None, input)
+        except (EOFError, KeyboardInterrupt):
+            raise
+        if delimiter in line:
+            final_part = line[: line.index(delimiter)]
+            if final_part:
+                lines.append(final_part)
+            break
+        lines.append(line)
+
+    return "\n".join(lines)
+
+
+def read_multiline_input(prompt: str, enable_path_completion: bool = True) -> str:
+    """Read user input with support for multi-line input and @path completion.
+
+    Uses prompt_toolkit PromptSession to provide inline file completion when user types @.
     If input starts with ''' or \""", continues reading until closing quotes.
     Otherwise returns single line input.
 
+    Note: This synchronous version will fallback to basic input() if called from
+    within an async context. Use read_multiline_input_async() instead in async code.
+
     Args:
         prompt: The prompt to display to the user
+        enable_path_completion: If True, enable @path autocomplete (default True)
 
     Returns:
         The complete user input (single or multi-line)
     """
-    # Ensure terminal is in a good state for input
-    _restore_terminal_for_input()
-    first_line = input(prompt).strip()
+    # Check if we're in an async context
+    try:
+        import asyncio
+
+        asyncio.get_running_loop()
+        # We're in an async context - can't use sync prompt
+        # Fallback to basic input
+        first_line = input(prompt).strip()
+    except RuntimeError:
+        # No running loop - safe to use sync prompt
+        try:
+            session = _get_prompt_session()
+            if not enable_path_completion:
+                first_line = session.prompt(prompt, completer=None).strip()
+            else:
+                first_line = session.prompt(prompt).strip()
+        except (EOFError, KeyboardInterrupt):
+            raise
+        except Exception as e:
+            import sys
+
+            print(f"\n[DEBUG] prompt_toolkit failed: {e}", file=sys.stderr)
+            first_line = input(prompt).strip()
 
     # Check for multi-line delimiters
     if first_line.startswith('"""'):
@@ -205,7 +354,10 @@ def read_multiline_input(prompt: str) -> str:
 
     # Multi-line mode: read until closing delimiter
     lines = [content] if content else []
-    print(f"   {BRIGHT_CYAN}(Multi-line mode: enter {delimiter} on a new line to finish){RESET}", flush=True)
+    print(
+        f"   {BRIGHT_CYAN}(Multi-line mode: enter {delimiter} on a new line to finish){RESET}",
+        flush=True,
+    )
 
     while True:
         try:
@@ -343,7 +495,7 @@ def resolve_config_path(config_arg: Optional[str]) -> Optional[Path]:
     )
 
 
-def load_config_file(config_path: str) -> Dict[str, Any]:
+def load_config_file(config_path: str) -> tuple[Dict[str, Any], Dict[str, Any]]:
     """Load configuration from YAML or JSON file.
 
     Search order:
@@ -351,7 +503,13 @@ def load_config_file(config_path: str) -> Dict[str, Any]:
     2. If just a filename, search in package's configs/ directory
     3. If a relative path, also try within package's configs/ directory
 
-    Supports variable substitution: ${cwd} in any string will be replaced with the agent's cwd value.
+    Supports variable substitution: ${VAR_NAME} in any string will be replaced
+    with the value of the VAR_NAME environment variable.
+
+    Returns:
+        Tuple of (expanded_config, raw_config) where:
+        - expanded_config: Config with ${VAR} replaced by actual env values
+        - raw_config: Original config preserving ${VAR} syntax (safe for logging)
     """
     path = Path(config_path)
 
@@ -382,16 +540,50 @@ def load_config_file(config_path: str) -> Dict[str, Any]:
     try:
         with open(path, "r", encoding="utf-8") as f:
             if path.suffix.lower() in [".yaml", ".yml"]:
-                return yaml.safe_load(f)
+                raw_config = yaml.safe_load(f)
             elif path.suffix.lower() == ".json":
-                return json.load(f)
+                raw_config = json.load(f)
             else:
-                raise ConfigurationError(f"Unsupported config file format: {path.suffix}")
+                raise ConfigurationError(
+                    f"Unsupported config file format: {path.suffix}",
+                )
+
+            # Return both expanded (for runtime) and raw (for logging)
+            expanded_config = _expand_env_vars(copy.deepcopy(raw_config))
+            return expanded_config, raw_config
     except Exception as e:
         raise ConfigurationError(f"Error reading config file: {e}")
 
 
-def _api_key_error_message(provider_name: str, env_var: str, config_path: Optional[str] = None) -> str:
+def _expand_env_vars(config: Any) -> Any:
+    """Recursively expand environment variables in config.
+
+    Replaces ${VAR_NAME} with the value of the VAR_NAME environment variable.
+    If the variable is not set, leaves the ${VAR_NAME} string as-is.
+    """
+    import re
+
+    if isinstance(config, dict):
+        return {k: _expand_env_vars(v) for k, v in config.items()}
+    elif isinstance(config, list):
+        return [_expand_env_vars(item) for item in config]
+    elif isinstance(config, str):
+        # Replace ${VAR} with environment variable value
+        pattern = r"\$\{([^}]+)\}"
+
+        def replacer(match):
+            var_name = match.group(1)
+            return os.getenv(var_name, match.group(0))
+
+        return re.sub(pattern, replacer, config)
+    return config
+
+
+def _api_key_error_message(
+    provider_name: str,
+    env_var: str,
+    config_path: Optional[str] = None,
+) -> str:
     """Generate standard API key error message."""
     msg = (
         f"{provider_name} API key not found. Set {env_var} environment variable.\n"
@@ -450,25 +642,33 @@ def create_backend(backend_type: str, **kwargs) -> Any:
     if backend_type == "openai":
         api_key = kwargs.get("api_key") or os.getenv("OPENAI_API_KEY")
         if not api_key:
-            raise ConfigurationError(_api_key_error_message("OpenAI", "OPENAI_API_KEY", config_path))
+            raise ConfigurationError(
+                _api_key_error_message("OpenAI", "OPENAI_API_KEY", config_path),
+            )
         return ResponseBackend(api_key=api_key, **kwargs)
 
     elif backend_type == "grok":
         api_key = kwargs.get("api_key") or os.getenv("XAI_API_KEY")
         if not api_key:
-            raise ConfigurationError(_api_key_error_message("Grok", "XAI_API_KEY", config_path))
+            raise ConfigurationError(
+                _api_key_error_message("Grok", "XAI_API_KEY", config_path),
+            )
         return GrokBackend(api_key=api_key, **kwargs)
 
     elif backend_type == "claude":
         api_key = kwargs.get("api_key") or os.getenv("ANTHROPIC_API_KEY")
         if not api_key:
-            raise ConfigurationError(_api_key_error_message("Claude", "ANTHROPIC_API_KEY", config_path))
+            raise ConfigurationError(
+                _api_key_error_message("Claude", "ANTHROPIC_API_KEY", config_path),
+            )
         return ClaudeBackend(api_key=api_key, **kwargs)
 
     elif backend_type == "gemini":
         api_key = kwargs.get("api_key") or os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY")
         if not api_key:
-            raise ConfigurationError(_api_key_error_message("Gemini", "GOOGLE_API_KEY", config_path))
+            raise ConfigurationError(
+                _api_key_error_message("Gemini", "GOOGLE_API_KEY", config_path),
+            )
         return GeminiBackend(api_key=api_key, **kwargs)
 
     elif backend_type == "gemini_interactions":
@@ -578,7 +778,9 @@ def create_backend(backend_type: str, **kwargs) -> Any:
         # Cerebras AI uses OpenAI-compatible Chat Completions API
         api_key = kwargs.get("api_key") or os.getenv("CEREBRAS_API_KEY")
         if not api_key:
-            raise ConfigurationError(_api_key_error_message("Cerebras AI", "CEREBRAS_API_KEY", config_path))
+            raise ConfigurationError(
+                _api_key_error_message("Cerebras AI", "CEREBRAS_API_KEY", config_path),
+            )
         if "base_url" not in kwargs:
             kwargs["base_url"] = "https://api.cerebras.ai/v1"
         return ChatCompletionsBackend(api_key=api_key, **kwargs)
@@ -587,7 +789,9 @@ def create_backend(backend_type: str, **kwargs) -> Any:
         # Together AI uses OpenAI-compatible Chat Completions API
         api_key = kwargs.get("api_key") or os.getenv("TOGETHER_API_KEY")
         if not api_key:
-            raise ConfigurationError(_api_key_error_message("Together AI", "TOGETHER_API_KEY", config_path))
+            raise ConfigurationError(
+                _api_key_error_message("Together AI", "TOGETHER_API_KEY", config_path),
+            )
         if "base_url" not in kwargs:
             kwargs["base_url"] = "https://api.together.xyz/v1"
         return ChatCompletionsBackend(api_key=api_key, **kwargs)
@@ -596,7 +800,13 @@ def create_backend(backend_type: str, **kwargs) -> Any:
         # Fireworks AI uses OpenAI-compatible Chat Completions API
         api_key = kwargs.get("api_key") or os.getenv("FIREWORKS_API_KEY")
         if not api_key:
-            raise ConfigurationError(_api_key_error_message("Fireworks AI", "FIREWORKS_API_KEY", config_path))
+            raise ConfigurationError(
+                _api_key_error_message(
+                    "Fireworks AI",
+                    "FIREWORKS_API_KEY",
+                    config_path,
+                ),
+            )
         if "base_url" not in kwargs:
             kwargs["base_url"] = "https://api.fireworks.ai/inference/v1"
         return ChatCompletionsBackend(api_key=api_key, **kwargs)
@@ -605,7 +815,9 @@ def create_backend(backend_type: str, **kwargs) -> Any:
         # Groq uses OpenAI-compatible Chat Completions API
         api_key = kwargs.get("api_key") or os.getenv("GROQ_API_KEY")
         if not api_key:
-            raise ConfigurationError(_api_key_error_message("Groq", "GROQ_API_KEY", config_path))
+            raise ConfigurationError(
+                _api_key_error_message("Groq", "GROQ_API_KEY", config_path),
+            )
         if "base_url" not in kwargs:
             kwargs["base_url"] = "https://api.groq.com/openai/v1"
         return ChatCompletionsBackend(api_key=api_key, **kwargs)
@@ -614,7 +826,9 @@ def create_backend(backend_type: str, **kwargs) -> Any:
         # OpenRouter uses OpenAI-compatible Chat Completions API
         api_key = kwargs.get("api_key") or os.getenv("OPENROUTER_API_KEY")
         if not api_key:
-            raise ConfigurationError(_api_key_error_message("OpenRouter", "OPENROUTER_API_KEY", config_path))
+            raise ConfigurationError(
+                _api_key_error_message("OpenRouter", "OPENROUTER_API_KEY", config_path),
+            )
         if "base_url" not in kwargs:
             kwargs["base_url"] = "https://openrouter.ai/api/v1"
         return ChatCompletionsBackend(api_key=api_key, **kwargs)
@@ -623,7 +837,9 @@ def create_backend(backend_type: str, **kwargs) -> Any:
         # Kimi/Moonshot AI uses OpenAI-compatible Chat Completions API
         api_key = kwargs.get("api_key") or os.getenv("MOONSHOT_API_KEY") or os.getenv("KIMI_API_KEY")
         if not api_key:
-            raise ConfigurationError(_api_key_error_message("Moonshot AI", "MOONSHOT_API_KEY", config_path))
+            raise ConfigurationError(
+                _api_key_error_message("Moonshot AI", "MOONSHOT_API_KEY", config_path),
+            )
         if "base_url" not in kwargs:
             kwargs["base_url"] = "https://api.moonshot.cn/v1"
         return ChatCompletionsBackend(api_key=api_key, **kwargs)
@@ -632,7 +848,13 @@ def create_backend(backend_type: str, **kwargs) -> Any:
         # Nebius AI Studio uses OpenAI-compatible Chat Completions API
         api_key = kwargs.get("api_key") or os.getenv("NEBIUS_API_KEY")
         if not api_key:
-            raise ConfigurationError(_api_key_error_message("Nebius AI Studio", "NEBIUS_API_KEY", config_path))
+            raise ConfigurationError(
+                _api_key_error_message(
+                    "Nebius AI Studio",
+                    "NEBIUS_API_KEY",
+                    config_path,
+                ),
+            )
         if "base_url" not in kwargs:
             kwargs["base_url"] = "https://api.studio.nebius.ai/v1"
         return ChatCompletionsBackend(api_key=api_key, **kwargs)
@@ -641,7 +863,9 @@ def create_backend(backend_type: str, **kwargs) -> Any:
         # POE uses OpenAI-compatible Chat Completions API
         api_key = kwargs.get("api_key") or os.getenv("POE_API_KEY")
         if not api_key:
-            raise ConfigurationError(_api_key_error_message("POE", "POE_API_KEY", config_path))
+            raise ConfigurationError(
+                _api_key_error_message("POE", "POE_API_KEY", config_path),
+            )
         # base_url must be provided in config as it's platform-specific
         return ChatCompletionsBackend(api_key=api_key, **kwargs)
 
@@ -649,7 +873,9 @@ def create_backend(backend_type: str, **kwargs) -> Any:
         # Qwen uses OpenAI-compatible Chat Completions API
         api_key = kwargs.get("api_key") or os.getenv("QWEN_API_KEY")
         if not api_key:
-            raise ConfigurationError(_api_key_error_message("Qwen", "QWEN_API_KEY", config_path))
+            raise ConfigurationError(
+                _api_key_error_message("Qwen", "QWEN_API_KEY", config_path),
+            )
         if "base_url" not in kwargs:
             kwargs["base_url"] = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
         return ChatCompletionsBackend(api_key=api_key, **kwargs)
@@ -674,7 +900,9 @@ def create_backend(backend_type: str, **kwargs) -> Any:
         try:
             pass
         except ImportError:
-            raise ConfigurationError("claude-code-sdk not found. Install with: pip install claude-code-sdk")
+            raise ConfigurationError(
+                "claude-code-sdk not found. Install with: pip install claude-code-sdk",
+            )
 
         return ClaudeCodeBackend(**kwargs)
 
@@ -682,9 +910,17 @@ def create_backend(backend_type: str, **kwargs) -> Any:
         api_key = kwargs.get("api_key") or os.getenv("AZURE_OPENAI_API_KEY")
         endpoint = kwargs.get("base_url") or os.getenv("AZURE_OPENAI_ENDPOINT")
         if not api_key:
-            raise ConfigurationError(_api_key_error_message("Azure OpenAI", "AZURE_OPENAI_API_KEY", config_path))
+            raise ConfigurationError(
+                _api_key_error_message(
+                    "Azure OpenAI",
+                    "AZURE_OPENAI_API_KEY",
+                    config_path,
+                ),
+            )
         if not endpoint:
-            raise ConfigurationError("Azure OpenAI endpoint not found. Set AZURE_OPENAI_ENDPOINT or provide base_url in config.")
+            raise ConfigurationError(
+                "Azure OpenAI endpoint not found. Set AZURE_OPENAI_ENDPOINT or provide base_url in config.",
+            )
         return AzureOpenAIBackend(**kwargs)
 
     else:
@@ -722,13 +958,18 @@ def create_agents_from_config(
     agent_entries = [config["agent"]] if "agent" in config else config.get("agents", None)
 
     if not agent_entries:
-        raise ConfigurationError("Configuration must contain either 'agent' or 'agents' section")
+        raise ConfigurationError(
+            "Configuration must contain either 'agent' or 'agents' section",
+        )
 
     # Create shared Qdrant client for all agents (avoids concurrent access errors)
     # ONE client can be used by multiple mem0 instances safely
     shared_qdrant_client = None
     global_memory_config = config.get("memory", {})
-    if global_memory_config.get("enabled", False) and global_memory_config.get("persistent_memory", {}).get("enabled", False):
+    if global_memory_config.get("enabled", False) and global_memory_config.get(
+        "persistent_memory",
+        {},
+    ).get("enabled", False):
         try:
             from qdrant_client import QdrantClient
 
@@ -743,13 +984,17 @@ def create_agents_from_config(
                 host = qdrant_config.get("host", "localhost")
                 port = qdrant_config.get("port", 6333)
                 shared_qdrant_client = QdrantClient(host=host, port=port)
-                logger.info(f"🗄️  Shared Qdrant client created (server mode: {host}:{port})")
+                logger.info(
+                    f"🗄️  Shared Qdrant client created (server mode: {host}:{port})",
+                )
             else:
                 # Local file-based mode (single agent only)
                 # WARNING: Does NOT support concurrent access by multiple agents
                 qdrant_path = pm_config.get("path", ".massgen/qdrant")
                 shared_qdrant_client = QdrantClient(path=qdrant_path)
-                logger.info(f"🗄️  Shared Qdrant client created (local mode: {qdrant_path})")
+                logger.info(
+                    f"🗄️  Shared Qdrant client created (local mode: {qdrant_path})",
+                )
                 if len(agent_entries) > 1:
                     logger.warning(
                         "⚠️  Multi-agent setup detected with local Qdrant mode. "
@@ -759,7 +1004,9 @@ def create_agents_from_config(
         except Exception as e:
             logger.warning(f"⚠️  Failed to create shared Qdrant client: {e}")
             logger.warning("   Persistent memory will be disabled for all agents")
-            logger.warning("   For multi-agent setup, start Qdrant server: docker-compose -f docker-compose.qdrant.yml up -d")
+            logger.warning(
+                "   For multi-agent setup, start Qdrant server: docker-compose -f docker-compose.qdrant.yml up -d",
+            )
 
     for i, agent_data in enumerate(agent_entries, start=1):
         backend_config = agent_data.get("backend", {})
@@ -782,7 +1029,9 @@ def create_agents_from_config(
         # Infer backend type from model if not explicitly provided
         backend_type = backend_config.get("type") or (get_backend_type_from_model(backend_config["model"]) if "model" in backend_config else None)
         if not backend_type:
-            raise ConfigurationError("Backend type must be specified or inferrable from model")
+            raise ConfigurationError(
+                "Backend type must be specified or inferrable from model",
+            )
 
         # Add orchestrator context for filesystem setup if available
         if orchestrator_config:
@@ -804,11 +1053,35 @@ def create_agents_from_config(
 
                 backend_config["context_paths"] = merged_paths
 
+            # Inherit enable_multimodal_tools from orchestrator if not set per-agent
+            if "enable_multimodal_tools" in orchestrator_config:
+                if "enable_multimodal_tools" not in backend_config:
+                    backend_config["enable_multimodal_tools"] = orchestrator_config["enable_multimodal_tools"]
+
+            # Inherit generation config from orchestrator if not set per-agent
+            # These set default backends/models for image/video/audio generation
+            generation_config_keys = [
+                "image_generation_backend",
+                "image_generation_model",
+                "video_generation_backend",
+                "video_generation_model",
+                "audio_generation_backend",
+                "audio_generation_model",
+            ]
+            for key in generation_config_keys:
+                if key in orchestrator_config and key not in backend_config:
+                    backend_config[key] = orchestrator_config[key]
+
+            # Also support nested multimodal_config from orchestrator
+            if "multimodal_config" in orchestrator_config:
+                if "multimodal_config" not in backend_config:
+                    backend_config["multimodal_config"] = orchestrator_config["multimodal_config"]
+
         # Add config path for better error messages
         if config_path:
             backend_config["_config_path"] = config_path
 
-        # Get agent_id for AgentConfig (but don't add to backend_config to avoid duplicate kwargs)
+        # Get agent_id for AgentConfig and backend (needed for MCP tool span correlation)
         agent_id = agent_data.get("id", f"agent{i}")
 
         # Emit progress for this agent
@@ -819,7 +1092,8 @@ def create_agents_from_config(
                 f"Backend: {backend_type}",
             )
 
-        backend = create_backend(backend_type, **backend_config)
+        # Pass agent_id to backend for MCP tool span correlation
+        backend = create_backend(backend_type, agent_id=agent_id, **backend_config)
         backend_params = {k: v for k, v in backend_config.items() if k not in ("type", "_config_path")}
 
         backend_type_lower = backend_type.lower()
@@ -835,7 +1109,17 @@ def create_agents_from_config(
             agent_config = AgentConfig.create_zai_config(**backend_params)
         elif backend_type_lower == "chatcompletion":
             agent_config = AgentConfig.create_chatcompletion_config(**backend_params)
-        elif backend_type_lower in ["cerebras", "together", "fireworks", "groq", "openrouter", "moonshot", "nebius", "poe", "qwen"]:
+        elif backend_type_lower in [
+            "cerebras",
+            "together",
+            "fireworks",
+            "groq",
+            "openrouter",
+            "moonshot",
+            "nebius",
+            "poe",
+            "qwen",
+        ]:
             agent_config = AgentConfig.create_chatcompletion_config(**backend_params)
         elif backend_type_lower == "lmstudio":
             agent_config = AgentConfig.create_lmstudio_config(**backend_params)
@@ -914,13 +1198,18 @@ def create_agents_from_config(
         agent_nlip_section = agent_data.get("nlip") or {}
         agent_enable_nlip = bool(agent_data.get("enable_nlip"))
         if isinstance(agent_nlip_section, dict):
-            agent_enable_nlip = agent_enable_nlip or agent_nlip_section.get("enabled", False)
+            agent_enable_nlip = agent_enable_nlip or agent_nlip_section.get(
+                "enabled",
+                False,
+            )
 
         if agent_enable_nlip:
             agent_config.enable_nlip = True
             if isinstance(agent_nlip_section, dict) and agent_nlip_section:
                 agent_config.nlip_config = agent_nlip_section
-            logger.info(f"[CLI] NLIP enabled for agent {agent_config.agent_id} via config file")
+            logger.info(
+                f"[CLI] NLIP enabled for agent {agent_config.agent_id} via config file",
+            )
 
         # Create per-agent memory objects if memory is enabled
         conversation_memory = None
@@ -932,7 +1221,9 @@ def create_agents_from_config(
             # Create conversation memory for this agent
             if memory_config.get("conversation_memory", {}).get("enabled", True):
                 conversation_memory = ConversationMemory()
-                logger.info(f"💾 Conversation memory created for {agent_config.agent_id}")
+                logger.info(
+                    f"💾 Conversation memory created for {agent_config.agent_id}",
+                )
 
             # Create persistent memory for this agent (if enabled)
             if memory_config.get("persistent_memory", {}).get("enabled", False):
@@ -947,7 +1238,10 @@ def create_agents_from_config(
                 session_name = memory_session_id or pm_config.get("session_name")
 
                 on_disk = pm_config.get("on_disk", True)
-                qdrant_path = pm_config.get("path", ".massgen/qdrant")  # Project dir, not /tmp
+                qdrant_path = pm_config.get(
+                    "path",
+                    ".massgen/qdrant",
+                )  # Project dir, not /tmp
 
                 try:
                     # Configure LLM for memory operations (fact extraction)
@@ -989,9 +1283,13 @@ def create_agents_from_config(
                         if emb_provider == "openai":
                             api_key = os.getenv("OPENAI_API_KEY")
                             if not api_key:
-                                logger.warning("⚠️  OPENAI_API_KEY not found in environment - embedding will fail!")
+                                logger.warning(
+                                    "⚠️  OPENAI_API_KEY not found in environment - embedding will fail!",
+                                )
                             else:
-                                logger.debug(f"✅ Using OPENAI_API_KEY from environment (key starts with: {api_key[:7]}...)")
+                                logger.debug(
+                                    f"✅ Using OPENAI_API_KEY from environment (key starts with: {api_key[:7]}...)",
+                                )
                             embedding_cfg["api_key"] = api_key
                         elif emb_provider == "together":
                             embedding_cfg["api_key"] = os.getenv("TOGETHER_API_KEY")
@@ -1069,15 +1367,24 @@ def create_agents_from_config(
         if memory_config.get("enabled", False):
             retrieval_config = memory_config.get("retrieval", {})
             agent._retrieval_limit = retrieval_config.get("limit", 5)
-            agent._retrieval_exclude_recent = retrieval_config.get("exclude_recent", True)
+            agent._retrieval_exclude_recent = retrieval_config.get(
+                "exclude_recent",
+                False,
+            )
 
             if retrieval_config or recording_config:  # Log if custom config provided
                 config_info = []
                 if retrieval_config:
-                    config_info.append(f"retrieval(limit={agent._retrieval_limit}, exclude_recent={agent._retrieval_exclude_recent})")
+                    config_info.append(
+                        f"retrieval(limit={agent._retrieval_limit}, exclude_recent={agent._retrieval_exclude_recent})",
+                    )
                 if recording_config:
-                    config_info.append(f"recording(all_tools={record_all_tool_calls}, reasoning={record_reasoning})")
-                logger.info(f"🔧 Memory configured for {agent_config.agent_id}: {', '.join(config_info)}")
+                    config_info.append(
+                        f"recording(all_tools={record_all_tool_calls}, reasoning={record_reasoning})",
+                    )
+                logger.info(
+                    f"🔧 Memory configured for {agent_config.agent_id}: {', '.join(config_info)}",
+                )
 
         agents[agent.config.agent_id] = agent
 
@@ -1108,12 +1415,16 @@ def create_dspy_paraphraser_from_config(
 
     backend_cfg = dspy_cfg.get("backend", {})
     if not isinstance(backend_cfg, dict) or not backend_cfg:
-        logger.warning("DSPy paraphrasing enabled but no backend configuration provided. Skipping DSPy setup.")
+        logger.warning(
+            "DSPy paraphrasing enabled but no backend configuration provided. Skipping DSPy setup.",
+        )
         return None
 
     lm = create_dspy_lm_from_backend_config(backend_cfg)
     if lm is None:
-        logger.warning("Failed to initialize DSPy language model from backend configuration. Skipping DSPy setup.")
+        logger.warning(
+            "Failed to initialize DSPy language model from backend configuration. Skipping DSPy setup.",
+        )
         return None
 
     paraphraser_kwargs: Dict[str, Any] = {}
@@ -1139,9 +1450,13 @@ def create_dspy_paraphraser_from_config(
                 float(temperature_range[1]),
             )
         except (TypeError, ValueError):
-            logger.warning("Ignoring invalid DSPy temperature_range; expected two numeric values.")
+            logger.warning(
+                "Ignoring invalid DSPy temperature_range; expected two numeric values.",
+            )
     elif temperature_range is not None:
-        logger.warning("Ignoring invalid DSPy temperature_range; expected a list/tuple with two values.")
+        logger.warning(
+            "Ignoring invalid DSPy temperature_range; expected a list/tuple with two values.",
+        )
 
     try:
         paraphraser = QuestionParaphraser(lm=lm, **paraphraser_kwargs)
@@ -1150,7 +1465,11 @@ def create_dspy_paraphraser_from_config(
         logger.warning(f"Failed to initialize DSPy paraphraser{location}: {exc}")
         return None
 
-    logger.info("✅ DSPy question paraphrasing enabled (strategy=%s, variants=%s)", paraphraser_kwargs.get("strategy", "balanced"), paraphraser_kwargs.get("num_variants", 3))
+    logger.info(
+        "✅ DSPy question paraphrasing enabled (strategy=%s, variants=%s)",
+        paraphraser_kwargs.get("strategy", "balanced"),
+        paraphraser_kwargs.get("num_variants", 3),
+    )
     return paraphraser
 
 
@@ -1226,6 +1545,71 @@ def validate_context_paths(config: Dict[str, Any]) -> None:
         raise ConfigurationError("\n".join(errors))
 
 
+def inject_prompt_context_paths(
+    prompt: str,
+    config: Dict[str, Any],
+) -> Tuple[str, Dict[str, Any]]:
+    """Parse @references from prompt and inject into config.
+
+    Extracts @path and @path:w references from the prompt, validates that
+    the paths exist, and injects them into config["orchestrator"]["context_paths"].
+
+    This always displays extracted paths to the user for transparency.
+
+    Args:
+        prompt: User's raw prompt potentially containing @references.
+        config: MassGen configuration dict (modified in-place).
+
+    Returns:
+        Tuple of (cleaned_prompt, modified_config).
+
+    Raises:
+        ConfigurationError: If any referenced paths don't exist.
+    """
+    from .path_handling import PromptParserError, parse_prompt_for_context
+
+    try:
+        parsed = parse_prompt_for_context(prompt)
+    except PromptParserError as e:
+        raise ConfigurationError(str(e)) from e
+
+    if not parsed.context_paths:
+        return prompt, config
+
+    # Display extracted paths to user (always, for transparency)
+    print(f"\n{BRIGHT_CYAN}📂 Context paths from prompt:{RESET}")
+    for ctx in parsed.context_paths:
+        perm_icon = "📝" if ctx["permission"] == "write" else "📖"
+        print(f"   {perm_icon} {ctx['path']} ({ctx['permission']})")
+
+    # Show consolidation suggestions
+    for suggestion in parsed.suggestions:
+        print(f"   {BRIGHT_YELLOW}💡 {suggestion}{RESET}")
+
+    print()
+
+    # Inject into config
+    if "orchestrator" not in config:
+        config["orchestrator"] = {}
+    if "context_paths" not in config["orchestrator"]:
+        config["orchestrator"]["context_paths"] = []
+
+    # Add extracted paths (avoiding duplicates)
+    existing_paths = {p.get("path") for p in config["orchestrator"]["context_paths"]}
+    for ctx in parsed.context_paths:
+        if ctx["path"] not in existing_paths:
+            config["orchestrator"]["context_paths"].append(ctx)
+            existing_paths.add(ctx["path"])
+        else:
+            # If path exists but with different permission, upgrade to write if needed
+            for existing in config["orchestrator"]["context_paths"]:
+                if existing.get("path") == ctx["path"] and ctx["permission"] == "write":
+                    existing["permission"] = "write"
+                    break
+
+    return parsed.cleaned_prompt, config
+
+
 def relocate_filesystem_paths(config: Dict[str, Any]) -> None:
     """Relocate filesystem paths (orchestrator paths and agent workspaces) to be under .massgen/ directory.
 
@@ -1298,7 +1682,11 @@ async def handle_session_persistence(
     final_result = orchestrator.get_final_result()
     if not final_result:
         # No filesystem work to persist
-        return (session_info.get("session_id"), session_info.get("current_turn", 0), None)
+        return (
+            session_info.get("session_id"),
+            session_info.get("current_turn", 0),
+            None,
+        )
 
     # Initialize or reuse session ID
     session_id = session_info.get("session_id")
@@ -1320,7 +1708,10 @@ async def handle_session_persistence(
 
     if workspace_path:
         # Replace workspace paths in answer with absolute path
-        normalized_answer = final_answer.replace(workspace_path, str(turn_workspace_path))
+        normalized_answer = final_answer.replace(
+            workspace_path,
+            str(turn_workspace_path),
+        )
     else:
         normalized_answer = final_answer
 
@@ -1347,7 +1738,9 @@ async def handle_session_persistence(
             json.dumps(final_result["winning_agents_history"], indent=2),
             encoding="utf-8",
         )
-        logger.info(f"📚 Saved {len(final_result['winning_agents_history'])} winning agent(s) to session storage")
+        logger.info(
+            f"📚 Saved {len(final_result['winning_agents_history'])} winning agent(s) to session storage",
+        )
 
     # Create/update session summary for easy viewing
     session_summary_file = session_dir / "SESSION_SUMMARY.txt"
@@ -1377,7 +1770,13 @@ async def handle_session_persistence(
 
     # Copy workspace if it exists
     if workspace_path and Path(workspace_path).exists():
-        shutil.copytree(workspace_path, turn_workspace_path, dirs_exist_ok=True)
+        shutil.copytree(
+            workspace_path,
+            turn_workspace_path,
+            dirs_exist_ok=True,
+            symlinks=True,
+            ignore_dangling_symlinks=True,
+        )
 
     # Note: Session is already registered when created (before first turn runs)
     # No need to register here
@@ -1421,7 +1820,9 @@ async def run_question_with_history(
     orchestrator_nlip_config = orchestrator_cfg.get("nlip_config", {})
 
     if orchestrator_enable_nlip:
-        logger.info("[CLI] Orchestrator-level NLIP enabled (will propagate to capable agents)")
+        logger.info(
+            "[CLI] Orchestrator-level NLIP enabled (will propagate to capable agents)",
+        )
 
     # Apply voting sensitivity if specified
     if "voting_sensitivity" in orchestrator_cfg:
@@ -1450,19 +1851,31 @@ async def run_question_with_history(
     if "coordination" in orchestrator_cfg:
         from .agent_config import CoordinationConfig
         from .persona_generator import PersonaGeneratorConfig
+        from .subagent.models import SubagentOrchestratorConfig
 
         coord_cfg = orchestrator_cfg["coordination"]
+        logger.info(f"[CLI] coord_cfg keys: {list(coord_cfg.keys())}")
 
         # Parse persona_generator config if present
         persona_generator_config = PersonaGeneratorConfig()
         if "persona_generator" in coord_cfg:
             pg_cfg = coord_cfg["persona_generator"]
+            logger.info(f"[CLI] persona_generator raw config: {pg_cfg}")
             persona_generator_config = PersonaGeneratorConfig(
                 enabled=pg_cfg.get("enabled", False),
-                backend=pg_cfg.get("backend", {"type": "openai", "model": "gpt-4o-mini"}),
-                strategy=pg_cfg.get("strategy", "complementary"),
+                diversity_mode=pg_cfg.get("diversity_mode", "perspective"),
                 persona_guidelines=pg_cfg.get("persona_guidelines"),
+                persist_across_turns=pg_cfg.get("persist_across_turns", False),
             )
+            logger.info(
+                f"[CLI] Created PersonaGeneratorConfig: enabled={persona_generator_config.enabled}",
+            )
+
+        # Parse subagent_orchestrator config if present
+        subagent_orchestrator_config = None
+        if "subagent_orchestrator" in coord_cfg:
+            so_cfg = coord_cfg["subagent_orchestrator"]
+            subagent_orchestrator_config = SubagentOrchestratorConfig.from_dict(so_cfg)
 
         orchestrator_config.coordination_config = CoordinationConfig(
             enable_planning_mode=coord_cfg.get("enable_planning_mode", False),
@@ -1471,7 +1884,10 @@ async def run_question_with_history(
                 "During coordination, describe what you would do without actually executing actions. Only provide concrete implementation details without calling external APIs or tools.",
             ),
             max_orchestration_restarts=coord_cfg.get("max_orchestration_restarts", 0),
-            enable_agent_task_planning=coord_cfg.get("enable_agent_task_planning", False),
+            enable_agent_task_planning=coord_cfg.get(
+                "enable_agent_task_planning",
+                False,
+            ),
             max_tasks_per_plan=coord_cfg.get("max_tasks_per_plan", 10),
             broadcast=coord_cfg.get("broadcast", False),
             broadcast_sensitivity=coord_cfg.get("broadcast_sensitivity", "medium"),
@@ -1479,13 +1895,30 @@ async def run_question_with_history(
             broadcast_timeout=coord_cfg.get("broadcast_timeout", 300),
             broadcast_wait_by_default=coord_cfg.get("broadcast_wait_by_default", True),
             max_broadcasts_per_agent=coord_cfg.get("max_broadcasts_per_agent", 10),
-            task_planning_filesystem_mode=coord_cfg.get("task_planning_filesystem_mode", False),
-            enable_memory_filesystem_mode=coord_cfg.get("enable_memory_filesystem_mode", False),
+            task_planning_filesystem_mode=coord_cfg.get(
+                "task_planning_filesystem_mode",
+                False,
+            ),
+            enable_memory_filesystem_mode=coord_cfg.get(
+                "enable_memory_filesystem_mode",
+                False,
+            ),
+            compression_target_ratio=coord_cfg.get(
+                "compression_target_ratio",
+                0.20,
+            ),
             use_skills=coord_cfg.get("use_skills", False),
             massgen_skills=coord_cfg.get("massgen_skills", []),
             skills_directory=coord_cfg.get("skills_directory", ".agent/skills"),
-            load_previous_session_skills=coord_cfg.get("load_previous_session_skills", False),
+            load_previous_session_skills=coord_cfg.get(
+                "load_previous_session_skills",
+                False,
+            ),
             persona_generator=persona_generator_config,
+            enable_subagents=coord_cfg.get("enable_subagents", False),
+            subagent_default_timeout=coord_cfg.get("subagent_default_timeout", 300),
+            subagent_max_concurrent=coord_cfg.get("subagent_max_concurrent", 3),
+            subagent_orchestrator=subagent_orchestrator_config,
         )
 
     # Get session_id from session_info (will be generated in save_final_state if not exists)
@@ -1509,6 +1942,19 @@ async def run_question_with_history(
             # Session doesn't exist yet or has no turns - that's ok for new sessions
             logger.debug(f"Could not restore session for previous turns: {e}")
 
+    # Get generated personas from session info if persist_across_turns is enabled
+    # By default, generate new personas each turn (persist_across_turns=False)
+    generated_personas = None
+    if (
+        hasattr(orchestrator_config, "coordination_config")
+        and orchestrator_config.coordination_config
+        and orchestrator_config.coordination_config.persona_generator
+        and orchestrator_config.coordination_config.persona_generator.persist_across_turns
+    ):
+        generated_personas = session_info.get("generated_personas")
+        if generated_personas:
+            logger.info("[CLI] Reusing persisted personas from previous turn")
+
     orchestrator = Orchestrator(
         agents=agents,
         config=orchestrator_config,
@@ -1521,6 +1967,7 @@ async def run_question_with_history(
         enable_rate_limit=kwargs.get("enable_rate_limit", False),
         enable_nlip=orchestrator_enable_nlip,
         nlip_config=orchestrator_nlip_config,
+        generated_personas=generated_personas,  # Only if persist_across_turns=True
     )
     # Create a fresh UI instance for each question to ensure clean state
     ui = _build_coordination_ui(ui_config)
@@ -1537,6 +1984,7 @@ async def run_question_with_history(
         if coordination_settings:
             from .agent_config import CoordinationConfig
             from .persona_generator import PersonaGeneratorConfig
+            from .subagent.models import SubagentOrchestratorConfig
 
             # Parse persona_generator config if present
             persona_generator_config = PersonaGeneratorConfig()
@@ -1544,33 +1992,82 @@ async def run_question_with_history(
                 pg_cfg = coordination_settings["persona_generator"]
                 persona_generator_config = PersonaGeneratorConfig(
                     enabled=pg_cfg.get("enabled", False),
-                    backend=pg_cfg.get("backend", {"type": "openai", "model": "gpt-4o-mini"}),
-                    strategy=pg_cfg.get("strategy", "complementary"),
+                    diversity_mode=pg_cfg.get("diversity_mode", "perspective"),
                     persona_guidelines=pg_cfg.get("persona_guidelines"),
+                    persist_across_turns=pg_cfg.get("persist_across_turns", False),
+                )
+
+            # Parse subagent_orchestrator config if present
+            subagent_orchestrator_config = None
+            if "subagent_orchestrator" in coordination_settings:
+                so_cfg = coordination_settings["subagent_orchestrator"]
+                subagent_orchestrator_config = SubagentOrchestratorConfig.from_dict(
+                    so_cfg,
                 )
 
             orchestrator_config.coordination_config = CoordinationConfig(
-                enable_planning_mode=coordination_settings.get("enable_planning_mode", False),
+                enable_planning_mode=coordination_settings.get(
+                    "enable_planning_mode",
+                    False,
+                ),
                 planning_mode_instruction=coordination_settings.get(
                     "planning_mode_instruction",
                     """During coordination, describe what you would do. Only provide concrete implementation details and execute read-only actions.
                     DO NOT execute any actions that have side effects (e.g., sending messages, modifying data)""",
                 ),
-                enable_agent_task_planning=coordination_settings.get("enable_agent_task_planning", False),
+                enable_agent_task_planning=coordination_settings.get(
+                    "enable_agent_task_planning",
+                    False,
+                ),
                 max_tasks_per_plan=coordination_settings.get("max_tasks_per_plan", 10),
                 broadcast=coordination_settings.get("broadcast", False),
-                broadcast_sensitivity=coordination_settings.get("broadcast_sensitivity", "medium"),
+                broadcast_sensitivity=coordination_settings.get(
+                    "broadcast_sensitivity",
+                    "medium",
+                ),
                 response_depth=coordination_settings.get("response_depth", "medium"),
                 broadcast_timeout=coordination_settings.get("broadcast_timeout", 300),
-                broadcast_wait_by_default=coordination_settings.get("broadcast_wait_by_default", True),
-                max_broadcasts_per_agent=coordination_settings.get("max_broadcasts_per_agent", 10),
-                task_planning_filesystem_mode=coordination_settings.get("task_planning_filesystem_mode", False),
-                enable_memory_filesystem_mode=coordination_settings.get("enable_memory_filesystem_mode", False),
+                broadcast_wait_by_default=coordination_settings.get(
+                    "broadcast_wait_by_default",
+                    True,
+                ),
+                max_broadcasts_per_agent=coordination_settings.get(
+                    "max_broadcasts_per_agent",
+                    10,
+                ),
+                task_planning_filesystem_mode=coordination_settings.get(
+                    "task_planning_filesystem_mode",
+                    False,
+                ),
+                enable_memory_filesystem_mode=coordination_settings.get(
+                    "enable_memory_filesystem_mode",
+                    False,
+                ),
+                compression_target_ratio=coordination_settings.get(
+                    "compression_target_ratio",
+                    0.20,
+                ),
                 use_skills=coordination_settings.get("use_skills", False),
                 massgen_skills=coordination_settings.get("massgen_skills", []),
-                skills_directory=coordination_settings.get("skills_directory", ".agent/skills"),
-                load_previous_session_skills=coordination_settings.get("load_previous_session_skills", False),
+                skills_directory=coordination_settings.get(
+                    "skills_directory",
+                    ".agent/skills",
+                ),
+                load_previous_session_skills=coordination_settings.get(
+                    "load_previous_session_skills",
+                    False,
+                ),
                 persona_generator=persona_generator_config,
+                enable_subagents=coordination_settings.get("enable_subagents", False),
+                subagent_default_timeout=coordination_settings.get(
+                    "subagent_default_timeout",
+                    300,
+                ),
+                subagent_max_concurrent=coordination_settings.get(
+                    "subagent_max_concurrent",
+                    3,
+                ),
+                subagent_orchestrator=subagent_orchestrator_config,
             )
 
     print(f"\n🤖 {BRIGHT_CYAN}{mode_text}{RESET}", flush=True)
@@ -1610,7 +2107,11 @@ async def run_question_with_history(
             logger.warning(f"Failed to save partial progress: {e}")
 
     # Register cancellation handler (multi_turn mode returns to prompt instead of exiting)
-    cancellation_mgr.register(orchestrator, save_partial_progress, multi_turn=multi_turn_mode)
+    cancellation_mgr.register(
+        orchestrator,
+        save_partial_progress,
+        multi_turn=multi_turn_mode,
+    )
 
     # Restart loop (similar to multiturn pattern) - continues until no restart pending
     response_content = None
@@ -1623,7 +2124,11 @@ async def run_question_with_history(
                 current_question = messages[-1].get("content", question) if messages else question
 
                 # Pass the full message context to the UI coordination
-                response_content = await ui.coordinate_with_context(orchestrator, current_question, messages)
+                response_content = await ui.coordinate_with_context(
+                    orchestrator,
+                    current_question,
+                    messages,
+                )
             else:
                 # Standard coordination for new conversations
                 response_content = await ui.coordinate(orchestrator, question)
@@ -1632,7 +2137,9 @@ async def run_question_with_history(
             if hasattr(orchestrator, "restart_pending") and orchestrator.restart_pending:
                 # Restart needed - create fresh UI for next attempt
                 print(f"\n{'='*80}")
-                print(f"🔄 Restarting coordination - Attempt {orchestrator.current_attempt + 1}/{orchestrator.max_attempts}")
+                print(
+                    f"🔄 Restarting coordination - Attempt {orchestrator.current_attempt + 1}/{orchestrator.max_attempts}",
+                )
                 print(f"{'='*80}\n")
 
                 # Reset all agent backends to ensure clean state for next attempt
@@ -1647,7 +2154,9 @@ async def run_question_with_history(
                                 await result
                             logger.info(f"Reset backend state for {agent_id}")
                         except Exception as e:
-                            logger.warning(f"Failed to reset backend for {agent_id}: {e}")
+                            logger.warning(
+                                f"Failed to reset backend for {agent_id}: {e}",
+                            )
 
                 # Create fresh UI instance for next attempt
                 ui = _build_coordination_ui(ui_config)
@@ -1666,7 +2175,10 @@ async def run_question_with_history(
         was_cancelled = True
 
         if cancel_exc.partial_saved:
-            print(f"\n{BRIGHT_YELLOW}⏸️  Turn cancelled. Partial progress saved.{RESET}", flush=True)
+            print(
+                f"\n{BRIGHT_YELLOW}⏸️  Turn cancelled. Partial progress saved.{RESET}",
+                flush=True,
+            )
         else:
             print(f"\n{BRIGHT_YELLOW}⏸️  Turn cancelled.{RESET}", flush=True)
 
@@ -1733,8 +2245,15 @@ async def run_question_with_history(
                 shutil.rmtree(turn_final_dir)
 
             # Copy attempt's final to turn root
-            shutil.copytree(attempt_final_dir, turn_final_dir)
-            logger.info(f"Copied final results from {attempt_final_dir} to {turn_final_dir}")
+            shutil.copytree(
+                attempt_final_dir,
+                turn_final_dir,
+                symlinks=True,
+                ignore_dangling_symlinks=True,
+            )
+            logger.info(
+                f"Copied final results from {attempt_final_dir} to {turn_final_dir}",
+            )
     except Exception as e:
         logger.warning(f"Failed to copy final results to turn root: {e}")
 
@@ -1756,8 +2275,18 @@ async def run_question_with_history(
         log_directory=log_dir_name,
     )
 
+    # Store generated personas in session_info for persistence across turns
+    # This allows subsequent turns to reuse personas instead of regenerating
+    if orchestrator.get_generated_personas():
+        session_info["generated_personas"] = orchestrator.get_generated_personas()
+
     # Return normalized response so conversation history has correct paths
-    return (normalized_response or response_content, session_id_to_use, updated_turn, was_cancelled)
+    return (
+        normalized_response or response_content,
+        session_id_to_use,
+        updated_turn,
+        was_cancelled,
+    )
 
 
 async def run_single_question(
@@ -1842,7 +2371,10 @@ async def run_single_question(
             sys.exit(1)
 
     # Check if we should use orchestrator for single agents (default: False for backward compatibility)
-    use_orchestrator_for_single = ui_config.get("use_orchestrator_for_single_agent", True)
+    use_orchestrator_for_single = ui_config.get(
+        "use_orchestrator_for_single_agent",
+        True,
+    )
 
     if len(agents) == 1 and not use_orchestrator_for_single:
         # Single agent mode with existing SimpleDisplay frontend
@@ -1888,6 +2420,7 @@ async def run_single_question(
         if coordination_settings:
             from .agent_config import CoordinationConfig
             from .persona_generator import PersonaGeneratorConfig
+            from .subagent.models import SubagentOrchestratorConfig
 
             # Parse persona_generator config if present
             persona_generator_config = PersonaGeneratorConfig()
@@ -1895,33 +2428,82 @@ async def run_single_question(
                 pg_cfg = coordination_settings["persona_generator"]
                 persona_generator_config = PersonaGeneratorConfig(
                     enabled=pg_cfg.get("enabled", False),
-                    backend=pg_cfg.get("backend", {"type": "openai", "model": "gpt-4o-mini"}),
-                    strategy=pg_cfg.get("strategy", "complementary"),
+                    diversity_mode=pg_cfg.get("diversity_mode", "perspective"),
                     persona_guidelines=pg_cfg.get("persona_guidelines"),
+                    persist_across_turns=pg_cfg.get("persist_across_turns", False),
+                )
+
+            # Parse subagent_orchestrator config if present
+            subagent_orchestrator_config = None
+            if "subagent_orchestrator" in coordination_settings:
+                so_cfg = coordination_settings["subagent_orchestrator"]
+                subagent_orchestrator_config = SubagentOrchestratorConfig.from_dict(
+                    so_cfg,
                 )
 
             orchestrator_config.coordination_config = CoordinationConfig(
-                enable_planning_mode=coordination_settings.get("enable_planning_mode", False),
+                enable_planning_mode=coordination_settings.get(
+                    "enable_planning_mode",
+                    False,
+                ),
                 planning_mode_instruction=coordination_settings.get(
                     "planning_mode_instruction",
                     """During coordination, describe what you would do. Only provide concrete implementation details and execute read-only actions.
                     DO NOT execute any actions that have side effects (e.g., sending messages, modifying data)""",
                 ),
-                enable_agent_task_planning=coordination_settings.get("enable_agent_task_planning", False),
+                enable_agent_task_planning=coordination_settings.get(
+                    "enable_agent_task_planning",
+                    False,
+                ),
                 max_tasks_per_plan=coordination_settings.get("max_tasks_per_plan", 10),
                 broadcast=coordination_settings.get("broadcast", False),
-                broadcast_sensitivity=coordination_settings.get("broadcast_sensitivity", "medium"),
+                broadcast_sensitivity=coordination_settings.get(
+                    "broadcast_sensitivity",
+                    "medium",
+                ),
                 response_depth=coordination_settings.get("response_depth", "medium"),
                 broadcast_timeout=coordination_settings.get("broadcast_timeout", 300),
-                broadcast_wait_by_default=coordination_settings.get("broadcast_wait_by_default", True),
-                max_broadcasts_per_agent=coordination_settings.get("max_broadcasts_per_agent", 10),
-                task_planning_filesystem_mode=coordination_settings.get("task_planning_filesystem_mode", False),
-                enable_memory_filesystem_mode=coordination_settings.get("enable_memory_filesystem_mode", False),
+                broadcast_wait_by_default=coordination_settings.get(
+                    "broadcast_wait_by_default",
+                    True,
+                ),
+                max_broadcasts_per_agent=coordination_settings.get(
+                    "max_broadcasts_per_agent",
+                    10,
+                ),
+                task_planning_filesystem_mode=coordination_settings.get(
+                    "task_planning_filesystem_mode",
+                    False,
+                ),
+                enable_memory_filesystem_mode=coordination_settings.get(
+                    "enable_memory_filesystem_mode",
+                    False,
+                ),
+                compression_target_ratio=coordination_settings.get(
+                    "compression_target_ratio",
+                    0.20,
+                ),
                 use_skills=coordination_settings.get("use_skills", False),
                 massgen_skills=coordination_settings.get("massgen_skills", []),
-                skills_directory=coordination_settings.get("skills_directory", ".agent/skills"),
-                load_previous_session_skills=coordination_settings.get("load_previous_session_skills", False),
+                skills_directory=coordination_settings.get(
+                    "skills_directory",
+                    ".agent/skills",
+                ),
+                load_previous_session_skills=coordination_settings.get(
+                    "load_previous_session_skills",
+                    False,
+                ),
                 persona_generator=persona_generator_config,
+                enable_subagents=coordination_settings.get("enable_subagents", False),
+                subagent_default_timeout=coordination_settings.get(
+                    "subagent_default_timeout",
+                    300,
+                ),
+                subagent_max_concurrent=coordination_settings.get(
+                    "subagent_max_concurrent",
+                    3,
+                ),
+                subagent_orchestrator=subagent_orchestrator_config,
             )
 
         # Get orchestrator parameters from config
@@ -1932,7 +2514,9 @@ async def run_single_question(
         orchestrator_nlip_config = orchestrator_cfg.get("nlip_config", {})
 
         if orchestrator_enable_nlip:
-            logger.info("[CLI] Orchestrator-level NLIP enabled (will propagate to capable agents)")
+            logger.info(
+                "[CLI] Orchestrator-level NLIP enabled (will propagate to capable agents)",
+            )
 
         # Apply voting sensitivity if specified
         if "voting_sensitivity" in orchestrator_cfg:
@@ -1961,6 +2545,7 @@ async def run_single_question(
         if "coordination" in orchestrator_cfg:
             from .agent_config import CoordinationConfig
             from .persona_generator import PersonaGeneratorConfig
+            from .subagent.models import SubagentOrchestratorConfig
 
             coord_cfg = orchestrator_cfg["coordination"]
 
@@ -1970,9 +2555,17 @@ async def run_single_question(
                 pg_cfg = coord_cfg["persona_generator"]
                 persona_generator_config = PersonaGeneratorConfig(
                     enabled=pg_cfg.get("enabled", False),
-                    backend=pg_cfg.get("backend", {"type": "openai", "model": "gpt-4o-mini"}),
-                    strategy=pg_cfg.get("strategy", "complementary"),
+                    diversity_mode=pg_cfg.get("diversity_mode", "perspective"),
                     persona_guidelines=pg_cfg.get("persona_guidelines"),
+                    persist_across_turns=pg_cfg.get("persist_across_turns", False),
+                )
+
+            # Parse subagent_orchestrator config if present
+            subagent_orchestrator_config = None
+            if "subagent_orchestrator" in coord_cfg:
+                so_cfg = coord_cfg["subagent_orchestrator"]
+                subagent_orchestrator_config = SubagentOrchestratorConfig.from_dict(
+                    so_cfg,
                 )
 
             orchestrator_config.coordination_config = CoordinationConfig(
@@ -1981,22 +2574,48 @@ async def run_single_question(
                     "planning_mode_instruction",
                     "During coordination, describe what you would do without actually executing actions. Only provide concrete implementation details without calling external APIs or tools.",
                 ),
-                max_orchestration_restarts=coord_cfg.get("max_orchestration_restarts", 0),
-                enable_agent_task_planning=coord_cfg.get("enable_agent_task_planning", False),
+                max_orchestration_restarts=coord_cfg.get(
+                    "max_orchestration_restarts",
+                    0,
+                ),
+                enable_agent_task_planning=coord_cfg.get(
+                    "enable_agent_task_planning",
+                    False,
+                ),
                 max_tasks_per_plan=coord_cfg.get("max_tasks_per_plan", 10),
                 broadcast=coord_cfg.get("broadcast", False),
                 broadcast_sensitivity=coord_cfg.get("broadcast_sensitivity", "medium"),
                 response_depth=coord_cfg.get("response_depth", "medium"),
                 broadcast_timeout=coord_cfg.get("broadcast_timeout", 300),
-                broadcast_wait_by_default=coord_cfg.get("broadcast_wait_by_default", True),
+                broadcast_wait_by_default=coord_cfg.get(
+                    "broadcast_wait_by_default",
+                    True,
+                ),
                 max_broadcasts_per_agent=coord_cfg.get("max_broadcasts_per_agent", 10),
-                task_planning_filesystem_mode=coord_cfg.get("task_planning_filesystem_mode", False),
-                enable_memory_filesystem_mode=coord_cfg.get("enable_memory_filesystem_mode", False),
+                task_planning_filesystem_mode=coord_cfg.get(
+                    "task_planning_filesystem_mode",
+                    False,
+                ),
+                enable_memory_filesystem_mode=coord_cfg.get(
+                    "enable_memory_filesystem_mode",
+                    False,
+                ),
+                compression_target_ratio=coord_cfg.get(
+                    "compression_target_ratio",
+                    0.20,
+                ),
                 use_skills=coord_cfg.get("use_skills", False),
                 massgen_skills=coord_cfg.get("massgen_skills", []),
                 skills_directory=coord_cfg.get("skills_directory", ".agent/skills"),
-                load_previous_session_skills=coord_cfg.get("load_previous_session_skills", False),
+                load_previous_session_skills=coord_cfg.get(
+                    "load_previous_session_skills",
+                    False,
+                ),
                 persona_generator=persona_generator_config,
+                enable_subagents=coord_cfg.get("enable_subagents", False),
+                subagent_default_timeout=coord_cfg.get("subagent_default_timeout", 300),
+                subagent_max_concurrent=coord_cfg.get("subagent_max_concurrent", 3),
+                subagent_orchestrator=subagent_orchestrator_config,
             )
 
         orchestrator = Orchestrator(
@@ -2033,8 +2652,29 @@ async def run_single_question(
                 # Restart needed - create fresh UI for next attempt
                 if display_type not in ("none", "silent"):
                     print(f"\n{'='*80}")
-                    print(f"🔄 Restarting coordination - Attempt {orchestrator.current_attempt + 1}/{orchestrator.max_attempts}")
+                    print(
+                        f"🔄 Restarting coordination - Attempt {orchestrator.current_attempt + 1}/{orchestrator.max_attempts}",
+                    )
                     print(f"{'='*80}\n")
+
+                # Set log attempt BEFORE creating new UI so display gets correct path
+                # orchestrator.current_attempt was already incremented by _reset_for_restart()
+                from massgen.logger_config import set_log_attempt
+
+                set_log_attempt(orchestrator.current_attempt + 1)
+
+                # Save execution metadata for this attempt
+                save_execution_metadata(
+                    query=question,
+                    config_path=None,  # Not available in this scope
+                    config_content=None,  # Not available in this scope
+                    cli_args={
+                        "mode": "coordination_restart",
+                        "attempt": orchestrator.current_attempt + 1,
+                        "session_id": session_id,
+                        "restart_reason": orchestrator.restart_reason,
+                    },
+                )
 
                 # Reset all agent backends to ensure clean state for next attempt
                 for agent_id, agent in orchestrator.agents.items():
@@ -2048,7 +2688,9 @@ async def run_single_question(
                                 await result
                             logger.info(f"Reset backend state for {agent_id}")
                         except Exception as e:
-                            logger.warning(f"Failed to reset backend for {agent_id}: {e}")
+                            logger.warning(
+                                f"Failed to reset backend for {agent_id}: {e}",
+                            )
 
                 # Create fresh UI instance for next attempt
                 ui = _build_coordination_ui(ui_config)
@@ -2083,8 +2725,15 @@ async def run_single_question(
                     shutil.rmtree(turn_final_dir)
 
                 # Copy attempt's final to turn root
-                shutil.copytree(attempt_final_dir, turn_final_dir)
-                logger.info(f"Copied final results from {attempt_final_dir} to {turn_final_dir}")
+                shutil.copytree(
+                    attempt_final_dir,
+                    turn_final_dir,
+                    symlinks=True,
+                    ignore_dangling_symlinks=True,
+                )
+                logger.info(
+                    f"Copied final results from {attempt_final_dir} to {turn_final_dir}",
+                )
         except Exception as e:
             logger.warning(f"Failed to copy final results to turn root: {e}")
 
@@ -2128,11 +2777,17 @@ async def run_single_question(
         if return_metadata:
             # Get comprehensive coordination result from orchestrator
             coordination_result = orchestrator.get_coordination_result()
-            return {"answer": final_response, "coordination_result": coordination_result}
+            return {
+                "answer": final_response,
+                "coordination_result": coordination_result,
+            }
         return final_response
 
 
-def prompt_for_context_paths(original_config: Dict[str, Any], orchestrator_cfg: Dict[str, Any]) -> bool:
+def prompt_for_context_paths(
+    original_config: Dict[str, Any],
+    orchestrator_cfg: Dict[str, Any],
+) -> bool:
     """Prompt user to add context paths in interactive mode.
 
     Returns True if config was modified, False otherwise.
@@ -2165,7 +2820,9 @@ def prompt_for_context_paths(original_config: Dict[str, Any], orchestrator_cfg: 
         for path_config in existing_paths:
             path = path_config.get("path") if isinstance(path_config, dict) else path_config
             permission = path_config.get("permission", "read") if isinstance(path_config, dict) else "read"
-            context_content.append(f"  [green]✓[/green] {path} [dim]({permission})[/dim]")
+            context_content.append(
+                f"  [green]✓[/green] {path} [dim]({permission})[/dim]",
+            )
     else:
         context_content.append("  [yellow]No context paths configured[/yellow]")
 
@@ -2214,20 +2871,31 @@ def prompt_for_context_paths(original_config: Dict[str, Any], orchestrator_cfg: 
                 # Add CWD with write permission
                 if "context_paths" not in orchestrator_cfg:
                     orchestrator_cfg["context_paths"] = []
-                orchestrator_cfg["context_paths"].append({"path": cwd_str, "permission": "write"})
+                orchestrator_cfg["context_paths"].append(
+                    {"path": cwd_str, "permission": "write"},
+                )
                 print(f"   {BRIGHT_GREEN}✅ Added: {cwd} (write){RESET}", flush=True)
                 return True
             elif response in ["p", "protected"]:
                 # Add CWD with write permission and protected paths
                 protected_paths = []
-                print(f"\n   {BRIGHT_CYAN}Enter protected paths (one per line, empty to finish):{RESET}", flush=True)
-                print(f"   {BRIGHT_YELLOW}Tip: Protected paths are relative to {cwd}{RESET}", flush=True)
+                print(
+                    f"\n   {BRIGHT_CYAN}Enter protected paths (one per line, empty to finish):{RESET}",
+                    flush=True,
+                )
+                print(
+                    f"   {BRIGHT_YELLOW}Tip: Protected paths are relative to {cwd}{RESET}",
+                    flush=True,
+                )
                 while True:
                     protected_input = input(f"   {BRIGHT_CYAN}→{RESET} ").strip()
                     if not protected_input:
                         break
                     protected_paths.append(protected_input)
-                    print(f"     {BRIGHT_GREEN}✓ Added: {protected_input}{RESET}", flush=True)
+                    print(
+                        f"     {BRIGHT_GREEN}✓ Added: {protected_input}{RESET}",
+                        flush=True,
+                    )
 
                 if "context_paths" not in orchestrator_cfg:
                     orchestrator_cfg["context_paths"] = []
@@ -2237,7 +2905,10 @@ def prompt_for_context_paths(original_config: Dict[str, Any], orchestrator_cfg: 
                     context_config["protected_paths"] = protected_paths
 
                 orchestrator_cfg["context_paths"].append(context_config)
-                print(f"\n   {BRIGHT_GREEN}✅ Added: {cwd} (write) with {len(protected_paths)} protected path(s){RESET}", flush=True)
+                print(
+                    f"\n   {BRIGHT_GREEN}✅ Added: {cwd} (write) with {len(protected_paths)} protected path(s){RESET}",
+                    flush=True,
+                )
                 return True
             elif response in ["n", "no"]:
                 # User explicitly declined
@@ -2246,7 +2917,9 @@ def prompt_for_context_paths(original_config: Dict[str, Any], orchestrator_cfg: 
                 # Loop until valid path or user cancels
                 print()
                 while True:
-                    custom_path = input(f"   {BRIGHT_CYAN}Enter path (absolute or relative):{RESET} ").strip()
+                    custom_path = input(
+                        f"   {BRIGHT_CYAN}Enter path (absolute or relative):{RESET} ",
+                    ).strip()
                     if not custom_path:
                         print(f"   {BRIGHT_YELLOW}⚠️  Cancelled{RESET}", flush=True)
                         return False
@@ -2256,29 +2929,53 @@ def prompt_for_context_paths(original_config: Dict[str, Any], orchestrator_cfg: 
 
                     # Check if path exists
                     if not Path(abs_path).exists():
-                        print(f"   {BRIGHT_RED}✗ Path does not exist: {abs_path}{RESET}", flush=True)
+                        print(
+                            f"   {BRIGHT_RED}✗ Path does not exist: {abs_path}{RESET}",
+                            flush=True,
+                        )
                         retry = input(f"   {BRIGHT_CYAN}Try again? [Y/n]:{RESET} ").strip().lower()
                         if retry in ["n", "no"]:
                             return False
                         continue
 
                     # Valid path (file or directory), ask for permission
-                    permission = input(f"   {BRIGHT_CYAN}Permission [read/write] (default: write):{RESET} ").strip().lower() or "write"
+                    permission = (
+                        input(
+                            f"   {BRIGHT_CYAN}Permission [read/write] (default: write):{RESET} ",
+                        )
+                        .strip()
+                        .lower()
+                        or "write"
+                    )
                     if permission not in ["read", "write"]:
                         permission = "write"
 
                     # Ask about protected paths if write permission
                     protected_paths = []
                     if permission == "write":
-                        add_protected = input(f"   {BRIGHT_CYAN}Add protected paths? [y/N]:{RESET} ").strip().lower()
+                        add_protected = (
+                            input(
+                                f"   {BRIGHT_CYAN}Add protected paths? [y/N]:{RESET} ",
+                            )
+                            .strip()
+                            .lower()
+                        )
                         if add_protected in ["y", "yes"]:
-                            print(f"   {BRIGHT_CYAN}Enter protected paths (one per line, empty to finish):{RESET}", flush=True)
+                            print(
+                                f"   {BRIGHT_CYAN}Enter protected paths (one per line, empty to finish):{RESET}",
+                                flush=True,
+                            )
                             while True:
-                                protected_input = input(f"   {BRIGHT_CYAN}→{RESET} ").strip()
+                                protected_input = input(
+                                    f"   {BRIGHT_CYAN}→{RESET} ",
+                                ).strip()
                                 if not protected_input:
                                     break
                                 protected_paths.append(protected_input)
-                                print(f"     {BRIGHT_GREEN}✓ Added: {protected_input}{RESET}", flush=True)
+                                print(
+                                    f"     {BRIGHT_GREEN}✓ Added: {protected_input}{RESET}",
+                                    flush=True,
+                                )
 
                     if "context_paths" not in orchestrator_cfg:
                         orchestrator_cfg["context_paths"] = []
@@ -2289,14 +2986,26 @@ def prompt_for_context_paths(original_config: Dict[str, Any], orchestrator_cfg: 
 
                     orchestrator_cfg["context_paths"].append(context_config)
                     if protected_paths:
-                        print(f"   {BRIGHT_GREEN}✅ Added: {abs_path} ({permission}) with {len(protected_paths)} protected path(s){RESET}", flush=True)
+                        print(
+                            f"   {BRIGHT_GREEN}✅ Added: {abs_path} ({permission}) with {len(protected_paths)} protected path(s){RESET}",
+                            flush=True,
+                        )
                     else:
-                        print(f"   {BRIGHT_GREEN}✅ Added: {abs_path} ({permission}){RESET}", flush=True)
+                        print(
+                            f"   {BRIGHT_GREEN}✅ Added: {abs_path} ({permission}){RESET}",
+                            flush=True,
+                        )
                     return True
             else:
                 # Invalid response - clarify options
-                print(f"\n   {BRIGHT_RED}✗ Invalid option: '{response}'{RESET}", flush=True)
-                print(f"   {BRIGHT_YELLOW}Please choose: Y (yes), P (protected), N (no), or C (custom){RESET}", flush=True)
+                print(
+                    f"\n   {BRIGHT_RED}✗ Invalid option: '{response}'{RESET}",
+                    flush=True,
+                )
+                print(
+                    f"   {BRIGHT_YELLOW}Please choose: Y (yes), P (protected), N (no), or C (custom){RESET}",
+                    flush=True,
+                )
                 return False
         except (KeyboardInterrupt, EOFError):
             print()  # New line after Ctrl+C
@@ -2603,11 +3312,16 @@ def interactive_config_selector() -> Optional[str]:
         return _select_package_example(configs["Package Examples"], selector_console)
 
     # Otherwise, return the selected config path
-    selector_console.print(f"\n[bold green]✓ Selected:[/bold green] [cyan]{selected}[/cyan]\n")
+    selector_console.print(
+        f"\n[bold green]✓ Selected:[/bold green] [cyan]{selected}[/cyan]\n",
+    )
     return selected
 
 
-def _select_package_example(examples: List[Tuple[str, Path]], console: Console) -> Optional[str]:
+def _select_package_example(
+    examples: List[Tuple[str, Path]],
+    console: Console,
+) -> Optional[str]:
     """Show hierarchical navigation for package examples.
 
     Args:
@@ -2647,7 +3361,12 @@ def _select_package_example(examples: List[Tuple[str, Path]], console: Console) 
         width=88,
     )
     category_table.add_column("Category", style="bright_cyan", no_wrap=True, width=20)
-    category_table.add_column("Count", justify="center", style="bright_yellow", width=10)
+    category_table.add_column(
+        "Count",
+        justify="center",
+        style="bright_yellow",
+        width=10,
+    )
     category_table.add_column("Description", style="dim")
 
     # Category descriptions
@@ -2692,8 +3411,12 @@ def _select_package_example(examples: List[Tuple[str, Path]], console: Console) 
     )
 
     # Add back option
-    category_choices.append(questionary.Separator("\n─────────────────────────────────"))
-    category_choices.append(questionary.Choice(title="  ← Back to main menu", value="__back__"))
+    category_choices.append(
+        questionary.Separator("\n─────────────────────────────────"),
+    )
+    category_choices.append(
+        questionary.Choice(title="  ← Back to main menu", value="__back__"),
+    )
 
     # Step 1: Select category
     console.print()
@@ -2729,7 +3452,10 @@ def _select_package_example(examples: List[Tuple[str, Path]], console: Console) 
 
     # Build config choices and table
     config_choices = []
-    for idx, (display_name, path) in enumerate(sorted(categories[selected_category]), 1):
+    for idx, (display_name, path) in enumerate(
+        sorted(categories[selected_category]),
+        1,
+    ):
         # Show relative path within category
         short_name = display_name.replace(f"{selected_category}/", "")
         configs_table.add_row(str(idx), short_name)
@@ -2754,7 +3480,9 @@ def _select_package_example(examples: List[Tuple[str, Path]], console: Console) 
 
     # Add back option
     config_choices.append(questionary.Separator("\n─────────────────────────────────"))
-    config_choices.append(questionary.Choice(title="  ← Back to categories", value="__back__"))
+    config_choices.append(
+        questionary.Choice(title="  ← Back to categories", value="__back__"),
+    )
 
     # Step 2: Select config
     # For large lists: disable shortcuts (max 36) and enable search filter for better UX
@@ -2782,7 +3510,9 @@ def _select_package_example(examples: List[Tuple[str, Path]], console: Console) 
         return _select_package_example(examples, console)
 
     # Return the selected config path
-    console.print(f"\n[bold green]✓ Selected:[/bold green] [cyan]{selected_config}[/cyan]\n")
+    console.print(
+        f"\n[bold green]✓ Selected:[/bold green] [cyan]{selected_config}[/cyan]\n",
+    )
     return selected_config
 
 
@@ -2812,8 +3542,7 @@ def get_docker_diagnostics():
 def setup_docker() -> None:
     """Pull MassGen Docker executor images from GitHub Container Registry.
 
-    Allows interactive selection of which images to install.
-    Sudo image is recommended and selected by default.
+    Shows full diagnostics checklist and only offers to pull missing images.
     """
     import subprocess
 
@@ -2826,13 +3555,26 @@ def setup_docker() -> None:
     print(f"{BRIGHT_CYAN}  🐳  MassGen Docker Setup{RESET}")
     print(f"{BRIGHT_CYAN}{'=' * 60}{RESET}\n")
 
-    # Run comprehensive diagnostics (skip image check since we're setting up)
-    print(f"{BRIGHT_CYAN}Checking Docker...{RESET}", end=" ", flush=True)
-    diagnostics = diagnose_docker(check_images=False)
+    # Run comprehensive diagnostics INCLUDING image check
+    print(f"{BRIGHT_CYAN}Checking Docker status...{RESET}\n")
+    diagnostics = diagnose_docker(check_images=True)
 
-    # Check binary
-    if not diagnostics.binary_installed:
-        print(f"{BRIGHT_RED}✗{RESET}")
+    # Display full diagnostics checklist
+    version_info = f" ({diagnostics.docker_version})" if diagnostics.docker_version else ""
+    binary_status = f"{BRIGHT_GREEN}✓{RESET}" if diagnostics.binary_installed else f"{BRIGHT_RED}✗{RESET}"
+    print(f"  {binary_status} Docker binary installed{version_info}")
+
+    pip_status = f"{BRIGHT_GREEN}✓{RESET}" if diagnostics.pip_library_installed else f"{BRIGHT_RED}✗{RESET}"
+    print(f"  {pip_status} Docker Python library")
+
+    daemon_status = f"{BRIGHT_GREEN}✓{RESET}" if diagnostics.daemon_running else f"{BRIGHT_RED}✗{RESET}"
+    print(f"  {daemon_status} Docker daemon running")
+
+    perm_status = f"{BRIGHT_GREEN}✓{RESET}" if diagnostics.has_permissions else f"{BRIGHT_RED}✗{RESET}"
+    print(f"  {perm_status} Permissions OK")
+
+    # If not available, show error and resolution steps
+    if not diagnostics.is_available:
         print(f"\n{BRIGHT_RED}Error: {diagnostics.error_message}{RESET}")
         print(f"\n{BRIGHT_YELLOW}To fix this:{RESET}")
         for i, step in enumerate(diagnostics.resolution_steps, 1):
@@ -2842,52 +3584,8 @@ def setup_docker() -> None:
                 print(f"{BRIGHT_YELLOW}  {i}. {step}{RESET}")
         print()
         return
-
-    # Check pip library
-    if not diagnostics.pip_library_installed:
-        print(f"{BRIGHT_RED}✗{RESET}")
-        print(f"\n{BRIGHT_RED}Error: {diagnostics.error_message}{RESET}")
-        print(f"\n{BRIGHT_YELLOW}To fix this:{RESET}")
-        for i, step in enumerate(diagnostics.resolution_steps, 1):
-            if step.startswith("  "):
-                print(f"{BRIGHT_YELLOW}{step}{RESET}")
-            else:
-                print(f"{BRIGHT_YELLOW}  {i}. {step}{RESET}")
-        print()
-        return
-
-    # Check permissions
-    if not diagnostics.has_permissions:
-        print(f"{BRIGHT_RED}✗{RESET}")
-        print(f"\n{BRIGHT_RED}Error: {diagnostics.error_message}{RESET}")
-        print(f"\n{BRIGHT_YELLOW}To fix this:{RESET}")
-        for i, step in enumerate(diagnostics.resolution_steps, 1):
-            if step.startswith("  "):
-                print(f"{BRIGHT_YELLOW}{step}{RESET}")
-            else:
-                print(f"{BRIGHT_YELLOW}  {i}. {step}{RESET}")
-        print()
-        return
-
-    # Check daemon
-    if not diagnostics.daemon_running:
-        print(f"{BRIGHT_RED}✗{RESET}")
-        print(f"\n{BRIGHT_RED}Error: {diagnostics.error_message}{RESET}")
-        print(f"\n{BRIGHT_YELLOW}To fix this:{RESET}")
-        for i, step in enumerate(diagnostics.resolution_steps, 1):
-            if step.startswith("  "):
-                print(f"{BRIGHT_YELLOW}{step}{RESET}")
-            else:
-                print(f"{BRIGHT_YELLOW}  {i}. {step}{RESET}")
-        print()
-        return
-
-    print(f"{BRIGHT_GREEN}✓{RESET}")
-    if diagnostics.docker_version:
-        print(f"{BRIGHT_CYAN}  Docker version: {diagnostics.docker_version}{RESET}")
 
     # Define available images with metadata
-    # Future: Add more images here as needed
     AVAILABLE_IMAGES = [
         {
             "name": "ghcr.io/massgen/mcp-runtime-sudo:latest",
@@ -2900,6 +3598,24 @@ def setup_docker() -> None:
             "default": False,
         },
     ]
+
+    # Show installed images status
+    print(f"\n{BRIGHT_CYAN}Installed Images:{RESET}")
+    installed_images = []
+    missing_images = []
+    for img in AVAILABLE_IMAGES:
+        img_name = img["name"]
+        if diagnostics.images_available.get(img_name, False):
+            print(f"  {BRIGHT_GREEN}✓{RESET} {img_name}")
+            installed_images.append(img_name)
+        else:
+            print(f"  {BRIGHT_RED}✗{RESET} {img_name}")
+            missing_images.append(img)
+
+    # If all images are installed, we're done
+    if not missing_images:
+        print(f"\n{BRIGHT_GREEN}✅ All Docker images are already installed!{RESET}\n")
+        return
 
     # Create questionary style matching the rest of the CLI
     custom_style = Style(
@@ -2915,18 +3631,19 @@ def setup_docker() -> None:
         ],
     )
 
-    # Let user select which images to install
-    print(f"{BRIGHT_CYAN}Select Docker images to install:{RESET}")
+    # Only offer to pull MISSING images
+    print(f"\n{BRIGHT_CYAN}Pull missing images?{RESET}")
     print(f"{BRIGHT_YELLOW}(Use Space to select/deselect, Enter to confirm){RESET}\n")
 
     try:
+        # Only show missing images in the selection
         choices = [
             questionary.Choice(
                 title=f"{img['description']}",
                 value=img["name"],
                 checked=img["default"],
             )
-            for img in AVAILABLE_IMAGES
+            for img in missing_images
         ]
 
         selected_images = questionary.checkbox(
@@ -2940,7 +3657,9 @@ def setup_docker() -> None:
             return
 
         if not selected_images:
-            print(f"\n{BRIGHT_YELLOW}No images selected. Skipping Docker setup.{RESET}\n")
+            print(
+                f"\n{BRIGHT_YELLOW}No images selected. Skipping Docker setup.{RESET}\n",
+            )
             return
 
     except (KeyboardInterrupt, EOFError):
@@ -2966,17 +3685,25 @@ def setup_docker() -> None:
             print()  # Add spacing after progress bars
 
             if result.returncode == 0:
-                print(f"{BRIGHT_GREEN}✓ [{i}/{len(selected_images)}] Completed: {image}{RESET}\n")
+                print(
+                    f"{BRIGHT_GREEN}✓ [{i}/{len(selected_images)}] Completed: {image}{RESET}\n",
+                )
                 success_count += 1
             else:
-                print(f"{BRIGHT_RED}✗ [{i}/{len(selected_images)}] Failed: {image}{RESET}\n")
+                print(
+                    f"{BRIGHT_RED}✗ [{i}/{len(selected_images)}] Failed: {image}{RESET}\n",
+                )
                 failed_images.append(image)
 
         except subprocess.TimeoutExpired:
-            print(f"\n{BRIGHT_RED}✗ [{i}/{len(selected_images)}] Timed out: {image}{RESET}\n")
+            print(
+                f"\n{BRIGHT_RED}✗ [{i}/{len(selected_images)}] Timed out: {image}{RESET}\n",
+            )
             failed_images.append(image)
         except Exception as e:
-            print(f"\n{BRIGHT_RED}✗ [{i}/{len(selected_images)}] Error: {image} - {e}{RESET}\n")
+            print(
+                f"\n{BRIGHT_RED}✗ [{i}/{len(selected_images)}] Error: {image} - {e}{RESET}\n",
+            )
             failed_images.append(image)
 
     # Summary
@@ -2985,10 +3712,16 @@ def setup_docker() -> None:
         print(f"{BRIGHT_GREEN}  ✅ Docker setup complete!{RESET}")
         print(f"{BRIGHT_GREEN}  Successfully pulled {success_count} image(s){RESET}")
         print(f"{BRIGHT_CYAN}{'=' * 60}{RESET}")
-        print(f"\n{BRIGHT_CYAN}You can now use Docker execution mode in your configs.{RESET}")
-        print(f"{BRIGHT_CYAN}Run 'massgen --quickstart' to create a config with Docker enabled.{RESET}\n")
+        print(
+            f"\n{BRIGHT_CYAN}You can now use Docker execution mode in your configs.{RESET}",
+        )
+        print(
+            f"{BRIGHT_CYAN}Run 'massgen --quickstart' to create a config with Docker enabled.{RESET}\n",
+        )
     elif success_count > 0:
-        print(f"{BRIGHT_YELLOW}  ⚠️  Partial success: {success_count}/{len(selected_images)} images pulled{RESET}")
+        print(
+            f"{BRIGHT_YELLOW}  ⚠️  Partial success: {success_count}/{len(selected_images)} images pulled{RESET}",
+        )
         print(f"{BRIGHT_YELLOW}{'=' * 60}{RESET}")
         if failed_images:
             print(f"\n{BRIGHT_YELLOW}Failed images:{RESET}")
@@ -3074,10 +3807,22 @@ def setup_computer_use_docker() -> bool:
         print(f"{BRIGHT_CYAN}  Docker version: {diagnostics.docker_version}{RESET}")
 
     # Check if container already exists
-    print(f"{BRIGHT_CYAN}Checking for existing container...{RESET}", end=" ", flush=True)
+    print(
+        f"{BRIGHT_CYAN}Checking for existing container...{RESET}",
+        end=" ",
+        flush=True,
+    )
     try:
         result = subprocess.run(
-            ["docker", "ps", "-a", "--filter", "name=cua-container", "--format", "{{.Names}}"],
+            [
+                "docker",
+                "ps",
+                "-a",
+                "--filter",
+                "name=cua-container",
+                "--format",
+                "{{.Names}}",
+            ],
             capture_output=True,
             text=True,
             timeout=10,
@@ -3088,7 +3833,14 @@ def setup_computer_use_docker() -> bool:
 
             # Check if it's running
             result = subprocess.run(
-                ["docker", "ps", "--filter", "name=cua-container", "--format", "{{.Names}}"],
+                [
+                    "docker",
+                    "ps",
+                    "--filter",
+                    "name=cua-container",
+                    "--format",
+                    "{{.Names}}",
+                ],
                 capture_output=True,
                 text=True,
                 timeout=10,
@@ -3097,7 +3849,11 @@ def setup_computer_use_docker() -> bool:
                 print(f"{BRIGHT_GREEN}✓ Container is already running{RESET}\n")
                 return True
             else:
-                print(f"{BRIGHT_CYAN}Starting existing container...{RESET}", end=" ", flush=True)
+                print(
+                    f"{BRIGHT_CYAN}Starting existing container...{RESET}",
+                    end=" ",
+                    flush=True,
+                )
                 result = subprocess.run(
                     ["docker", "start", "cua-container"],
                     capture_output=True,
@@ -3109,8 +3865,14 @@ def setup_computer_use_docker() -> bool:
                     return True
                 else:
                     print(f"{BRIGHT_RED}✗{RESET}")
-                    print(f"{BRIGHT_YELLOW}Removing broken container and rebuilding...{RESET}")
-                    subprocess.run(["docker", "rm", "-f", "cua-container"], capture_output=True, timeout=30)
+                    print(
+                        f"{BRIGHT_YELLOW}Removing broken container and rebuilding...{RESET}",
+                    )
+                    subprocess.run(
+                        ["docker", "rm", "-f", "cua-container"],
+                        capture_output=True,
+                        timeout=30,
+                    )
         else:
             print(f"{BRIGHT_GREEN}✓{RESET}")
     except subprocess.TimeoutExpired:
@@ -3118,8 +3880,12 @@ def setup_computer_use_docker() -> bool:
 
     # Create temporary directory for Dockerfile
     print(f"\n{BRIGHT_CYAN}Building Computer Use Docker image...{RESET}")
-    print(f"{BRIGHT_YELLOW}This will download Ubuntu 22.04 and install desktop environment{RESET}")
-    print(f"{BRIGHT_YELLOW}Estimated time: 2-5 minutes (depending on internet speed){RESET}\n")
+    print(
+        f"{BRIGHT_YELLOW}This will download Ubuntu 22.04 and install desktop environment{RESET}",
+    )
+    print(
+        f"{BRIGHT_YELLOW}Estimated time: 2-5 minutes (depending on internet speed){RESET}\n",
+    )
 
     build_dir = tempfile.mkdtemp(prefix="massgen-cua-")
     dockerfile_path = Path(build_dir) / "Dockerfile"
@@ -3195,10 +3961,18 @@ CMD ["/start.sh"]
         print(f"\n{BRIGHT_GREEN}✓ Image built successfully{RESET}\n")
 
         # Remove existing container if it exists
-        subprocess.run(["docker", "rm", "-f", "cua-container"], capture_output=True, timeout=10)
+        subprocess.run(
+            ["docker", "rm", "-f", "cua-container"],
+            capture_output=True,
+            timeout=10,
+        )
 
         # Run the container
-        print(f"{BRIGHT_CYAN}Step 2/2: Starting container 'cua-container'...{RESET}", end=" ", flush=True)
+        print(
+            f"{BRIGHT_CYAN}Step 2/2: Starting container 'cua-container'...{RESET}",
+            end=" ",
+            flush=True,
+        )
         result = subprocess.run(
             ["docker", "run", "-d", "--name", "cua-container", "cua-ubuntu"],
             capture_output=True,
@@ -3222,7 +3996,15 @@ CMD ["/start.sh"]
         # Test the container
         print(f"{BRIGHT_CYAN}Testing container...{RESET}", end=" ", flush=True)
         result = subprocess.run(
-            ["docker", "exec", "-e", "DISPLAY=:99", "cua-container", "xdotool", "getmouselocation"],
+            [
+                "docker",
+                "exec",
+                "-e",
+                "DISPLAY=:99",
+                "cua-container",
+                "xdotool",
+                "getmouselocation",
+            ],
             capture_output=True,
             text=True,
             timeout=10,
@@ -3240,13 +4022,19 @@ CMD ["/start.sh"]
             print("  Desktop: Xfce4")
             print("  Browsers: Firefox, Chromium")
             print(f"\n{BRIGHT_CYAN}You can now run computer use examples:{RESET}")
-            print('  massgen --config @examples/tools/computer_use_docker_example.yaml "Open Firefox"')
-            print('  massgen --config massgen/configs/tools/custom_tools/ui_tars_docker_example.yaml "..."\n')
+            print(
+                '  massgen --config @examples/tools/computer_use_docker_example.yaml "Open Firefox"',
+            )
+            print(
+                '  massgen --config massgen/configs/tools/custom_tools/ui_tars_docker_example.yaml "..."\n',
+            )
             return True
         else:
             print(f"{BRIGHT_RED}✗{RESET}")
             print(f"\n{BRIGHT_YELLOW}⚠️  Container created but test failed{RESET}")
-            print(f"{BRIGHT_YELLOW}Please check container status: docker logs cua-container{RESET}\n")
+            print(
+                f"{BRIGHT_YELLOW}Please check container status: docker logs cua-container{RESET}\n",
+            )
             return False
 
     except subprocess.TimeoutExpired:
@@ -3292,17 +4080,27 @@ def show_example_prompts() -> Optional[str]:
     custom_style = Style(
         [
             ("answer", "#4A90E2 bold"),
-            ("completion-menu.completion", "bg:#808080 fg:#ffffff"),  # Dimmed gray background
-            ("completion-menu.completion.current", "bg:#4A90E2 fg:#ffffff"),  # Highlight current selection
+            (
+                "completion-menu.completion",
+                "bg:#808080 fg:#ffffff",
+            ),  # Dimmed gray background
+            (
+                "completion-menu.completion.current",
+                "bg:#4A90E2 fg:#ffffff",
+            ),  # Highlight current selection
         ],
     )
 
     try:
         print()
         # Show dimmed examples below the prompt
-        print("\033[2m" + "Example prompts (start typing to see autocomplete):" + "\033[0m")
+        print(
+            "\033[2m" + "Example prompts (start typing to see autocomplete):" + "\033[0m",
+        )
         for prompt in example_prompts[:3]:  # Show first 3 as hints
-            print("\033[2m" + f"  • {prompt[:70]}{'...' if len(prompt) > 70 else ''}" + "\033[0m")
+            print(
+                "\033[2m" + f"  • {prompt[:70]}{'...' if len(prompt) > 70 else ''}" + "\033[0m",
+            )
         print()
 
         choice = questionary.autocomplete(
@@ -3327,7 +4125,11 @@ def should_run_builder() -> bool:
     return not default_config.exists()
 
 
-def _list_all_turns(session_id: Optional[str], current_turn: int, console: Console) -> None:
+def _list_all_turns(
+    session_id: Optional[str],
+    current_turn: int,
+    console: Console,
+) -> None:
     """List all turns in the current session."""
     if not session_id:
         console.print("[yellow]No active session. Complete a turn first.[/yellow]")
@@ -3456,7 +4258,9 @@ def _show_turn_inspection(
     agent_files = {}
     if agent_outputs_dir and agent_outputs_dir.exists():
         for f in agent_outputs_dir.glob("*.txt"):
-            if f.name.startswith("agent_") and not f.name.startswith("final_presentation"):
+            if f.name.startswith("agent_") and not f.name.startswith(
+                "final_presentation",
+            ):
                 agent_id = f.stem.replace("agent_", "")
                 agent_files[agent_id] = f
 
@@ -3481,7 +4285,9 @@ def _show_turn_inspection(
         task_preview = metadata.get("task", "N/A")
         if len(task_preview) > 60:
             task_preview = task_preview[:57] + "..."
-        menu_lines.append(f"[dim]Turn {turn_number} | Task: {task_preview} | Winner: {winning_agent}[/dim]")
+        menu_lines.append(
+            f"[dim]Turn {turn_number} | Task: {task_preview} | Winner: {winning_agent}[/dim]",
+        )
         menu_lines.append("")
 
         menu_lines.append("[bold green]🎮 Select an option to inspect:[/bold green]")
@@ -3489,26 +4295,38 @@ def _show_turn_inspection(
         # Agent outputs (from logs) - numbered options first
         if agent_files:
             for i, agent_id in enumerate(sorted(agent_files.keys()), 1):
-                menu_lines.append(f"  [yellow]{i}:[/yellow] Inspect the original answer and working log of agent {agent_id}")
+                menu_lines.append(
+                    f"  [yellow]{i}:[/yellow] Inspect the original answer and working log of agent {agent_id}",
+                )
 
         # System status (s) - orchestrator log
         if system_status_file and system_status_file.exists():
-            menu_lines.append("  [yellow]s:[/yellow] Inspect the orchestrator working log including the voting process")
+            menu_lines.append(
+                "  [yellow]s:[/yellow] Inspect the orchestrator working log including the voting process",
+            )
 
         # Coordination table (r)
         if coordination_table_file and coordination_table_file.exists():
-            menu_lines.append("  [yellow]r:[/yellow] Display coordination table to see the full history of agent interactions and decisions")
+            menu_lines.append(
+                "  [yellow]r:[/yellow] Display coordination table to see the full history of agent interactions and decisions",
+            )
 
         # Cost breakdown (c)
         if status_json_file and status_json_file.exists():
-            menu_lines.append("  [yellow]c:[/yellow] Show cost breakdown and token usage")
+            menu_lines.append(
+                "  [yellow]c:[/yellow] Show cost breakdown and token usage",
+            )
 
         # Final answer (f) - with winning agent info if available
-        menu_lines.append(f"  [yellow]f:[/yellow] Show final presentation from Selected Agent ({winning_agent})")
+        menu_lines.append(
+            f"  [yellow]f:[/yellow] Show final presentation from Selected Agent ({winning_agent})",
+        )
 
         # Workspace files (w/o)
         if workspace_files:
-            menu_lines.append(f"  [yellow]w:[/yellow] List workspace files ({len(workspace_files)} files)")
+            menu_lines.append(
+                f"  [yellow]w:[/yellow] List workspace files ({len(workspace_files)} files)",
+            )
             menu_lines.append("  [yellow]o:[/yellow] Open workspace in file browser")
 
         # Quit (q)
@@ -3638,8 +4456,8 @@ def _show_turn_inspection(
                             agent_id,
                             f"{tu.get('input_tokens', 0):,}",
                             f"{tu.get('output_tokens', 0):,}",
-                            f"{tu.get('reasoning_tokens', 0):,}" if tu.get("reasoning_tokens", 0) > 0 else "-",
-                            f"{tu.get('cached_input_tokens', 0):,}" if tu.get("cached_input_tokens", 0) > 0 else "-",
+                            (f"{tu.get('reasoning_tokens', 0):,}" if tu.get("reasoning_tokens", 0) > 0 else "-"),
+                            (f"{tu.get('cached_input_tokens', 0):,}" if tu.get("cached_input_tokens", 0) > 0 else "-"),
                             cost_str,
                         )
 
@@ -3724,7 +4542,7 @@ def print_help_messages():
 
 
 async def run_interactive_mode(
-    agents: Dict[str, SingleAgent],
+    agents: Optional[Dict[str, SingleAgent]],
     ui_config: Dict[str, Any],
     original_config: Dict[str, Any] = None,
     orchestrator_cfg: Dict[str, Any] = None,
@@ -3733,12 +4551,21 @@ async def run_interactive_mode(
     initial_question: Optional[str] = None,
     restore_session_if_exists: bool = False,
     debug: bool = False,
+    raw_config_for_metadata: Dict[str, Any] = None,
+    # Parameters for deferred agent creation
+    enable_rate_limit: bool = True,
+    session_storage_base: Optional[str] = None,
     **kwargs,
 ):
     """Run MassGen in interactive mode with conversation history.
 
     Args:
+        agents: Dict of agents. If None, agents will be created after first prompt
+            (allows @path references in first prompt to be included in Docker mounts).
         initial_question: Optional first question to auto-submit when entering interactive mode
+        raw_config_for_metadata: Raw config (unexpanded env vars) for safe logging to metadata files
+        enable_rate_limit: Whether to enable rate limiting for agent creation
+        session_storage_base: Base directory for session storage (for Docker mounts)
     """
 
     # Use Rich console for better display
@@ -3779,36 +4606,53 @@ async def run_interactive_mode(
     config_table.add_column("Label", style="bold cyan", no_wrap=True)
     config_table.add_column("Value", style="white")
 
-    # Determine mode
+    # Determine mode (agents may be None if deferred creation)
     ui_config.get("use_orchestrator_for_single_agent", True)
-    if len(agents) == 1:
+    if agents is None:
+        # Deferred agent creation - show config-based info
+        agent_configs = original_config.get("agents", [])
+        if not agent_configs and "agent" in original_config:
+            agent_configs = [original_config["agent"]]
+        num_agents = len(agent_configs)
+        if num_agents == 1:
+            mode = "Single Agent"
+            mode_icon = "🤖"
+        else:
+            mode = f"Multi-Agent ({num_agents} agents)"
+            mode_icon = "🤝"
+        config_table.add_row(f"{mode_icon} Mode:", f"[bold]{mode}[/bold]")
+        config_table.add_row("  └─ Status:", "[dim]Agents will be created after first prompt[/dim]")
+    elif len(agents) == 1:
         mode = "Single Agent"
         mode_icon = "🤖"
+        config_table.add_row(f"{mode_icon} Mode:", f"[bold]{mode}[/bold]")
+        # Add agents info
+        for agent_id, agent in agents.items():
+            model = agent.config.backend_params.get("model", "unknown")
+            backend_name = agent.backend.__class__.__name__.replace("Backend", "")
+            display = f"{model} [dim]({backend_name})[/dim]"
+            config_table.add_row(f"  ├─ {agent_id}:", display)
     else:
         mode = f"Multi-Agent ({len(agents)} agents)"
         mode_icon = "🤝"
-
-    config_table.add_row(f"{mode_icon} Mode:", f"[bold]{mode}[/bold]")
-
-    # Add agents info
-    if len(agents) <= 3:
-        # Show all agents if 3 or fewer
-        for agent_id, agent in agents.items():
-            # Get model name from config
-            model = agent.config.backend_params.get("model", "unknown")
-            backend_name = agent.backend.__class__.__name__.replace("Backend", "")
-            # Show model with backend in parentheses
-            display = f"{model} [dim]({backend_name})[/dim]"
-            config_table.add_row(f"  ├─ {agent_id}:", display)
-    else:
-        # Show count and first 2 agents
-        agent_list = list(agents.items())
-        for i, (agent_id, agent) in enumerate(agent_list[:2]):
-            model = agent.config.backend_params.get("model", "unknown")
-            backend_name = agent.backend.__class__.__name__.replace("Backend", "")
-            display = f"{model} [dim]({backend_name})[/dim]"
-            config_table.add_row(f"  ├─ {agent_id}:", display)
-        config_table.add_row("  └─ ...", f"[dim]and {len(agents) - 2} more[/dim]")
+        config_table.add_row(f"{mode_icon} Mode:", f"[bold]{mode}[/bold]")
+        # Add agents info
+        if len(agents) <= 3:
+            # Show all agents if 3 or fewer
+            for agent_id, agent in agents.items():
+                model = agent.config.backend_params.get("model", "unknown")
+                backend_name = agent.backend.__class__.__name__.replace("Backend", "")
+                display = f"{model} [dim]({backend_name})[/dim]"
+                config_table.add_row(f"  ├─ {agent_id}:", display)
+        else:
+            # Show count and first 2 agents
+            agent_list = list(agents.items())
+            for i, (agent_id, agent) in enumerate(agent_list[:2]):
+                model = agent.config.backend_params.get("model", "unknown")
+                backend_name = agent.backend.__class__.__name__.replace("Backend", "")
+                display = f"{model} [dim]({backend_name})[/dim]"
+                config_table.add_row(f"  ├─ {agent_id}:", display)
+            config_table.add_row("  └─ ...", f"[dim]and {len(agents) - 2} more[/dim]")
 
     # Create main panel with configuration
     config_panel = Panel(
@@ -3861,12 +4705,21 @@ async def run_interactive_mode(
             # Notify user about incomplete turn if present
             if session_state.incomplete_turn:
                 incomplete = session_state.incomplete_turn
-                print(f"\n{BRIGHT_YELLOW}⚠️  Previous turn was incomplete (cancelled during {incomplete.get('phase', 'unknown')} phase){RESET}", flush=True)
+                print(
+                    f"\n{BRIGHT_YELLOW}⚠️  Previous turn was incomplete (cancelled during {incomplete.get('phase', 'unknown')} phase){RESET}",
+                    flush=True,
+                )
                 print(f"   Task: {incomplete.get('task', 'N/A')}", flush=True)
                 if incomplete.get("agents_with_answers"):
-                    print(f"   Partial answers saved from: {', '.join(incomplete['agents_with_answers'])}", flush=True)
+                    print(
+                        f"   Partial answers saved from: {', '.join(incomplete['agents_with_answers'])}",
+                        flush=True,
+                    )
                 if session_state.incomplete_turn_workspaces:
-                    print(f"   Workspaces available: {', '.join(session_state.incomplete_turn_workspaces.keys())}", flush=True)
+                    print(
+                        f"   Workspaces available: {', '.join(session_state.incomplete_turn_workspaces.keys())}",
+                        flush=True,
+                    )
                 print("", flush=True)
 
             # Store incomplete turn workspaces for context path injection
@@ -3908,7 +4761,9 @@ async def run_interactive_mode(
                                         "description": f"Incomplete turn {current_turn} - {ws_agent_id}'s workspace",
                                     },
                                 )
-                        logger.info(f"[CLI] Adding {len(context_workspaces_to_add)} workspace(s) from incomplete turn as context")
+                        logger.info(
+                            f"[CLI] Adding {len(context_workspaces_to_add)} workspace(s) from incomplete turn as context",
+                        )
                         # Clear after use (only needed for first turn after resume)
                         incomplete_turn_workspaces = {}
                     elif latest_turn_workspace.exists():
@@ -3920,7 +4775,7 @@ async def run_interactive_mode(
                             },
                         )
 
-                    if context_workspaces_to_add:
+                    if context_workspaces_to_add and agents is not None:
                         # Check if any agents have session pre-mount enabled
                         # Session pre-mount allows us to skip container recreation
                         agents_with_session_mount = [
@@ -3942,7 +4797,9 @@ async def run_interactive_mode(
                         if agents_with_session_mount and persist_containers:
                             # Session dir is pre-mounted - just update permission manager
                             # No need to restart Docker containers!
-                            logger.info(f"[CLI] Session pre-mounted: adding {len(context_workspaces_to_add)} turn path(s) without container restart")
+                            logger.info(
+                                f"[CLI] Session pre-mounted: adding {len(context_workspaces_to_add)} turn path(s) without container restart",
+                            )
 
                             for agent_id, agent in agents.items():
                                 if hasattr(agent, "backend") and hasattr(agent.backend, "filesystem_manager") and agent.backend.filesystem_manager:
@@ -3951,10 +4808,14 @@ async def run_interactive_mode(
                                             Path(ctx_ws["path"]),
                                         )
 
-                            logger.info(f"[CLI] Turn {current_turn} context paths registered (containers kept alive)")
+                            logger.info(
+                                f"[CLI] Turn {current_turn} context paths registered (containers kept alive)",
+                            )
                         else:
                             # Fall back to original behavior: cleanup and recreate agents
-                            logger.info(f"[CLI] Recreating agents with turn {current_turn} workspace(s) as read-only context path(s)")
+                            logger.info(
+                                f"[CLI] Recreating agents with turn {current_turn} workspace(s) as read-only context path(s)",
+                            )
 
                             # Check if any agents have Docker containers to clean up
                             agents_with_docker = [
@@ -3963,7 +4824,10 @@ async def run_interactive_mode(
                                 if hasattr(agent, "backend")
                                 and hasattr(agent.backend, "filesystem_manager")
                                 and agent.backend.filesystem_manager
-                                and hasattr(agent.backend.filesystem_manager, "docker_manager")
+                                and hasattr(
+                                    agent.backend.filesystem_manager,
+                                    "docker_manager",
+                                )
                                 and agent.backend.filesystem_manager.docker_manager
                             ]
 
@@ -3976,7 +4840,10 @@ async def run_interactive_mode(
 
                                 from rich.status import Status
 
-                                def cleanup_agent_fs(agent_id: str, agent) -> tuple[str, Optional[Exception]]:
+                                def cleanup_agent_fs(
+                                    agent_id: str,
+                                    agent,
+                                ) -> tuple[str, Optional[Exception]]:
                                     """Cleanup a single agent's filesystem manager (Docker container)."""
                                     try:
                                         agent.backend.filesystem_manager.cleanup()
@@ -3985,13 +4852,27 @@ async def run_interactive_mode(
                                         return (agent_id, e)
 
                                 # Parallel Docker cleanup with spinner
-                                with Status(f"[bold cyan]Preparing next turn ({len(agents_with_docker)} container(s))...", spinner="dots"):
-                                    with ThreadPoolExecutor(max_workers=len(agents_with_docker)) as executor:
-                                        futures = {executor.submit(cleanup_agent_fs, agent_id, agent): agent_id for agent_id, agent in agents_with_docker}
+                                with Status(
+                                    f"[bold cyan]Preparing next turn ({len(agents_with_docker)} container(s))...",
+                                    spinner="dots",
+                                ):
+                                    with ThreadPoolExecutor(
+                                        max_workers=len(agents_with_docker),
+                                    ) as executor:
+                                        futures = {
+                                            executor.submit(
+                                                cleanup_agent_fs,
+                                                agent_id,
+                                                agent,
+                                            ): agent_id
+                                            for agent_id, agent in agents_with_docker
+                                        }
                                         for future in as_completed(futures):
                                             agent_id, error = future.result()
                                             if error:
-                                                logger.warning(f"[CLI] Cleanup failed for agent {agent_id}: {error}")
+                                                logger.warning(
+                                                    f"[CLI] Cleanup failed for agent {agent_id}: {error}",
+                                                )
 
                                 # Cleanup backends (must be sequential/async)
                                 for agent_id, agent in agents.items():
@@ -4000,12 +4881,17 @@ async def run_interactive_mode(
                             else:
                                 # No Docker - quick cleanup without spinner
                                 for agent_id, agent in agents.items():
-                                    if hasattr(agent, "backend") and hasattr(agent.backend, "filesystem_manager"):
+                                    if hasattr(agent, "backend") and hasattr(
+                                        agent.backend,
+                                        "filesystem_manager",
+                                    ):
                                         if agent.backend.filesystem_manager:
                                             try:
                                                 agent.backend.filesystem_manager.cleanup()
                                             except Exception as e:
-                                                logger.warning(f"[CLI] Cleanup failed for agent {agent_id}: {e}")
+                                                logger.warning(
+                                                    f"[CLI] Cleanup failed for agent {agent_id}: {e}",
+                                                )
 
                                     if hasattr(agent.backend, "__aexit__"):
                                         await agent.backend.__aexit__(None, None, None)
@@ -4017,7 +4903,10 @@ async def run_interactive_mode(
                             for agent_data in agent_entries:
                                 backend_config = agent_data.get("backend", {})
                                 if "cwd" in backend_config:  # Only inject if agent has filesystem support
-                                    existing_context_paths = backend_config.get("context_paths", [])
+                                    existing_context_paths = backend_config.get(
+                                        "context_paths",
+                                        [],
+                                    )
                                     backend_config["context_paths"] = existing_context_paths + context_workspaces_to_add
 
                             # Recreate agents from modified config (use same session)
@@ -4033,7 +4922,9 @@ async def run_interactive_mode(
                                 filesystem_session_id=session_id,
                                 session_storage_base=SESSION_STORAGE,
                             )
-                            logger.info(f"[CLI] Successfully recreated {len(agents)} agents with turn {current_turn} workspace(s) as read-only context")
+                            logger.info(
+                                f"[CLI] Successfully recreated {len(agents)} agents with turn {current_turn} workspace(s) as read-only context",
+                            )
 
                 # Use initial_question for first turn if provided, otherwise prompt
                 if initial_question and current_turn == 0:
@@ -4041,7 +4932,12 @@ async def run_interactive_mode(
                     rich_console.print(f"\n[bold blue]👤 User:[/bold blue] {question}")
                     initial_question = None  # Clear so we prompt on subsequent turns
                 else:
-                    question = read_multiline_input(f"\n{BRIGHT_BLUE}👤 User:{RESET} ")
+                    # Use async version since we're in an async context
+                    # Pass ANSI-formatted prompt to prompt_toolkit
+                    question = await read_multiline_input_async(
+                        f"\n{BRIGHT_BLUE}👤 User:{RESET} ",
+                        use_ansi_prompt=True,
+                    )
 
                 # Handle slash commands
                 if question.startswith("/"):
@@ -4052,16 +4948,20 @@ async def run_interactive_mode(
                         break
                     elif command in ["/reset", "/clear"]:
                         conversation_history = []
-                        # Reset all agents
-                        for agent in agents.values():
-                            agent.reset()
+                        # Reset all agents (if they've been created)
+                        if agents is not None:
+                            for agent in agents.values():
+                                agent.reset()
                         print(
                             f"{BRIGHT_YELLOW}🔄 Conversation history cleared!{RESET}",
                             flush=True,
                         )
                         continue
                     elif command in ["/help", "/h"]:
-                        print(f"\n{BRIGHT_CYAN}📚 Available Commands:{RESET}", flush=True)
+                        print(
+                            f"\n{BRIGHT_CYAN}📚 Available Commands:{RESET}",
+                            flush=True,
+                        )
                         print("   /quit, /exit, /q     - Exit the program", flush=True)
                         print(
                             "   /reset, /clear       - Clear conversation history",
@@ -4071,32 +4971,78 @@ async def run_interactive_mode(
                             "   /help, /h            - Show this help message",
                             flush=True,
                         )
-                        print("   /status              - Show current status", flush=True)
-                        print("   /config              - Open config file in editor", flush=True)
-                        print("   /context             - Add/modify context paths for file access", flush=True)
-                        print("   /inspect, /i         - View agent outputs", flush=True)
-                        print("     /inspect           - Current turn outputs", flush=True)
-                        print("     /inspect <N>       - View turn N outputs", flush=True)
-                        print("     /inspect all       - List all session turns", flush=True)
+                        print(
+                            "   /status              - Show current status",
+                            flush=True,
+                        )
+                        print(
+                            "   /config              - Open config file in editor",
+                            flush=True,
+                        )
+                        print(
+                            "   /context             - Add/modify context paths for file access",
+                            flush=True,
+                        )
+                        print(
+                            "   /inspect, /i         - View agent outputs",
+                            flush=True,
+                        )
+                        print(
+                            "     /inspect           - Current turn outputs",
+                            flush=True,
+                        )
+                        print(
+                            "     /inspect <N>       - View turn N outputs",
+                            flush=True,
+                        )
+                        print(
+                            "     /inspect all       - List all session turns",
+                            flush=True,
+                        )
                         print(f"\n{BRIGHT_CYAN}💡 Multi-line Input:{RESET}", flush=True)
-                        print("   Start with \"\"\" or ''' and end with the same delimiter", flush=True)
+                        print(
+                            "   Start with \"\"\" or ''' and end with the same delimiter",
+                            flush=True,
+                        )
                         print('   Example: """', flush=True)
                         print("            Your multi-line", flush=True)
                         print("            input here", flush=True)
                         print('            """', flush=True)
+                        print(f"\n{BRIGHT_CYAN}📂 @Path Syntax:{RESET}", flush=True)
+                        print(
+                            "   Use @path to include files as context:",
+                            flush=True,
+                        )
+                        print("   @path/to/file     - Read-only access", flush=True)
+                        print("   @path/to/file:w   - Write access", flush=True)
+                        print("   @path/to/dir/     - Directory access", flush=True)
                         continue
                     elif command == "/status":
                         print(f"\n{BRIGHT_CYAN}📊 Current Status:{RESET}", flush=True)
-                        print(
-                            f"   Agents: {len(agents)} ({', '.join(agents.keys())})",
-                            flush=True,
-                        )
-                        use_orch_single = ui_config.get("use_orchestrator_for_single_agent", True)
-                        if len(agents) == 1:
-                            mode_display = "Single Agent (Orchestrator)" if use_orch_single else "Single Agent (Direct)"
+                        if agents is not None:
+                            print(
+                                f"   Agents: {len(agents)} ({', '.join(agents.keys())})",
+                                flush=True,
+                            )
+                            use_orch_single = ui_config.get(
+                                "use_orchestrator_for_single_agent",
+                                True,
+                            )
+                            if len(agents) == 1:
+                                mode_display = "Single Agent (Orchestrator)" if use_orch_single else "Single Agent (Direct)"
+                            else:
+                                mode_display = "Multi-Agent"
+                            print(f"   Mode: {mode_display}", flush=True)
                         else:
-                            mode_display = "Multi-Agent"
-                        print(f"   Mode: {mode_display}", flush=True)
+                            # Agents not yet created (deferred creation)
+                            agent_configs = original_config.get("agents", [])
+                            if not agent_configs and "agent" in original_config:
+                                agent_configs = [original_config["agent"]]
+                            print(
+                                f"   Agents: {len(agent_configs)} (pending creation after first prompt)",
+                                flush=True,
+                            )
+                            print("   Mode: Deferred creation", flush=True)
                         print(
                             f"   History: {len(conversation_history)//2} exchanges",
                             flush=True,
@@ -4117,12 +5063,21 @@ async def run_interactive_mode(
                                     subprocess.run(["start", config_path], shell=True)
                                 else:  # Linux and others
                                     subprocess.run(["xdg-open", config_path])
-                                print(f"\n📝 Opening config file: {config_path}", flush=True)
+                                print(
+                                    f"\n📝 Opening config file: {config_path}",
+                                    flush=True,
+                                )
                             except Exception as e:
-                                print(f"\n❌ Error opening config file: {e}", flush=True)
+                                print(
+                                    f"\n❌ Error opening config file: {e}",
+                                    flush=True,
+                                )
                                 print(f"   Config location: {config_path}", flush=True)
                         else:
-                            print("\n❌ No config file available (using CLI arguments)", flush=True)
+                            print(
+                                "\n❌ No config file available (using CLI arguments)",
+                                flush=True,
+                            )
                         continue
                     elif command == "/inspect" or command.startswith("/inspect ") or command == "/i":
                         # Parse: /inspect, /inspect <N>, /inspect all
@@ -4140,25 +5095,40 @@ async def run_interactive_mode(
                             try:
                                 target_turn = int(parts[1])
                                 if target_turn < 1 or target_turn > current_turn:
-                                    print(f"{BRIGHT_RED}Turn {target_turn} not found. Available: 1-{current_turn}{RESET}", flush=True)
+                                    print(
+                                        f"{BRIGHT_RED}Turn {target_turn} not found. Available: 1-{current_turn}{RESET}",
+                                        flush=True,
+                                    )
                                     continue
                             except ValueError:
-                                print(f"{BRIGHT_RED}Invalid turn number. Usage: /inspect [turn_number|all]{RESET}", flush=True)
+                                print(
+                                    f"{BRIGHT_RED}Invalid turn number. Usage: /inspect [turn_number|all]{RESET}",
+                                    flush=True,
+                                )
                                 continue
 
                         # Show inspection for target turn
                         if target_turn == 0:
-                            print(f"{BRIGHT_YELLOW}No turns completed yet. Complete a turn first.{RESET}", flush=True)
+                            print(
+                                f"{BRIGHT_YELLOW}No turns completed yet. Complete a turn first.{RESET}",
+                                flush=True,
+                            )
                         else:
                             _show_turn_inspection(session_id, target_turn, agents)
                         continue
                     elif command == "/context":
                         # Add/modify context paths interactively
                         if original_config and orchestrator_cfg:
-                            config_modified = prompt_for_context_paths(original_config, orchestrator_cfg)
+                            config_modified = prompt_for_context_paths(
+                                original_config,
+                                orchestrator_cfg,
+                            )
                             if config_modified:
                                 # Recreate agents with updated context paths
-                                enable_rate_limit = kwargs.get("enable_rate_limit", False)
+                                enable_rate_limit = kwargs.get(
+                                    "enable_rate_limit",
+                                    False,
+                                )
                                 agents = create_agents_from_config(
                                     original_config,
                                     orchestrator_cfg,
@@ -4167,9 +5137,15 @@ async def run_interactive_mode(
                                     config_path=config_path,
                                     memory_session_id=session_id,
                                 )
-                                print(f"   {BRIGHT_GREEN}✓ Agents reloaded with updated context paths{RESET}", flush=True)
+                                print(
+                                    f"   {BRIGHT_GREEN}✓ Agents reloaded with updated context paths{RESET}",
+                                    flush=True,
+                                )
                         else:
-                            print(f"{BRIGHT_YELLOW}Context paths require a config file with orchestrator settings.{RESET}", flush=True)
+                            print(
+                                f"{BRIGHT_YELLOW}Context paths require a config file with orchestrator settings.{RESET}",
+                                flush=True,
+                            )
                         continue
                     else:
                         print(f"❓ Unknown command: {command}", flush=True)
@@ -4183,8 +5159,9 @@ async def run_interactive_mode(
 
                 if question.lower() in ["reset", "clear"]:
                     conversation_history = []
-                    for agent in agents.values():
-                        agent.reset()
+                    if agents:
+                        for agent in agents.values():
+                            agent.reset()
                     print(f"{BRIGHT_YELLOW}🔄 Conversation history cleared!{RESET}")
                     continue
 
@@ -4193,6 +5170,98 @@ async def run_interactive_mode(
                         "Please enter a question or type /help for commands.",
                         flush=True,
                     )
+                    continue
+
+                # Parse @references from question and inject as context paths
+                from .path_handling import PromptParserError, parse_prompt_for_context
+
+                new_paths = []  # Track new paths for later use
+                try:
+                    parsed = parse_prompt_for_context(question)
+                    if parsed.context_paths:
+                        # Display extracted paths
+                        print(f"\n{BRIGHT_CYAN}📂 Context paths from prompt:{RESET}")
+                        for ctx in parsed.context_paths:
+                            perm_icon = "📝" if ctx["permission"] == "write" else "📖"
+                            print(f"   {perm_icon} {ctx['path']} ({ctx['permission']})")
+                        for suggestion in parsed.suggestions:
+                            print(f"   {BRIGHT_YELLOW}💡 {suggestion}{RESET}")
+
+                        # Use cleaned question
+                        question = parsed.cleaned_prompt
+
+                        # Check for new paths that need agent recreation
+                        existing_paths = set()
+                        if orchestrator_cfg:
+                            for p in orchestrator_cfg.get("context_paths", []):
+                                if isinstance(p, dict):
+                                    existing_paths.add(p.get("path"))
+                                else:
+                                    existing_paths.add(p)
+
+                        new_paths = [ctx for ctx in parsed.context_paths if ctx["path"] not in existing_paths]
+
+                        if new_paths:
+                            # Update original_config with new paths
+                            if "orchestrator" not in original_config:
+                                original_config["orchestrator"] = {}
+                            if "context_paths" not in original_config["orchestrator"]:
+                                original_config["orchestrator"]["context_paths"] = []
+
+                            for ctx in new_paths:
+                                original_config["orchestrator"]["context_paths"].append(ctx)
+                                existing_paths.add(ctx["path"])
+
+                            # Update orchestrator_cfg reference
+                            orchestrator_cfg = original_config.get("orchestrator", {})
+
+                    # If agents haven't been created yet (deferred creation), create them now
+                    if agents is None:
+                        print(f"{BRIGHT_YELLOW}🚀 Creating agents...{RESET}")
+                        agents = create_agents_from_config(
+                            original_config,
+                            orchestrator_cfg,
+                            enable_rate_limit=enable_rate_limit,
+                            config_path=config_path,
+                            memory_session_id=memory_session_id,
+                            debug=debug,
+                            filesystem_session_id=memory_session_id,
+                            session_storage_base=session_storage_base or SESSION_STORAGE,
+                        )
+                        if not agents:
+                            print(f"{BRIGHT_RED}❌ Failed to create agents{RESET}", flush=True)
+                            continue
+                        print(f"{BRIGHT_GREEN}✅ Agents ready{RESET}")
+                    elif new_paths:
+                        # Agents exist but we have new paths - need to recreate
+                        print(f"   {BRIGHT_YELLOW}🔄 Updating agents with new context paths...{RESET}")
+
+                        # Clean up existing agents before recreating to avoid resource leaks
+                        for agent_id, agent in agents.items():
+                            if hasattr(agent, "backend"):
+                                if hasattr(agent.backend, "filesystem_manager") and agent.backend.filesystem_manager:
+                                    try:
+                                        agent.backend.filesystem_manager.cleanup()
+                                    except Exception as e:
+                                        logger.warning(f"[CLI] Cleanup failed for agent {agent_id}: {e}")
+                                if hasattr(agent.backend, "__aexit__"):
+                                    await agent.backend.__aexit__(None, None, None)
+
+                        agents = create_agents_from_config(
+                            original_config,
+                            orchestrator_cfg,
+                            enable_rate_limit=enable_rate_limit,
+                            config_path=config_path,
+                            memory_session_id=memory_session_id,
+                            debug=debug,
+                            filesystem_session_id=memory_session_id,
+                            session_storage_base=session_storage_base or SESSION_STORAGE,
+                        )
+                        print(f"   {BRIGHT_GREEN}✅ Agents updated with new context paths{RESET}")
+                    if parsed.context_paths:
+                        print()  # Add spacing after context path info
+                except PromptParserError as e:
+                    print(f"\n{BRIGHT_RED}❌ {e}{RESET}", flush=True)
                     continue
 
                 print(f"\n🔄 {BRIGHT_YELLOW}Processing...{RESET}", flush=True)
@@ -4208,12 +5277,16 @@ async def run_interactive_mode(
                 setup_logging(debug=_DEBUG_MODE, turn=next_turn)
                 logger.info(f"Starting turn {next_turn}")
 
-                # Save execution metadata for this turn (original_config already has pre-relocation paths)
+                # Save execution metadata for this turn (use raw config to avoid logging secrets)
                 save_execution_metadata(
                     query=question,
                     config_path=config_path,
-                    config_content=original_config,  # This is the pre-relocation config passed from main()
-                    cli_args={"mode": "interactive", "turn": next_turn, "session_id": session_id},
+                    config_content=raw_config_for_metadata or original_config,
+                    cli_args={
+                        "mode": "interactive",
+                        "turn": next_turn,
+                        "session_id": session_id,
+                    },
                 )
 
                 # Pass session state for multi-turn filesystem support
@@ -4240,7 +5313,9 @@ async def run_interactive_mode(
                 if response:
                     # Add to conversation history
                     conversation_history.append({"role": "user", "content": question})
-                    conversation_history.append({"role": "assistant", "content": response})
+                    conversation_history.append(
+                        {"role": "assistant", "content": response},
+                    )
 
                     # Display the final answer in chat style
                     rich_console.print()
@@ -4256,20 +5331,31 @@ async def run_interactive_mode(
                     rich_console.print(
                         f"\n[green]✅ Complete![/green] [cyan]💭 History: {len(conversation_history)//2} exchanges[/cyan]",
                     )
-                    rich_console.print("[dim]Tip: Use /inspect to view agent outputs[/dim]")
+                    rich_console.print(
+                        "[dim]Tip: Use /inspect to view agent outputs[/dim]",
+                    )
 
                 elif was_cancelled:
                     # Turn was cancelled by user - add cancelled turn to conversation history
                     # so agents have context about what happened
                     if response:
-                        conversation_history.append({"role": "user", "content": question})
-                        conversation_history.append({"role": "assistant", "content": response})
-                        logger.info(f"Added cancelled turn to conversation history (phase: {response[:50]}...)")
+                        conversation_history.append(
+                            {"role": "user", "content": question},
+                        )
+                        conversation_history.append(
+                            {"role": "assistant", "content": response},
+                        )
+                        logger.info(
+                            f"Added cancelled turn to conversation history (phase: {response[:50]}...)",
+                        )
 
                     # Ensure terminal is restored to a good state for next input
                     _restore_terminal_for_input()
                     # Just continue to next prompt (don't print "No response generated")
-                    print(f"{BRIGHT_CYAN}Enter your next question or /quit to exit.{RESET}", flush=True)
+                    print(
+                        f"{BRIGHT_CYAN}Enter your next question or /quit to exit.{RESET}",
+                        flush=True,
+                    )
 
                 else:
                     print(f"\n{BRIGHT_RED}❌ No response generated{RESET}", flush=True)
@@ -4292,9 +5378,19 @@ async def main(args):
     # Setup logging (only for actual agent runs, not special commands)
     setup_logging(debug=args.debug)
 
+    # Configure Logfire observability if requested
+    if getattr(args, "logfire", False):
+        _setup_logfire_observability()
+
     if args.debug:
         logger.info("Debug mode enabled")
         logger.debug(f"Command line arguments: {vars(args)}")
+
+    # Initialize streaming buffer saving if requested
+    if args.save_streaming_buffers:
+        from .backend._streaming_buffer_mixin import set_save_streaming_buffers
+
+        set_save_streaming_buffers(True)
 
     # Check if bare `massgen` with no args - use default config if it exists
     if not args.backend and not args.model and not args.config:
@@ -4307,8 +5403,14 @@ async def main(args):
             # No default config - this will be handled by wizard trigger in cli_main()
             if args.question:
                 # User provided a question but no config exists - this is an error
-                print("❌ Configuration error: No default configuration found.", flush=True)
-                print("Run 'massgen --init' to create one, or use 'massgen --model MODEL \"question\"'", flush=True)
+                print(
+                    "❌ Configuration error: No default configuration found.",
+                    flush=True,
+                )
+                print(
+                    "Run 'massgen --init' to create one, or use 'massgen --model MODEL \"question\"'",
+                    flush=True,
+                )
                 sys.exit(EXIT_CONFIG_ERROR)
             # No question and no config - wizard will be triggered in cli_main()
             return
@@ -4324,12 +5426,18 @@ async def main(args):
             session_config_path = session_metadata.get("config_path")
             if session_config_path:
                 args.config = session_config_path
-                print(f"   Using config from session: {Path(session_config_path).name}", flush=True)
+                print(
+                    f"   Using config from session: {Path(session_config_path).name}",
+                    flush=True,
+                )
 
     # Validate arguments (only if we didn't auto-set config above)
     if not args.backend:
         if not args.model and not args.config:
-            print("❌ Configuration error: Either --config, --model, or --backend must be specified", flush=True)
+            print(
+                "❌ Configuration error: Either --config, --model, or --backend must be specified",
+                flush=True,
+            )
             sys.exit(EXIT_CONFIG_ERROR)
 
     # Track config path for error messages
@@ -4343,7 +5451,7 @@ async def main(args):
             if resolved_path is None:
                 # This shouldn't happen if we reached here, but handle it
                 raise ConfigurationError("Could not resolve config path")
-            config = load_config_file(str(resolved_path))
+            config, raw_config_for_metadata = load_config_file(str(resolved_path))
             if args.debug:
                 logger.debug(f"Resolved config path: {resolved_path}")
                 logger.debug(f"Config content: {json.dumps(config, indent=2)}")
@@ -4351,15 +5459,26 @@ async def main(args):
             # Check if this is a computer use docker example - setup required
             config_filename = resolved_path.name if resolved_path else ""
             if "computer_use_docker_example" in config_filename:
-                print(f"\n{BRIGHT_CYAN}🖥️  Computer Use Docker Configuration Detected{RESET}")
-                print(f"{BRIGHT_YELLOW}This configuration requires a special Docker container for GUI automation.{RESET}\n")
+                print(
+                    f"\n{BRIGHT_CYAN}🖥️  Computer Use Docker Configuration Detected{RESET}",
+                )
+                print(
+                    f"{BRIGHT_YELLOW}This configuration requires a special Docker container for GUI automation.{RESET}\n",
+                )
 
                 # Check if container exists and is running
                 import subprocess
 
                 try:
                     result = subprocess.run(
-                        ["docker", "ps", "--filter", "name=cua-container", "--format", "{{.Names}}"],
+                        [
+                            "docker",
+                            "ps",
+                            "--filter",
+                            "name=cua-container",
+                            "--format",
+                            "{{.Names}}",
+                        ],
                         capture_output=True,
                         text=True,
                         timeout=10,
@@ -4369,16 +5488,26 @@ async def main(args):
                     container_running = False
 
                 if not container_running:
-                    print(f"{BRIGHT_YELLOW}⚠️  Computer Use Docker container not found or not running{RESET}")
+                    print(
+                        f"{BRIGHT_YELLOW}⚠️  Computer Use Docker container not found or not running{RESET}",
+                    )
                     print(f"{BRIGHT_CYAN}Starting automatic setup...{RESET}\n")
 
                     if not setup_computer_use_docker():
-                        print(f"\n{BRIGHT_RED}❌ Failed to setup Computer Use Docker container{RESET}")
-                        print(f"{BRIGHT_YELLOW}Computer use features will not work without this container.{RESET}")
-                        print(f"{BRIGHT_YELLOW}You can try manual setup with: scripts/setup_docker_cua.sh{RESET}\n")
+                        print(
+                            f"\n{BRIGHT_RED}❌ Failed to setup Computer Use Docker container{RESET}",
+                        )
+                        print(
+                            f"{BRIGHT_YELLOW}Computer use features will not work without this container.{RESET}",
+                        )
+                        print(
+                            f"{BRIGHT_YELLOW}You can try manual setup with: scripts/setup_docker_cua.sh{RESET}\n",
+                        )
                         sys.exit(EXIT_CONFIG_ERROR)
                 else:
-                    print(f"{BRIGHT_GREEN}✓ Computer Use Docker container is ready{RESET}\n")
+                    print(
+                        f"{BRIGHT_GREEN}✓ Computer Use Docker container is ready{RESET}\n",
+                    )
 
             # Automatic config validation (unless --skip-validation flag is set)
             if not args.skip_validation:
@@ -4390,14 +5519,18 @@ async def main(args):
                 # Show errors if any
                 if validation_result.has_errors():
                     print(validation_result.format_errors(), file=sys.stderr)
-                    print(f"\n{BRIGHT_RED}❌ Config validation failed. Fix errors above or use --skip-validation to bypass.{RESET}\n")
+                    print(
+                        f"\n{BRIGHT_RED}❌ Config validation failed. Fix errors above or use --skip-validation to bypass.{RESET}\n",
+                    )
                     sys.exit(EXIT_CONFIG_ERROR)
 
                 # Show warnings (non-blocking unless --strict-validation)
                 if validation_result.has_warnings():
                     print(validation_result.format_warnings())
                     if args.strict_validation:
-                        print(f"\n{BRIGHT_RED}❌ Config validation failed in strict mode (warnings treated as errors).{RESET}\n")
+                        print(
+                            f"\n{BRIGHT_RED}❌ Config validation failed in strict mode (warnings treated as errors).{RESET}\n",
+                        )
                         sys.exit(EXIT_CONFIG_ERROR)
                     print()  # Extra newline for readability
         else:
@@ -4416,12 +5549,13 @@ async def main(args):
                 system_message=system_message,
                 base_url=args.base_url,
             )
+            # For simple configs, there's no env var expansion, so raw = config
+            raw_config_for_metadata = copy.deepcopy(config)
             if args.debug:
-                logger.debug(f"Created simple config with backend: {backend}, model: {model}")
+                logger.debug(
+                    f"Created simple config with backend: {backend}, model: {model}",
+                )
                 logger.debug(f"Config content: {json.dumps(config, indent=2)}")
-
-        # Save original config before relocation (for execution_metadata.yaml)
-        original_config_for_metadata = copy.deepcopy(config)
 
         # Validate that all context paths exist before proceeding
         validate_context_paths(config)
@@ -4447,7 +5581,9 @@ async def main(args):
                 # Append unique suffix to workspace path
                 # e.g., ".massgen/workspaces/workspace1" -> ".massgen/workspaces/workspace1_a1b2c3d4"
                 backend_config["cwd"] = f"{original_cwd}_{instance_id}"
-                logger.debug(f"Auto-generated unique workspace: {original_cwd} -> {backend_config['cwd']}")
+                logger.debug(
+                    f"Auto-generated unique workspace: {original_cwd} -> {backend_config['cwd']}",
+                )
 
         # Apply command-line overrides
         ui_config = config.get("ui", {})
@@ -4571,31 +5707,54 @@ async def main(args):
                 print(f"LOG_DIR: {log_dir}")
                 print(f"STATUS: {full_log_dir / 'status.json'}")
 
-            registry = SessionRegistry()
-            registry.register_session(
-                session_id=memory_session_id,
+            # Only register in global session registry if not suppressed (e.g., subagent runs)
+            if not getattr(args, "no_session_registry", False):
+                registry = SessionRegistry()
+                registry.register_session(
+                    session_id=memory_session_id,
+                    config_path=str(resolved_path) if resolved_path else None,
+                    model=model_name,
+                    log_directory=log_dir_name,
+                )
+                logger.info(
+                    f"📝 Registered new session in registry: {memory_session_id}",
+                )
+            else:
+                logger.debug(
+                    f"📝 Skipping session registry (--no-session-registry): {memory_session_id}",
+                )
+
+        # Parse @references from prompt BEFORE creating agents
+        # This allows context_paths to be set up before FilesystemManager initialization
+        if args.question:
+            args.question, config = inject_prompt_context_paths(args.question, config)
+            # Update orchestrator_cfg with any new context_paths
+            orchestrator_cfg = config.get("orchestrator", {})
+
+        # For interactive mode without initial question, defer agent creation until first prompt
+        # This allows @path references in the first prompt to be included in Docker mounts
+        is_interactive_without_question = not args.question and not getattr(args, "interactive_with_initial_question", None)
+
+        if is_interactive_without_question:
+            # Defer agent creation - will be done in run_interactive_mode after first prompt
+            agents = None
+        else:
+            agents = create_agents_from_config(
+                config,
+                orchestrator_cfg,
+                enable_rate_limit=enable_rate_limit,
                 config_path=str(resolved_path) if resolved_path else None,
-                model=model_name,
-                log_directory=log_dir_name,
+                memory_session_id=memory_session_id,
+                debug=args.debug,
+                # Session mount support for multi-turn Docker (pre-mount session dir)
+                filesystem_session_id=memory_session_id,
+                session_storage_base=SESSION_STORAGE,
             )
-            logger.info(f"📝 Registered new session in registry: {memory_session_id}")
 
-        agents = create_agents_from_config(
-            config,
-            orchestrator_cfg,
-            enable_rate_limit=enable_rate_limit,
-            config_path=str(resolved_path) if resolved_path else None,
-            memory_session_id=memory_session_id,
-            debug=args.debug,
-            # Session mount support for multi-turn Docker (pre-mount session dir)
-            filesystem_session_id=memory_session_id,
-            session_storage_base=SESSION_STORAGE,
-        )
+            if not agents:
+                raise ConfigurationError("No agents configured")
 
-        if not agents:
-            raise ConfigurationError("No agents configured")
-
-        if args.debug:
+        if args.debug and agents:
             logger.debug(f"Created {len(agents)} agent(s): {list(agents.keys())}")
 
         # Create timeout config from settings and put it in kwargs
@@ -4605,7 +5764,7 @@ async def main(args):
         kwargs = {
             "timeout_config": timeout_config,
             "model_name": model_name,  # For session registration
-            "config_path": str(resolved_path) if resolved_path else None,  # For session registration
+            "config_path": (str(resolved_path) if resolved_path else None),  # For session registration
         }
 
         # Add orchestrator configuration if present
@@ -4629,11 +5788,11 @@ async def main(args):
 
         # Save execution metadata for debugging and reconstruction
         if args.question:
-            # For single question mode, save metadata now (use original config before .massgen/ relocation)
+            # For single question mode, save metadata now (use raw config to avoid logging secrets)
             save_execution_metadata(
                 query=args.question,
-                config_path=str(resolved_path) if args.config and "resolved_path" in locals() else None,
-                config_content=original_config_for_metadata,
+                config_path=(str(resolved_path) if args.config and "resolved_path" in locals() else None),
+                config_content=raw_config_for_metadata,
                 cli_args=vars(args),
             )
 
@@ -4653,8 +5812,8 @@ async def main(args):
                 config_file_path = str(resolved_path) if args.config and resolved_path else None
                 # Check if we have an initial question from config builder
                 initial_q = getattr(args, "interactive_with_initial_question", None)
-                # Remove config_path from kwargs to avoid duplicate argument
-                interactive_kwargs = {k: v for k, v in kwargs.items() if k != "config_path"}
+                # Remove config_path and enable_rate_limit from kwargs to avoid duplicate argument
+                interactive_kwargs = {k: v for k, v in kwargs.items() if k not in ("config_path", "enable_rate_limit")}
                 await run_interactive_mode(
                     agents,
                     ui_config,
@@ -4665,6 +5824,9 @@ async def main(args):
                     initial_question=initial_q,
                     restore_session_if_exists=restore_existing_session,
                     debug=args.debug,
+                    raw_config_for_metadata=raw_config_for_metadata,
+                    enable_rate_limit=enable_rate_limit,
+                    session_storage_base=SESSION_STORAGE,
                     **interactive_kwargs,
                 )
         finally:
@@ -4678,49 +5840,66 @@ async def main(args):
                     logger.debug(f"Marked session as completed: {memory_session_id}")
 
             # Cleanup all agents' filesystem managers (including Docker containers)
-            agents_with_docker = [
-                (agent_id, agent)
-                for agent_id, agent in agents.items()
-                if hasattr(agent, "backend")
-                and hasattr(agent.backend, "filesystem_manager")
-                and agent.backend.filesystem_manager
-                and hasattr(agent.backend.filesystem_manager, "docker_manager")
-                and agent.backend.filesystem_manager.docker_manager
-            ]
+            # Note: agents may be None if deferred creation was used but no prompt was entered
+            if agents:
+                agents_with_docker = [
+                    (agent_id, agent)
+                    for agent_id, agent in agents.items()
+                    if hasattr(agent, "backend")
+                    and hasattr(agent.backend, "filesystem_manager")
+                    and agent.backend.filesystem_manager
+                    and hasattr(agent.backend.filesystem_manager, "docker_manager")
+                    and agent.backend.filesystem_manager.docker_manager
+                ]
 
-            if agents_with_docker:
-                # Show spinner while cleaning up Docker containers in parallel
-                from concurrent.futures import ThreadPoolExecutor, as_completed
+                if agents_with_docker:
+                    # Show spinner while cleaning up Docker containers in parallel
+                    from concurrent.futures import ThreadPoolExecutor, as_completed
 
-                from rich.status import Status
+                    from rich.status import Status
 
-                def cleanup_agent(agent_id: str, agent) -> tuple[str, Optional[Exception]]:
-                    """Cleanup a single agent's Docker container."""
-                    try:
-                        agent.backend.filesystem_manager.cleanup()
-                        return (agent_id, None)
-                    except Exception as e:
-                        return (agent_id, e)
+                    def cleanup_agent(
+                        agent_id: str,
+                        agent,
+                    ) -> tuple[str, Optional[Exception]]:
+                        """Cleanup a single agent's Docker container."""
+                        try:
+                            agent.backend.filesystem_manager.cleanup()
+                            return (agent_id, None)
+                        except Exception as e:
+                            return (agent_id, e)
 
-                with Status(f"[bold cyan]Cleaning up {len(agents_with_docker)} Docker container(s)...", spinner="dots"):
-                    with ThreadPoolExecutor(max_workers=len(agents_with_docker)) as executor:
-                        futures = {executor.submit(cleanup_agent, agent_id, agent): agent_id for agent_id, agent in agents_with_docker}
-                        for future in as_completed(futures):
-                            agent_id, error = future.result()
-                            if error:
-                                logger.warning(f"[CLI] Cleanup failed for agent {agent_id}: {error}")
+                    with Status(
+                        f"[bold cyan]Cleaning up {len(agents_with_docker)} Docker container(s)...",
+                        spinner="dots",
+                    ):
+                        with ThreadPoolExecutor(
+                            max_workers=len(agents_with_docker),
+                        ) as executor:
+                            futures = {executor.submit(cleanup_agent, agent_id, agent): agent_id for agent_id, agent in agents_with_docker}
+                            for future in as_completed(futures):
+                                agent_id, error = future.result()
+                                if error:
+                                    logger.warning(
+                                        f"[CLI] Cleanup failed for agent {agent_id}: {error}",
+                                    )
 
-                print("✅ Docker cleanup complete", flush=True)
+                    print("✅ Docker cleanup complete", flush=True)
 
-            # Cleanup non-Docker filesystem managers (quick, no spinner needed)
-            for agent_id, agent in agents.items():
-                if (agent_id, agent) not in agents_with_docker:
-                    if hasattr(agent, "backend") and hasattr(agent.backend, "filesystem_manager"):
-                        if agent.backend.filesystem_manager:
-                            try:
-                                agent.backend.filesystem_manager.cleanup()
-                            except Exception as e:
-                                logger.warning(f"[CLI] Cleanup failed for agent {agent_id}: {e}")
+                # Cleanup non-Docker filesystem managers (quick, no spinner needed)
+                for agent_id, agent in agents.items():
+                    if (agent_id, agent) not in agents_with_docker:
+                        if hasattr(agent, "backend") and hasattr(
+                            agent.backend,
+                            "filesystem_manager",
+                        ):
+                            if agent.backend.filesystem_manager:
+                                try:
+                                    agent.backend.filesystem_manager.cleanup()
+                                except Exception as e:
+                                    logger.warning(
+                                        f"[CLI] Cleanup failed for agent {agent_id}: {e}",
+                                    )
 
     except ConfigurationError as e:
         print(f"❌ Configuration error: {e}", flush=True)
@@ -4748,7 +5927,10 @@ async def main(args):
             if agents_with_docker:
                 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-                def cleanup_agent(agent_id: str, agent) -> tuple[str, Optional[Exception]]:
+                def cleanup_agent(
+                    agent_id: str,
+                    agent,
+                ) -> tuple[str, Optional[Exception]]:
                     try:
                         agent.backend.filesystem_manager.cleanup()
                         return (agent_id, None)
@@ -4756,7 +5938,9 @@ async def main(args):
                         return (agent_id, e)
 
                 with Status("[bold cyan]Cleaning up...[/bold cyan]", spinner="dots"):
-                    with ThreadPoolExecutor(max_workers=len(agents_with_docker)) as executor:
+                    with ThreadPoolExecutor(
+                        max_workers=len(agents_with_docker),
+                    ) as executor:
                         futures = {executor.submit(cleanup_agent, agent_id, agent): agent_id for agent_id, agent in agents_with_docker}
                         for future in as_completed(futures):
                             pass  # Just wait for completion
@@ -4773,6 +5957,273 @@ async def main(args):
 
 def cli_main():
     """Synchronous wrapper for CLI entry point."""
+    # Handle 'logs' subcommand specially before main argument parsing
+    # This avoids conflict with the positional 'question' argument
+    if len(sys.argv) >= 2 and sys.argv[1] == "logs":
+        from .logs_analyzer import logs_command
+
+        # Create a separate parser just for logs subcommand
+        logs_parser = argparse.ArgumentParser(
+            prog="massgen logs",
+            description="Analyze and display MassGen run logs",
+        )
+        logs_subparsers = logs_parser.add_subparsers(
+            dest="logs_command",
+            help="Log analysis commands",
+        )
+
+        # logs summary (default)
+        summary_parser = logs_subparsers.add_parser(
+            "summary",
+            help="Display run summary (default)",
+        )
+        summary_parser.add_argument(
+            "--log-dir",
+            type=str,
+            help="Path to specific log directory",
+        )
+        summary_parser.add_argument(
+            "--json",
+            action="store_true",
+            help="Output as JSON",
+        )
+
+        # logs tools
+        tools_parser = logs_subparsers.add_parser(
+            "tools",
+            help="Display tool breakdown",
+        )
+        tools_parser.add_argument(
+            "--sort",
+            choices=["time", "calls"],
+            default="time",
+            help="Sort by time or calls",
+        )
+        tools_parser.add_argument(
+            "--log-dir",
+            type=str,
+            help="Path to specific log directory",
+        )
+        tools_parser.add_argument("--json", action="store_true", help="Output as JSON")
+
+        # logs list
+        list_parser = logs_subparsers.add_parser("list", help="List recent runs")
+        list_parser.add_argument(
+            "--limit",
+            type=int,
+            default=10,
+            help="Number of runs to show",
+        )
+        list_parser.add_argument(
+            "--analyzed",
+            action="store_true",
+            help="Show only logs with ANALYSIS_REPORT.md",
+        )
+        list_parser.add_argument(
+            "--unanalyzed",
+            action="store_true",
+            help="Show only logs without ANALYSIS_REPORT.md",
+        )
+        list_parser.add_argument("--json", action="store_true", help="Output as JSON")
+
+        # logs open
+        open_parser = logs_subparsers.add_parser(
+            "open",
+            help="Open log directory in file manager",
+        )
+        open_parser.add_argument(
+            "--log-dir",
+            type=str,
+            help="Path to specific log directory",
+        )
+
+        # logs analyze
+        analyze_parser = logs_subparsers.add_parser(
+            "analyze",
+            help="Generate analysis prompt or run self-analysis",
+        )
+        analyze_parser.add_argument(
+            "--log-dir",
+            type=str,
+            help="Path to specific log directory (default: latest)",
+        )
+        analyze_parser.add_argument(
+            "--mode",
+            choices=["prompt", "self"],
+            default="prompt",
+            help="Analysis mode: prompt (for Claude Code) or self (multi-agent)",
+        )
+        analyze_parser.add_argument(
+            "--config",
+            type=str,
+            help="Custom config file for self-analysis mode",
+        )
+        analyze_parser.add_argument(
+            "--ui",
+            choices=["automation", "rich_terminal", "webui"],
+            default="rich_terminal",
+            help="UI mode for self-analysis: rich_terminal (default), automation (headless), or webui",
+        )
+        analyze_parser.add_argument(
+            "--turn",
+            "-t",
+            type=int,
+            help="Specific turn number to analyze (default: latest turn)",
+        )
+        analyze_parser.add_argument(
+            "--force",
+            "-f",
+            action="store_true",
+            help="Overwrite existing report without prompting",
+        )
+
+        # Parse logs arguments (skip 'massgen logs')
+        logs_args = logs_parser.parse_args(sys.argv[2:])
+        sys.exit(logs_command(logs_args))
+
+    # Handle 'serve' subcommand (OpenAI-compatible HTTP server)
+    if len(sys.argv) >= 2 and sys.argv[1] == "serve":
+        import uvicorn
+
+        from massgen.server.app import create_app
+        from massgen.server.settings import ServerSettings
+
+        serve_parser = argparse.ArgumentParser(
+            prog="massgen serve",
+            description="Run MassGen OpenAI-compatible server (FastAPI + Uvicorn)",
+        )
+        serve_parser.add_argument("--host", type=str, default=None, help="Host to bind (default: 0.0.0.0)")
+        serve_parser.add_argument("--port", type=int, default=None, help="Port to bind (default: 4000)")
+        serve_parser.add_argument("--config", type=str, default=None, help="Default MassGen config file path")
+        serve_parser.add_argument("--reload", action="store_true", help="Enable auto-reload (dev only)")
+
+        serve_args = serve_parser.parse_args(sys.argv[2:])
+
+        # Reload env in case the user expects serve to pick up .env changes.
+        load_env_file()
+
+        # Resolve config path using same logic as main command
+        # If --config provided, use it; otherwise auto-discover default config
+        resolved_config = None
+        try:
+            if serve_args.config:
+                resolved_config = resolve_config_path(serve_args.config)
+            else:
+                # Auto-discover: .massgen/config.yaml or ~/.config/massgen/config.yaml
+                resolved_config = resolve_config_path(None)
+                if resolved_config:
+                    print(f"📁 Using default config: {resolved_config}")
+        except ConfigurationError as e:
+            print(f"❌ Configuration error: {e}", flush=True)
+            sys.exit(EXIT_CONFIG_ERROR)
+
+        # Build settings from env, then apply CLI overrides using replace()
+        # to preserve any future env-derived fields
+        from dataclasses import replace
+
+        settings = ServerSettings.from_env()
+        overrides = {}
+        if serve_args.host:
+            overrides["host"] = serve_args.host
+        if serve_args.port:
+            overrides["port"] = serve_args.port
+        if resolved_config:
+            overrides["default_config"] = str(resolved_config)
+        if overrides:
+            settings = replace(settings, **overrides)
+
+        app = create_app(settings=settings)
+        uvicorn.run(app, host=settings.host, port=settings.port, reload=serve_args.reload)
+        return
+
+    # Handle 'export' subcommand specially before main argument parsing
+    if len(sys.argv) >= 2 and sys.argv[1] == "export":
+        from .session_exporter import export_command
+
+        export_parser = argparse.ArgumentParser(
+            prog="massgen export",
+            description="Share MassGen session via GitHub Gist (requires gh CLI)",
+        )
+        export_parser.add_argument(
+            "log_dir",
+            nargs="?",
+            help="Log directory to export (default: latest). Can be full path or log name.",
+        )
+        export_parser.add_argument(
+            "--turns",
+            "-t",
+            default="all",
+            help='Turn range to export: "all", "N" (turns 1-N), "N-M", or "latest" (default: all)',
+        )
+        export_parser.add_argument(
+            "--no-workspace",
+            action="store_true",
+            help="Exclude workspace artifacts from export",
+        )
+        export_parser.add_argument(
+            "--workspace-limit",
+            default="500KB",
+            help="Max workspace size per agent (e.g., 500KB, 1MB). Default: 500KB",
+        )
+        export_parser.add_argument(
+            "--yes",
+            "-y",
+            action="store_true",
+            help="Skip interactive prompts and use defaults",
+        )
+        export_parser.add_argument(
+            "--dry-run",
+            action="store_true",
+            help="Show what would be shared without creating gist",
+        )
+        export_parser.add_argument(
+            "--verbose",
+            "-v",
+            action="store_true",
+            help="Show detailed file listing",
+        )
+        export_parser.add_argument(
+            "--json",
+            action="store_true",
+            help="Output result as JSON (useful for scripting)",
+        )
+
+        export_args = export_parser.parse_args(sys.argv[2:])
+        sys.exit(export_command(export_args))
+
+    # Handle 'shares' subcommand for managing shared sessions
+    if len(sys.argv) >= 2 and sys.argv[1] == "shares":
+        from rich.console import Console
+
+        from .share import delete_share, list_shares
+
+        shares_parser = argparse.ArgumentParser(
+            prog="massgen shares",
+            description="Manage shared MassGen sessions",
+        )
+        shares_subparsers = shares_parser.add_subparsers(dest="shares_command")
+
+        # massgen shares list
+        shares_subparsers.add_parser("list", help="List your shared sessions")
+
+        # massgen shares delete <gist_id>
+        delete_parser = shares_subparsers.add_parser(
+            "delete",
+            help="Delete a shared session",
+        )
+        delete_parser.add_argument("gist_id", help="Gist ID to delete")
+
+        shares_args = shares_parser.parse_args(sys.argv[2:])
+        console = Console()
+
+        if shares_args.shares_command == "list":
+            sys.exit(list_shares(console))
+        elif shares_args.shares_command == "delete":
+            sys.exit(delete_share(shares_args.gist_id, console))
+        else:
+            shares_parser.print_help()
+            sys.exit(1)
+
     parser = argparse.ArgumentParser(
         description="MassGen - Multi-Agent Coordination CLI",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -4833,7 +6284,11 @@ Environment Variables:
 
     # Configuration options
     config_group = parser.add_mutually_exclusive_group()
-    config_group.add_argument("--config", type=str, help="Path to YAML/JSON configuration file or @examples/NAME")
+    config_group.add_argument(
+        "--config",
+        type=str,
+        help="Path to YAML/JSON configuration file or @examples/NAME",
+    )
     config_group.add_argument(
         "--select",
         action="store_true",
@@ -4865,7 +6320,11 @@ Environment Variables:
         default=None,
         help="Model name for quick setup",
     )
-    parser.add_argument("--system-message", type=str, help="System message for quick setup")
+    parser.add_argument(
+        "--system-message",
+        type=str,
+        help="System message for quick setup",
+    )
     parser.add_argument(
         "--base-url",
         type=str,
@@ -4873,9 +6332,27 @@ Environment Variables:
     )
 
     # UI options
-    parser.add_argument("--no-display", action="store_true", help="Disable visual coordination display")
+    parser.add_argument(
+        "--no-display",
+        action="store_true",
+        help="Disable visual coordination display",
+    )
     parser.add_argument("--no-logs", action="store_true", help="Disable logging")
-    parser.add_argument("--debug", action="store_true", help="Enable debug mode with verbose logging")
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug mode with verbose logging",
+    )
+    parser.add_argument(
+        "--save-streaming-buffers",
+        action="store_true",
+        help="Save streaming buffers to files in streaming_buffers/ directory (works with all backends)",
+    )
+    parser.add_argument(
+        "--logfire",
+        action="store_true",
+        help="Enable Logfire observability for structured tracing of LLM calls, tool executions, and orchestration",
+    )
     parser.add_argument(
         "--web",
         action="store_true",
@@ -4903,6 +6380,11 @@ Environment Variables:
         action="store_true",
         help="Enable automation mode: silent output (~10 lines), status.json tracking, meaningful exit codes. "
         "REQUIRED for LLM agents and background execution. Automatically isolates workspaces for parallel runs.",
+    )
+    parser.add_argument(
+        "--no-session-registry",
+        action="store_true",
+        help="Don't register this session in the global session registry. Used for internal subagent runs.",
     )
     parser.add_argument(
         "--output-file",
@@ -5026,7 +6508,10 @@ Environment Variables:
     )
 
     # Session options
-    session_group = parser.add_argument_group("session management", "Load or list memory sessions")
+    session_group = parser.add_argument_group(
+        "session management",
+        "Load or list memory sessions",
+    )
     session_group.add_argument(
         "--session-id",
         type=str,
@@ -5051,7 +6536,10 @@ Environment Variables:
     )
 
     # Timeout options
-    timeout_group = parser.add_argument_group("timeout settings", "Override timeout settings from config")
+    timeout_group = parser.add_argument_group(
+        "timeout settings",
+        "Override timeout settings from config",
+    )
     timeout_group.add_argument(
         "--orchestrator-timeout",
         type=int,
@@ -5072,9 +6560,10 @@ Environment Variables:
         from massgen.session import SessionRegistry
 
         registry = SessionRegistry()
-        recent_session = registry.get_most_recent_session()
+        # Use get_most_recent_continuable_session to skip empty sessions
+        recent_session = registry.get_most_recent_continuable_session()
         if not recent_session:
-            print("❌ No sessions found to continue")
+            print("❌ No continuable sessions found (all sessions are empty)")
             print("Run 'massgen --list-sessions' to see available sessions")
             sys.exit(1)
         args.session_id = recent_session["session_id"]
@@ -5087,7 +6576,9 @@ Environment Variables:
 
         registry = SessionRegistry()
         if not registry.session_exists(args.session_id):
-            print(f"❌ Session error: Session '{args.session_id}' not found in registry")
+            print(
+                f"❌ Session error: Session '{args.session_id}' not found in registry",
+            )
             print("Run 'massgen --list-sessions' to see available sessions")
             sys.exit(1)
 
@@ -5116,6 +6607,8 @@ Environment Variables:
             print(f"📄 Using config from session: {session_config_path}")
 
     # Handle special commands first (before logging setup to avoid creating log dirs)
+    # Note: 'logs' subcommand is handled at the very start of cli_main()
+
     if args.list_sessions:
         from massgen.session import SessionRegistry, format_session_list
 
@@ -5162,6 +6655,10 @@ Environment Variables:
     # Setup logging for all other commands (actual execution, setup, init, etc.)
     setup_logging(debug=args.debug)
 
+    # Configure Logfire observability if requested
+    if args.logfire:
+        _setup_logfire_observability()
+
     if args.debug:
         logger.info("Debug mode enabled")
         logger.debug(f"Command line arguments: {vars(args)}")
@@ -5174,31 +6671,51 @@ Environment Variables:
 
         if any(api_keys.values()):
             print(f"\n{BRIGHT_GREEN}✅ API key setup complete!{RESET}")
-            print(f"{BRIGHT_CYAN}💡 You can now use MassGen with these providers{RESET}\n")
+            print(
+                f"{BRIGHT_CYAN}💡 You can now use MassGen with these providers{RESET}\n",
+            )
         else:
             print(f"\n{BRIGHT_YELLOW}⚠️  No API keys configured{RESET}")
-            print(f"{BRIGHT_CYAN}💡 You can run 'massgen --setup' anytime to set them up{RESET}\n")
+            print(
+                f"{BRIGHT_CYAN}💡 You can run 'massgen --setup' anytime to set them up{RESET}\n",
+            )
 
         # Offer to set up Docker
         try:
-            docker_choice = input(f"{BRIGHT_CYAN}Would you also like to set up Docker images for code execution? [Y/n]: {RESET}").strip().lower()
+            docker_choice = (
+                input(
+                    f"{BRIGHT_CYAN}Would you also like to set up Docker images for code execution? [Y/n]: {RESET}",
+                )
+                .strip()
+                .lower()
+            )
             if docker_choice in ["y", "yes", ""]:
                 setup_docker()
         except (KeyboardInterrupt, EOFError):
             print()
 
-        # Offer to install skills
+        # Show skills summary and offer to install more
         try:
-            skills_choice = input(f"{BRIGHT_CYAN}Would you like to install skills (openskills, Anthropic collection)? [Y/n]: {RESET}").strip().lower()
-            if skills_choice in ["y", "yes", ""]:
-                from .utils.skills_installer import install_skills
+            from .utils.skills_installer import display_skills_summary, install_skills
 
+            display_skills_summary()
+
+            skills_choice = (
+                input(
+                    f"{BRIGHT_CYAN}Would you like to install additional skills (openskills, Anthropic collection)? [Y/n]: {RESET}",
+                )
+                .strip()
+                .lower()
+            )
+            if skills_choice in ["y", "yes", ""]:
                 install_skills()
         except (KeyboardInterrupt, EOFError):
             print()
 
         print(f"\n{BRIGHT_GREEN}Setup complete!{RESET}")
-        print(f"{BRIGHT_CYAN}Run 'massgen --quickstart' to create a config and start.{RESET}\n")
+        print(
+            f"{BRIGHT_CYAN}Run 'massgen --quickstart' to create a config and start.{RESET}\n",
+        )
         return
 
     # Install skills if requested
@@ -5223,11 +6740,15 @@ Environment Variables:
             automation_mode = getattr(args, "automation", False)
 
             print(f"{BRIGHT_CYAN}🌐 Starting MassGen Web UI...{RESET}")
-            print(f"{BRIGHT_GREEN}   Server: http://{args.web_host}:{args.web_port}{RESET}")
+            print(
+                f"{BRIGHT_GREEN}   Server: http://{args.web_host}:{args.web_port}{RESET}",
+            )
             if config_path:
                 print(f"{BRIGHT_GREEN}   Config: {config_path}{RESET}")
             else:
-                print(f"{BRIGHT_YELLOW}   No config specified - use --config or select in UI{RESET}")
+                print(
+                    f"{BRIGHT_YELLOW}   No config specified - use --config or select in UI{RESET}",
+                )
 
             # Build auto-launch URL with question and/or config if provided
             import urllib.parse
@@ -5243,10 +6764,16 @@ Environment Variables:
                 print(f"{BRIGHT_GREEN}   Auto-launch URL: {auto_url}{RESET}")
 
             if automation_mode:
-                print(f"{BRIGHT_YELLOW}   Automation mode enabled - progress visible in web UI{RESET}")
-                print(f"{BRIGHT_CYAN}   Status files: .massgen/massgen_logs/log_<timestamp>/turn_N/attempt_N/status.json{RESET}")
+                print(
+                    f"{BRIGHT_YELLOW}   Automation mode enabled - progress visible in web UI{RESET}",
+                )
+                print(
+                    f"{BRIGHT_CYAN}   Status files: .massgen/massgen_logs/log_<timestamp>/turn_N/attempt_N/status.json{RESET}",
+                )
                 if not question:
-                    print(f"{BRIGHT_YELLOW}   (no question provided - use web UI to start coordination){RESET}")
+                    print(
+                        f"{BRIGHT_YELLOW}   (no question provided - use web UI to start coordination){RESET}",
+                    )
 
             print(f"{BRIGHT_YELLOW}   Press Ctrl+C to stop{RESET}\n")
 
@@ -5271,7 +6798,12 @@ Environment Variables:
                     webbrowser.open(browser_url)
 
                 threading.Thread(target=open_browser, daemon=True).start()
-            run_server(host=args.web_host, port=args.web_port, config_path=config_path, automation_mode=automation_mode)
+            run_server(
+                host=args.web_host,
+                port=args.web_port,
+                config_path=config_path,
+                automation_mode=automation_mode,
+            )
         except ImportError as e:
             print(f"{BRIGHT_RED}❌ Web UI dependencies not installed.{RESET}")
             print(f"{BRIGHT_CYAN}   Run: pip install massgen{RESET}")
@@ -5293,8 +6825,12 @@ Environment Variables:
     # Generate config programmatically if requested
     if args.generate_config:
         if not args.config_backend or not args.config_model:
-            print(f"{BRIGHT_RED}❌ Error: --config-backend and --config-model are required with --generate-config{RESET}")
-            print(f"{BRIGHT_CYAN}Example: massgen --generate-config ./config.yaml --config-backend gemini --config-model gemini-2.5-pro{RESET}")
+            print(
+                f"{BRIGHT_RED}❌ Error: --config-backend and --config-model are required with --generate-config{RESET}",
+            )
+            print(
+                f"{BRIGHT_CYAN}Example: massgen --generate-config ./config.yaml --config-backend gemini --config-model gemini-2.5-pro{RESET}",
+            )
             return
 
         try:
@@ -5308,8 +6844,12 @@ Environment Variables:
                 context_path=args.config_context_path,
             )
             if success:
-                print(f"{BRIGHT_GREEN}✅ Configuration saved to: {args.generate_config}{RESET}")
-                print(f'{BRIGHT_CYAN}Run with: massgen --config {args.generate_config} "Your question"{RESET}')
+                print(
+                    f"{BRIGHT_GREEN}✅ Configuration saved to: {args.generate_config}{RESET}",
+                )
+                print(
+                    f'{BRIGHT_CYAN}Run with: massgen --config {args.generate_config} "Your question"{RESET}',
+                )
             return
         except ValueError as e:
             print(f"{BRIGHT_RED}❌ Error: {e}{RESET}")
@@ -5343,7 +6883,9 @@ Environment Variables:
                     prompt_question = question if question else None
 
                     print(f"{BRIGHT_CYAN}🌐 Starting MassGen Web UI...{RESET}")
-                    print(f"{BRIGHT_GREEN}   Server: http://{args.web_host}:{args.web_port}{RESET}")
+                    print(
+                        f"{BRIGHT_GREEN}   Server: http://{args.web_host}:{args.web_port}{RESET}",
+                    )
                     print(f"{BRIGHT_GREEN}   Config: {config_path}{RESET}")
 
                     # Build auto-launch URL if question is provided
@@ -5369,7 +6911,12 @@ Environment Variables:
                         webbrowser.open(browser_url)
 
                     threading.Thread(target=open_browser, daemon=True).start()
-                    run_server(host=args.web_host, port=args.web_port, config_path=config_path, automation_mode=False)
+                    run_server(
+                        host=args.web_host,
+                        port=args.web_port,
+                        config_path=config_path,
+                        automation_mode=False,
+                    )
                 except ImportError as e:
                     print(f"{BRIGHT_RED}❌ Web UI dependencies not installed.{RESET}")
                     print(f"{BRIGHT_CYAN}   Run: pip install massgen{RESET}")
@@ -5453,10 +7000,14 @@ Environment Variables:
 
                 if any(api_keys.values()):
                     print(f"\n{BRIGHT_GREEN}✅ API key setup complete!{RESET}")
-                    print(f"{BRIGHT_CYAN}💡 You can now use MassGen with these providers{RESET}\n")
+                    print(
+                        f"{BRIGHT_CYAN}💡 You can now use MassGen with these providers{RESET}\n",
+                    )
                 else:
                     print(f"\n{BRIGHT_YELLOW}⚠️  No API keys configured{RESET}")
-                    print(f"{BRIGHT_CYAN}💡 You can use local models (vLLM, Ollama) without API keys{RESET}\n")
+                    print(
+                        f"{BRIGHT_CYAN}💡 You can use local models (vLLM, Ollama) without API keys{RESET}\n",
+                    )
             else:
                 print(f"{BRIGHT_GREEN}✅ API keys detected{RESET}")
                 print()
@@ -5464,7 +7015,13 @@ Environment Variables:
             # Step 2: Optional Docker and skills setup
             # Offer to set up Docker
             try:
-                docker_choice = input(f"  {BRIGHT_CYAN}Set up Docker images for code execution? [Y/n]: {RESET}").strip().lower()
+                docker_choice = (
+                    input(
+                        f"  {BRIGHT_CYAN}Set up Docker images for code execution? [Y/n]: {RESET}",
+                    )
+                    .strip()
+                    .lower()
+                )
                 if docker_choice in ["y", "yes", ""]:
                     setup_docker()
                     print()
@@ -5473,7 +7030,13 @@ Environment Variables:
 
             # Offer to install skills
             try:
-                skills_choice = input(f"  {BRIGHT_CYAN}Install skills (openskills, Anthropic collection)? [Y/n]: {RESET}").strip().lower()
+                skills_choice = (
+                    input(
+                        f"  {BRIGHT_CYAN}Install skills (openskills, Anthropic collection)? [Y/n]: {RESET}",
+                    )
+                    .strip()
+                    .lower()
+                )
                 if skills_choice in ["y", "yes", ""]:
                     from .utils.skills_installer import install_skills
 
@@ -5535,7 +7098,9 @@ Environment Variables:
                             prompt_question = question if question else None
 
                             print(f"{BRIGHT_CYAN}🌐 Starting MassGen Web UI...{RESET}")
-                            print(f"{BRIGHT_GREEN}   Server: http://{args.web_host}:{args.web_port}{RESET}")
+                            print(
+                                f"{BRIGHT_GREEN}   Server: http://{args.web_host}:{args.web_port}{RESET}",
+                            )
                             print(f"{BRIGHT_GREEN}   Config: {config_path}{RESET}")
 
                             # Build auto-launch URL if question is provided
@@ -5547,7 +7112,9 @@ Environment Variables:
                                 auto_url = f"http://{args.web_host}:{args.web_port}/?prompt={prompt_encoded}"
                                 config_encoded = urllib.parse.quote(config_path)
                                 auto_url += f"&config={config_encoded}"
-                                print(f"{BRIGHT_GREEN}   Auto-launch URL: {auto_url}{RESET}")
+                                print(
+                                    f"{BRIGHT_GREEN}   Auto-launch URL: {auto_url}{RESET}",
+                                )
 
                             print(f"{BRIGHT_YELLOW}   Press Ctrl+C to stop{RESET}\n")
 
@@ -5561,9 +7128,16 @@ Environment Variables:
                                 webbrowser.open(browser_url)
 
                             threading.Thread(target=open_browser, daemon=True).start()
-                            run_server(host=args.web_host, port=args.web_port, config_path=config_path, automation_mode=False)
+                            run_server(
+                                host=args.web_host,
+                                port=args.web_port,
+                                config_path=config_path,
+                                automation_mode=False,
+                            )
                         except ImportError as e:
-                            print(f"{BRIGHT_RED}❌ Web UI dependencies not installed.{RESET}")
+                            print(
+                                f"{BRIGHT_RED}❌ Web UI dependencies not installed.{RESET}",
+                            )
                             print(f"{BRIGHT_CYAN}   Run: pip install massgen{RESET}")
                             logger.debug(f"Import error: {e}")
                             sys.exit(1)
@@ -5588,12 +7162,16 @@ Environment Variables:
                                 package_configs = files("massgen").joinpath("configs")
                                 filepath_path = Path(filepath).resolve()
                                 package_path = Path(str(package_configs)).resolve()
-                                is_example = str(filepath_path).startswith(str(package_path))
+                                is_example = str(filepath_path).startswith(
+                                    str(package_path),
+                                )
                             except Exception:
                                 pass
 
                             if is_example:
-                                print(f"\n{BRIGHT_CYAN}📦 You selected a package example{RESET}")
+                                print(
+                                    f"\n{BRIGHT_CYAN}📦 You selected a package example{RESET}",
+                                )
                             else:
                                 print(f"\n{BRIGHT_CYAN}📄 You selected a config{RESET}")
                             print(f"   {filepath}")
@@ -5609,14 +7187,20 @@ Environment Variables:
                                 # Copy to default location
                                 default_config.parent.mkdir(parents=True, exist_ok=True)
                                 shutil.copy(filepath, default_config)
-                                print(f"\n{BRIGHT_GREEN}✅ Config saved to: {default_config}{RESET}")
+                                print(
+                                    f"\n{BRIGHT_GREEN}✅ Config saved to: {default_config}{RESET}",
+                                )
                                 args.config = str(default_config)
                             else:
                                 # Just use for this session
-                                print(f"\n{BRIGHT_CYAN}💡 Using for this session only{RESET}")
+                                print(
+                                    f"\n{BRIGHT_CYAN}💡 Using for this session only{RESET}",
+                                )
 
                         # Launch into interactive mode
-                        print(f"\n{BRIGHT_GREEN}🚀 Launching interactive mode...{RESET}\n")
+                        print(
+                            f"\n{BRIGHT_GREEN}🚀 Launching interactive mode...{RESET}\n",
+                        )
                         # Don't return - continue to main() below
                 else:
                     # No filepath - user cancelled

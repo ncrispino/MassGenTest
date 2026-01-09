@@ -5,15 +5,21 @@ FastAPI Web Server for MassGen Web UI
 Provides WebSocket endpoints for real-time coordination updates
 and serves the React frontend.
 """
+
 from __future__ import annotations
 
 import asyncio
+import base64
+import json
+import logging
+import logging.handlers
+import os
 import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional, Set
 
 try:
-    from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+    from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import FileResponse, JSONResponse
     from fastapi.staticfiles import StaticFiles
@@ -22,7 +28,277 @@ try:
 except ImportError:
     FASTAPI_AVAILABLE = False
 
+from massgen.filesystem_manager._constants import (
+    SKIP_DIRS_FOR_LOGGING,
+    get_language_for_extension,
+)
 from massgen.frontend.displays.web_display import WebDisplay
+
+# Set up logging for workspace browser debugging
+workspace_logger = logging.getLogger("massgen.workspace")
+workspace_logger.setLevel(logging.DEBUG)
+
+# Create log directory and file handler for persistent debugging
+_webui_log_dir = Path.home() / ".massgen" / "webui_logs"
+_webui_log_dir.mkdir(parents=True, exist_ok=True)
+_webui_log_file = _webui_log_dir / "workspace_browser.log"
+
+# Create handlers if not already present
+if not workspace_logger.handlers:
+    # Console handler (for CLI output)
+    _ws_console_handler = logging.StreamHandler()
+    _ws_console_handler.setLevel(logging.INFO)  # Less verbose in console
+    _ws_console_formatter = logging.Formatter(
+        "[%(asctime)s] [WORKSPACE] %(levelname)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+    _ws_console_handler.setFormatter(_ws_console_formatter)
+    workspace_logger.addHandler(_ws_console_handler)
+
+    # File handler (for detailed debugging)
+    _ws_file_handler = logging.handlers.RotatingFileHandler(
+        _webui_log_file,
+        maxBytes=10 * 1024 * 1024,  # 10MB max per file
+        backupCount=5,  # Keep 5 backup files
+        encoding="utf-8",
+    )
+    _ws_file_handler.setLevel(logging.DEBUG)  # Full debug in file
+    _ws_file_formatter = logging.Formatter(
+        "[%(asctime)s] [%(name)s] %(levelname)s: %(message)s\n" "    Location: %(pathname)s:%(lineno)d",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+    _ws_file_handler.setFormatter(_ws_file_formatter)
+    workspace_logger.addHandler(_ws_file_handler)
+
+    workspace_logger.info(f"WebUI logs writing to: {_webui_log_file}")
+
+# Note: Watchdog/live file monitoring was removed for simplicity.
+# File lists are now pre-fetched on connect and refreshed on-demand.
+# See: specs/001-fix-workspace-browser/data-model.md
+
+# Cache for PDF conversions (Office files converted via Docker)
+# Key: (workspace_path, file_path, mtime) -> base64 PDF content
+# This avoids re-converting the same file repeatedly (expensive Docker operation)
+_pdf_conversion_cache: Dict[tuple, str] = {}
+_PDF_CACHE_MAX_SIZE = 50  # Max number of cached conversions
+
+
+def _get_pdf_cache_key(workspace: str, file_path: str, mtime: float) -> tuple:
+    """Generate cache key for PDF conversion."""
+    return (workspace, file_path, mtime)
+
+
+def _get_cached_pdf(workspace: str, file_path: str, mtime: float) -> str | None:
+    """Get cached PDF conversion if available and still valid."""
+    key = _get_pdf_cache_key(workspace, file_path, mtime)
+    return _pdf_conversion_cache.get(key)
+
+
+def _cache_pdf(workspace: str, file_path: str, mtime: float, pdf_content: str) -> None:
+    """Cache a PDF conversion result."""
+    # Evict oldest entries if cache is full
+    if len(_pdf_conversion_cache) >= _PDF_CACHE_MAX_SIZE:
+        # Remove first (oldest) entry
+        oldest_key = next(iter(_pdf_conversion_cache))
+        del _pdf_conversion_cache[oldest_key]
+
+    key = _get_pdf_cache_key(workspace, file_path, mtime)
+    _pdf_conversion_cache[key] = pdf_content
+
+
+def _normalize_workspace_path(path: str) -> str:
+    """Normalize a workspace path for consistent storage and lookup.
+
+    Ensures paths are in a consistent format across HTTP API and WebSocket responses.
+    This fixes path mismatch issues where paths may differ in:
+    - Trailing slashes: "/path/to/workspace/" vs "/path/to/workspace"
+    - Multiple slashes: "/path//to///workspace" vs "/path/to/workspace"
+
+    Args:
+        path: The workspace path to normalize
+
+    Returns:
+        Normalized path string without trailing slashes
+    """
+    import re
+
+    if not path:
+        return ""
+    # Remove trailing slashes
+    normalized = path.rstrip("/")
+    # Collapse multiple consecutive slashes into single slash
+    normalized = re.sub(r"/+", "/", normalized)
+    return normalized
+
+
+def _should_skip_workspace_path(file_path: Path) -> bool:
+    """Check if a file path should be skipped based on excluded directory patterns.
+
+    Uses SKIP_DIRS_FOR_LOGGING from _constants.py which includes node_modules,
+    .venv, __pycache__, and other large/irrelevant directories.
+    """
+    import fnmatch
+
+    for part in file_path.parts:
+        if part in SKIP_DIRS_FOR_LOGGING:
+            return True
+        # Also check glob patterns like *.egg-info
+        for pattern in SKIP_DIRS_FOR_LOGGING:
+            if "*" in pattern and fnmatch.fnmatch(part, pattern):
+                return True
+    return False
+
+
+def _should_skip_dir(dir_name: str) -> bool:
+    """Check if a directory should be skipped entirely during workspace scanning.
+
+    This is used with os.walk to skip directories BEFORE entering them,
+    which is much faster than rglob + filter for large directories like node_modules.
+    """
+    import fnmatch
+
+    if dir_name.startswith("."):
+        return True
+    if dir_name in SKIP_DIRS_FOR_LOGGING:
+        return True
+    # Check glob patterns like *.egg-info
+    for pattern in SKIP_DIRS_FOR_LOGGING:
+        if "*" in pattern and fnmatch.fnmatch(dir_name, pattern):
+            return True
+    return False
+
+
+def _scan_workspace_files(workspace_path: Path) -> list[dict]:
+    """Scan workspace for files, skipping large directories entirely.
+
+    Uses os.walk with in-place directory filtering to avoid entering
+    node_modules, .venv, and other large directories at all.
+    This is much faster than rglob("*") + filter for workspaces with packages.
+    """
+    files = []
+
+    for root, dirs, filenames in os.walk(workspace_path):
+        # Modify dirs in-place to skip excluded directories BEFORE entering them
+        dirs[:] = [d for d in dirs if not _should_skip_dir(d)]
+
+        for filename in filenames:
+            # Skip hidden files
+            if filename.startswith("."):
+                continue
+            file_path = Path(root) / filename
+            try:
+                rel_path = file_path.relative_to(workspace_path)
+                stat = file_path.stat()
+                files.append(
+                    {
+                        "path": str(rel_path),
+                        "size": stat.st_size,
+                        "modified": stat.st_mtime,
+                    },
+                )
+            except (OSError, ValueError):
+                continue
+
+    return files
+
+
+class WorkspaceConnectionManager:
+    """Manages WebSocket connections for workspace file listing.
+
+    Note: Live file monitoring via watchdog was removed for simplicity.
+    File lists are pre-fetched on connect and refreshed on-demand via
+    explicit refresh requests from the frontend.
+    """
+
+    def __init__(self):
+        # session_id -> set of WebSocket connections for workspace updates
+        self.workspace_connections: Dict[str, Set[WebSocket]] = {}
+        # Connection counter for logging
+        self._connection_count = 0
+        workspace_logger.info("WorkspaceConnectionManager initialized")
+
+    async def connect(self, websocket: WebSocket, session_id: str, workspace_paths: list[str]) -> None:
+        """Accept and register a WebSocket connection for workspace file listing.
+
+        Scans workspace directories and sends initial file list on connect.
+        No live file watching - frontend can request refresh when needed.
+        """
+        self._connection_count += 1
+        conn_id = self._connection_count
+
+        workspace_logger.info(
+            f"[Conn #{conn_id}] WebSocket CONNECT request: session={session_id}, " f"paths={workspace_paths}",
+        )
+
+        await websocket.accept()
+        workspace_logger.debug(f"[Conn #{conn_id}] WebSocket accepted")
+
+        if session_id not in self.workspace_connections:
+            self.workspace_connections[session_id] = set()
+        self.workspace_connections[session_id].add(websocket)
+
+        # Collect initial file lists from workspace paths
+        watched = []
+        initial_files: dict[str, list[dict]] = {}
+        for path in workspace_paths:
+            # Normalize path for consistent key format across HTTP and WebSocket
+            normalized_path = _normalize_workspace_path(path)
+            workspace_path = Path(path)
+            if workspace_path.exists():
+                watched.append(normalized_path)
+                workspace_logger.debug(f"[Conn #{conn_id}] Path exists: {normalized_path}")
+
+                # Collect initial file list for this workspace (non-blocking)
+                try:
+                    files = _scan_workspace_files(workspace_path)
+                    initial_files[normalized_path] = files
+                    workspace_logger.debug(
+                        f"[Conn #{conn_id}] Initial files for {workspace_path.name}: {len(files)} files",
+                    )
+                except Exception as e:
+                    workspace_logger.warning(f"[Conn #{conn_id}] Failed to scan {normalized_path}: {e}")
+                    initial_files[normalized_path] = []
+            else:
+                workspace_logger.warning(f"[Conn #{conn_id}] Path does not exist, skipping: {path}")
+
+        # Send connected confirmation with initial file lists
+        await websocket.send_json(
+            {
+                "type": "workspace_connected",
+                "session_id": session_id,
+                "timestamp": asyncio.get_event_loop().time(),
+                "watched_paths": watched,
+                "initial_files": initial_files,
+            },
+        )
+
+        workspace_logger.info(
+            f"[Conn #{conn_id}] WebSocket CONNECTED: session={session_id}, "
+            f"watching {len(watched)}/{len(workspace_paths)} paths, "
+            f"total_connections={sum(len(conns) for conns in self.workspace_connections.values())}",
+        )
+
+    def disconnect(self, websocket: WebSocket, session_id: str) -> None:
+        """Remove a WebSocket connection."""
+        workspace_logger.info(f"WebSocket DISCONNECT: session={session_id}")
+
+        if session_id in self.workspace_connections:
+            self.workspace_connections[session_id].discard(websocket)
+
+            # Clean up empty session entries
+            if not self.workspace_connections[session_id]:
+                del self.workspace_connections[session_id]
+                workspace_logger.info(f"No more connections for session={session_id}")
+        else:
+            workspace_logger.warning(f"Disconnect called but session not found: {session_id}")
+
+        workspace_logger.debug(
+            f"After disconnect: total_connections=" f"{sum(len(conns) for conns in self.workspace_connections.values())}",
+        )
+
+
+# Global workspace connection manager
+workspace_manager = WorkspaceConnectionManager()
 
 
 class ConnectionManager:
@@ -43,8 +319,15 @@ class ConnectionManager:
         self.session_configs: Dict[str, str] = {}
         # Completed sessions: session_id -> metadata (persists after disconnect)
         self.completed_sessions: Dict[str, Dict[str, Any]] = {}
+        # session_id -> orchestrator instance (for cancellation)
+        self.orchestrators: Dict[str, Any] = {}
 
-    def mark_session_completed(self, session_id: str, question: str = None, config: str = None) -> None:
+    def mark_session_completed(
+        self,
+        session_id: str,
+        question: str = None,
+        config: str = None,
+    ) -> None:
         """Mark a session as completed so it persists in the session list."""
         import time
 
@@ -75,20 +358,29 @@ class ConnectionManager:
             return
 
         disconnected = set()
-        for websocket in self.active_connections[session_id]:
+        # Take a snapshot to avoid "Set changed size during iteration" error
+        # This can happen if disconnect() is called while we're broadcasting
+        connections_snapshot = list(self.active_connections.get(session_id, set()))
+        for websocket in connections_snapshot:
             try:
                 await websocket.send_json(message)
             except Exception:
                 disconnected.add(websocket)
 
         # Clean up disconnected clients
-        self.active_connections[session_id] -= disconnected
+        if disconnected and session_id in self.active_connections:
+            self.active_connections[session_id] -= disconnected
 
     def get_display(self, session_id: str) -> Optional[WebDisplay]:
         """Get the WebDisplay for a session."""
         return self.displays.get(session_id)
 
-    def create_display(self, session_id: str, agent_ids: list, agent_models: Optional[Dict[str, str]] = None) -> WebDisplay:
+    def create_display(
+        self,
+        session_id: str,
+        agent_ids: list,
+        agent_models: Optional[Dict[str, str]] = None,
+    ) -> WebDisplay:
         """Create a new WebDisplay for a session."""
 
         async def broadcast_fn(message: Dict[str, Any]) -> None:
@@ -122,7 +414,10 @@ def get_default_config() -> Optional[str]:
     return _default_config_path
 
 
-def create_app(config_path: Optional[str] = None, automation_mode: bool = False) -> "FastAPI":
+def create_app(
+    config_path: Optional[str] = None,
+    automation_mode: bool = False,
+) -> "FastAPI":
     """Create and configure the FastAPI application.
 
     Args:
@@ -653,12 +948,17 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
             # First ensure openskills CLI is installed
             if not install_openskills_cli():
                 return JSONResponse(
-                    {"error": "Failed to install openskills CLI. Ensure npm/Node.js is installed."},
+                    {
+                        "error": "Failed to install openskills CLI. Ensure npm/Node.js is installed.",
+                    },
                     status_code=500,
                 )
             # Then install Anthropic skills
             if install_anthropic_skills():
-                return {"success": True, "message": "Anthropic skills installed successfully"}
+                return {
+                    "success": True,
+                    "message": "Anthropic skills installed successfully",
+                }
             else:
                 return JSONResponse(
                     {"error": "Failed to install Anthropic skills"},
@@ -667,7 +967,10 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
 
         elif package_id == "crawl4ai":
             if install_crawl4ai_skill():
-                return {"success": True, "message": "Crawl4AI skill installed successfully"}
+                return {
+                    "success": True,
+                    "message": "Crawl4AI skill installed successfully",
+                }
             else:
                 return JSONResponse(
                     {"error": "Failed to install Crawl4AI skill"},
@@ -691,7 +994,14 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
         for backend_type, caps in BACKEND_CAPABILITIES.items():
             # Skip generic/advanced backends for quickstart
             # Also skip ag2 as it's not a realistic standalone backend
-            if backend_type in ["chatcompletion", "inference", "lmstudio", "vllm", "sglang", "ag2"]:
+            if backend_type in [
+                "chatcompletion",
+                "inference",
+                "lmstudio",
+                "vllm",
+                "sglang",
+                "ag2",
+            ]:
                 continue
 
             # Check if API key is available (and not a placeholder)
@@ -704,7 +1014,9 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
                 api_key = os.getenv(caps.env_var, "")
                 # Check it's not empty and not a placeholder from .env.example
                 # All placeholders follow pattern: your-*-key-here
-                is_placeholder = api_key.lower().startswith("your-") and api_key.lower().endswith("-key-here")
+                is_placeholder = api_key.lower().startswith(
+                    "your-",
+                ) and api_key.lower().endswith("-key-here")
                 has_api_key = bool(api_key) and not is_placeholder
             else:
                 # Local backends don't need keys
@@ -743,11 +1055,25 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
         static_models = caps.models if caps else []
 
         # For providers with dynamic model lists, fetch from API
-        dynamic_providers = ["openrouter", "groq", "together", "fireworks", "cerebras", "nebius", "moonshot", "qwen", "poe"]
+        dynamic_providers = [
+            "openrouter",
+            "groq",
+            "together",
+            "fireworks",
+            "cerebras",
+            "nebius",
+            "moonshot",
+            "qwen",
+            "poe",
+            "openai",
+        ]
 
         if provider_id in dynamic_providers:
             try:
-                dynamic_models = await get_models_for_provider(provider_id, use_cache=True)
+                dynamic_models = await get_models_for_provider(
+                    provider_id,
+                    use_cache=True,
+                )
                 if dynamic_models:
                     return {
                         "provider_id": provider_id,
@@ -803,7 +1129,11 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
             "context_path": "/path/to/project",  // optional
             "coordination": {  // optional
                 "voting_sensitivity": "balanced",  // lenient, balanced, strict
-                "answer_novelty_requirement": "lenient"  // lenient, balanced, strict
+                "answer_novelty_requirement": "lenient",  // lenient, balanced, strict
+                "max_new_answers_per_agent": 5,  // optional, limit answers per agent
+                "persona_generator": {  // optional, auto-generate diverse personas
+                    "enabled": true
+                }
             }
         }
 
@@ -817,7 +1147,13 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
         agents_config = request_data.get("agents", [])
         use_docker = request_data.get("use_docker", True)
         context_path = request_data.get("context_path")
+        context_paths_raw = request_data.get("context_paths", [])
         coordination = request_data.get("coordination", {})
+
+        # Transform frontend context_paths format to backend format
+        # Frontend: {path, type: 'read'|'write'}
+        # Backend: {path, permission: 'read'|'write'}
+        context_paths = [{"path": cp.get("path", ""), "permission": cp.get("type", "read")} for cp in context_paths_raw if cp.get("path")] if context_paths_raw else None
 
         if not agents_config:
             return JSONResponse(
@@ -843,7 +1179,9 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
             if agent.get("enable_web_search") is not None:
                 tool_settings["enable_web_search"] = agent.get("enable_web_search")
             if agent.get("enable_code_execution") is not None:
-                tool_settings["enable_code_execution"] = agent.get("enable_code_execution")
+                tool_settings["enable_code_execution"] = agent.get(
+                    "enable_code_execution",
+                )
             if tool_settings:
                 agent_tools[agent_id] = tool_settings
             # Collect per-agent system messages
@@ -855,6 +1193,7 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
         config = builder._generate_quickstart_config(
             formatted_agents,
             context_path=context_path,
+            context_paths=context_paths,
             use_docker=use_docker,
             agent_tools=agent_tools,
             agent_system_messages=agent_system_messages,
@@ -862,7 +1201,12 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
         )
 
         # Convert to YAML string for preview
-        yaml_str = yaml.dump(config, default_flow_style=False, sort_keys=False, allow_unicode=True)
+        yaml_str = yaml.dump(
+            config,
+            default_flow_style=False,
+            sort_keys=False,
+            allow_unicode=True,
+        )
 
         return {"config": config, "yaml": yaml_str}
 
@@ -899,7 +1243,11 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
         # Sanitize filename - only allow alphanumeric, underscore, dash, and .yaml extension
         if not re.match(r"^[\w\-]+\.ya?ml$", filename):
             # If invalid, sanitize it
-            base_name = re.sub(r"[^\w\-]", "_", filename.replace(".yaml", "").replace(".yml", ""))
+            base_name = re.sub(
+                r"[^\w\-]",
+                "_",
+                filename.replace(".yaml", "").replace(".yml", ""),
+            )
             filename = f"{base_name}.yaml"
 
         # Save to user config location
@@ -914,7 +1262,13 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
                     f.write(yaml_content)
                 else:
                     # Serialize config object to YAML
-                    yaml.dump(config, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+                    yaml.dump(
+                        config,
+                        f,
+                        default_flow_style=False,
+                        sort_keys=False,
+                        allow_unicode=True,
+                    )
 
             return {
                 "success": True,
@@ -1077,7 +1431,9 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
         is_allowed = any(str(old_path).startswith(str(allowed.resolve())) for allowed in allowed_paths)
         if not is_allowed:
             return JSONResponse(
-                {"error": "Access denied: can only rename configs in ~/.config/massgen/"},
+                {
+                    "error": "Access denied: can only rename configs in ~/.config/massgen/",
+                },
                 status_code=403,
             )
 
@@ -1089,7 +1445,11 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
 
         # Sanitize new filename
         if not re.match(r"^[\w\-]+\.ya?ml$", new_name):
-            base_name = re.sub(r"[^\w\-]", "_", new_name.replace(".yaml", "").replace(".yml", ""))
+            base_name = re.sub(
+                r"[^\w\-]",
+                "_",
+                new_name.replace(".yaml", "").replace(".yml", ""),
+            )
             new_name = f"{base_name}.yaml"
 
         new_path = old_path.parent / new_name
@@ -1142,7 +1502,9 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
         is_allowed = any(str(config_path).startswith(str(allowed.resolve())) for allowed in allowed_paths)
         if not is_allowed:
             return JSONResponse(
-                {"error": "Access denied: can only delete configs in ~/.config/massgen/"},
+                {
+                    "error": "Access denied: can only delete configs in ~/.config/massgen/",
+                },
                 status_code=403,
             )
 
@@ -1186,7 +1548,9 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
             sessions.append(
                 {
                     "session_id": session_id,
-                    "connections": len(manager.active_connections.get(session_id, set())),
+                    "connections": len(
+                        manager.active_connections.get(session_id, set()),
+                    ),
                     "has_display": display is not None,
                     "is_running": task is not None and not task.done() if task else False,
                     "question": display.question if display and hasattr(display, "question") else None,
@@ -1232,80 +1596,195 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
                 status_code=404,
             )
 
-        # Get workspace path from display if available
-        workspace_path = getattr(display, "_workspace_path", None)
-        if workspace_path:
-            agent_workspace = Path(workspace_path) / agent_id
-        else:
-            # Fall back to default workspace pattern
-            agent_workspace = Path.cwd() / f"workspace_{agent_id}"
+        # Try to get workspace path from status.json first (more reliable during active coordination)
+        agent_workspace = None
+        if display.log_session_dir:
+            try:
+                import json
+
+                from massgen.logger_config import get_log_session_dir
+
+                log_dir = get_log_session_dir()
+                if log_dir:
+                    status_file = log_dir / "status.json"
+                    if status_file.exists():
+                        with open(status_file, "r") as f:
+                            status_data = json.load(f)
+
+                        # Get workspace path from status.json
+                        agents_data = status_data.get("agents", {})
+                        agent_data = agents_data.get(agent_id, {})
+                        workspace_paths = agent_data.get("workspace_paths", {})
+                        workspace_str = workspace_paths.get("workspace")
+
+                        if workspace_str:
+                            agent_workspace = Path(workspace_str)
+            except Exception as e:
+                print(f"[WebUI] Warning: Could not read workspace path from status.json: {e}")
+
+        # Fall back to display workspace path or default pattern
+        if not agent_workspace:
+            workspace_path = getattr(display, "_workspace_path", None)
+            if workspace_path:
+                agent_workspace = Path(workspace_path) / agent_id
+            else:
+                # Fall back to default workspace pattern
+                agent_workspace = Path.cwd() / f"workspace_{agent_id}"
 
         files = []
-        if agent_workspace.exists():
+        if agent_workspace and agent_workspace.exists():
             try:
-                for file_path in agent_workspace.rglob("*"):
-                    if file_path.is_file():
-                        rel_path = file_path.relative_to(agent_workspace)
-                        stat = file_path.stat()
-                        files.append(
-                            {
-                                "path": str(rel_path),
-                                "size": stat.st_size,
-                                "modified": stat.st_mtime,
-                                "operation": "create",  # For compatibility
-                            },
-                        )
+                # Use iterdir with limit instead of rglob to avoid scanning huge trees
+                # Limit to first 1000 files to prevent timeout
+                file_count = 0
+                max_files = 1000
+
+                def scan_directory(directory: Path, max_depth: int = 10, current_depth: int = 0):
+                    """Recursively scan directory with depth limit and file count limit."""
+                    nonlocal file_count
+
+                    if current_depth > max_depth or file_count >= max_files:
+                        return
+
+                    try:
+                        for item in directory.iterdir():
+                            if file_count >= max_files:
+                                break
+
+                            if item.is_file():
+                                rel_path = item.relative_to(agent_workspace)
+                                stat = item.stat()
+                                files.append(
+                                    {
+                                        "path": str(rel_path),
+                                        "size": stat.st_size,
+                                        "modified": stat.st_mtime,
+                                        "operation": "create",
+                                    },
+                                )
+                                file_count += 1
+                            elif item.is_dir():
+                                # Skip hidden directories and common ignore patterns
+                                if not item.name.startswith(".") and item.name not in ["__pycache__", "node_modules", ".git"]:
+                                    scan_directory(item, max_depth, current_depth + 1)
+                    except PermissionError:
+                        pass  # Skip directories we can't read
+
+                scan_directory(agent_workspace)
+
+                if file_count >= max_files:
+                    print(f"[WebUI] Warning: File limit reached for {agent_id} workspace. Showing first {max_files} files.")
+
             except Exception as e:
                 return JSONResponse(
                     {"error": str(e), "files": []},
                     status_code=500,
                 )
 
-        return {"files": files, "workspace_path": str(agent_workspace)}
+        return {"files": files, "workspace_path": str(agent_workspace) if agent_workspace else None}
 
     @app.get("/api/workspaces")
-    async def list_workspaces():
-        """List all available workspaces including current and historical.
+    async def list_workspaces(session_id: str = None):
+        """List all available workspaces for the current session.
+
+        IMPORTANT: This endpoint ONLY reads from status.json per FR-011.
+        No filesystem scanning fallback is performed.
+
+        Args:
+            session_id: Session ID for reading workspace paths from status.json.
+                       If not provided or status.json unavailable, returns an error.
 
         Returns:
-        - current: Workspaces in cwd (workspace1, workspace2, etc.)
-        - historical: Dated workspaces from logs directory
+        - current: Workspaces for the current session (from status.json)
+        - historical: Empty (historical workspaces require explicit log_dir via /api/sessions/{id}/answer-workspaces)
+
+        Raises:
+        - 400 if session_id not provided
+        - 503 if status.json unavailable
         """
+        if not session_id:
+            return JSONResponse(
+                {"error": "session_id is required", "current": [], "historical": []},
+                status_code=400,
+            )
+
         workspaces = {
             "current": [],
             "historical": [],
         }
 
-        # Find current workspaces in cwd
-        cwd = Path.cwd()
-        for path in cwd.iterdir():
-            if path.is_dir() and path.name.startswith("workspace"):
-                workspaces["current"].append(
+        # Read workspace paths from status.json ONLY (per FR-011)
+        try:
+            # Try to get log_session_dir from the display (most reliable during active session)
+            display = manager.get_display(session_id)
+            log_session_dir = getattr(display, "log_session_dir", None) if display else None
+
+            # Fallback to global logger (works when called from same process)
+            if not log_session_dir:
+                from massgen.logger_config import get_log_session_dir
+
+                log_session_dir = get_log_session_dir()
+
+            if not log_session_dir:
+                return JSONResponse(
                     {
-                        "name": path.name,
-                        "path": str(path),
-                        "type": "current",
+                        "error": "Session log directory not found. status.json unavailable.",
+                        "current": [],
+                        "historical": [],
                     },
+                    status_code=503,
                 )
 
-        # Find historical workspaces in logs directory
-        logs_dir = cwd / "logs"
-        if logs_dir.exists():
-            for date_dir in sorted(logs_dir.iterdir(), reverse=True):
-                if date_dir.is_dir():
-                    # Look for workspace directories within dated logs
-                    for ws_dir in date_dir.iterdir():
-                        if ws_dir.is_dir() and "workspace" in ws_dir.name.lower():
-                            workspaces["historical"].append(
-                                {
-                                    "name": f"{date_dir.name}/{ws_dir.name}",
-                                    "path": str(ws_dir),
-                                    "type": "historical",
-                                    "date": date_dir.name,
-                                },
-                            )
+            status_file = Path(log_session_dir) / "status.json"
+            if not status_file.exists():
+                return JSONResponse(
+                    {
+                        "error": "status.json not found. Session may not have started yet.",
+                        "current": [],
+                        "historical": [],
+                    },
+                    status_code=503,
+                )
 
-        return workspaces
+            with open(status_file) as f:
+                status_data = json.load(f)
+
+            agents_data = status_data.get("agents", {})
+            for agent_id, agent_info in agents_data.items():
+                workspace_paths = agent_info.get("workspace_paths", {})
+                workspace_path = workspace_paths.get("workspace")
+                if workspace_path and Path(workspace_path).exists():
+                    # Normalize path for consistent format across HTTP and WebSocket
+                    normalized_path = _normalize_workspace_path(workspace_path)
+                    workspaces["current"].append(
+                        {
+                            "name": Path(workspace_path).name,
+                            "path": normalized_path,
+                            "type": "current",
+                            "agentId": agent_id,
+                        },
+                    )
+
+            return workspaces
+
+        except json.JSONDecodeError as e:
+            return JSONResponse(
+                {
+                    "error": f"status.json is corrupted: {e}",
+                    "current": [],
+                    "historical": [],
+                },
+                status_code=503,
+            )
+        except Exception as e:
+            return JSONResponse(
+                {
+                    "error": f"Failed to read workspaces from status.json: {e}",
+                    "current": [],
+                    "historical": [],
+                },
+                status_code=503,
+            )
 
     @app.get("/api/workspace/browse")
     async def browse_workspace(path: str):
@@ -1314,126 +1793,258 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
         Args:
             path: Absolute path to workspace directory
         """
+        import time as time_module
+
+        request_start = time_module.time()
         workspace_path = Path(path)
 
+        workspace_logger.info(f"BROWSE request: path={path}")
+
         if not workspace_path.exists():
+            workspace_logger.warning(f"BROWSE 404: workspace not found: {path}")
             return JSONResponse(
                 {"error": "Workspace not found", "files": []},
                 status_code=404,
             )
 
         if not workspace_path.is_dir():
+            workspace_logger.warning(f"BROWSE 400: path is not a directory: {path}")
             return JSONResponse(
                 {"error": "Path is not a directory", "files": []},
                 status_code=400,
             )
 
-        files = []
+        workspace_mtime = workspace_path.stat().st_mtime
         try:
-            for file_path in workspace_path.rglob("*"):
-                if file_path.is_file():
-                    rel_path = file_path.relative_to(workspace_path)
-                    stat = file_path.stat()
-                    files.append(
-                        {
-                            "path": str(rel_path),
-                            "size": stat.st_size,
-                            "modified": stat.st_mtime,
-                            "operation": "create",
-                        },
-                    )
+            files = _scan_workspace_files(workspace_path)
+            # Add operation field for browse endpoint
+            for f in files:
+                f["operation"] = "create"
         except Exception as e:
+            workspace_logger.error(f"BROWSE 500: error scanning {path}: {e}")
             return JSONResponse(
                 {"error": str(e), "files": []},
                 status_code=500,
             )
 
-        return {"files": files, "workspace_path": str(workspace_path)}
+        duration_ms = (time_module.time() - request_start) * 1000
+        workspace_logger.info(
+            f"BROWSE complete: path={workspace_path.name}, " f"files={len(files)}, duration={duration_ms:.1f}ms",
+        )
 
-    @app.get("/api/sessions/{session_id}/answer-workspaces")
-    async def get_answer_workspaces(session_id: str):
-        """Get workspaces linked to specific answer versions.
+        return {
+            "files": files,
+            # Normalize path for consistent format across HTTP and WebSocket
+            "workspace_path": _normalize_workspace_path(str(workspace_path)),
+            "workspace_mtime": workspace_mtime,
+        }
 
-        Uses snapshot_mappings.json from log directory if available,
-        otherwise scans the log directory structure.
-        """
+    @app.get("/api/sessions/{session_id}/status")
+    async def get_session_status(session_id: str, log_dir: str = None):
+        """Get session status.json with workspace paths and agent information."""
         import json
 
+        from massgen.logger_config import get_log_session_dir
+
+        display = manager.get_display(session_id)
+
+        # Determine log session dir
+        if log_dir:
+            log_session_dir = Path(log_dir).resolve()
+        elif display and getattr(display, "log_session_dir", None):
+            log_session_dir = Path(display.log_session_dir).resolve()
+        else:
+            log_session_dir = get_log_session_dir()
+
+        # Look for status.json in various locations
+        status_paths = []
+        if log_session_dir and log_session_dir.exists():
+            # Direct status.json
+            direct_status = log_session_dir / "status.json"
+            if direct_status.exists():
+                status_paths.append(direct_status)
+
+            # Look in turn_X/attempt_Y subdirectories
+            for turn_dir in log_session_dir.glob("turn_*"):
+                if turn_dir.is_dir():
+                    turn_status = turn_dir / "status.json"
+                    if turn_status.exists():
+                        status_paths.append(turn_status)
+
+                    for attempt_dir in turn_dir.glob("attempt_*"):
+                        if attempt_dir.is_dir():
+                            attempt_status = attempt_dir / "status.json"
+                            if attempt_status.exists():
+                                status_paths.append(attempt_status)
+
+        # Return the most recent status.json (based on path depth and modification time)
+        if status_paths:
+            # Sort by modification time, most recent first
+            status_paths.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+            status_file = status_paths[0]
+
+            try:
+                with open(status_file) as f:
+                    status_data = json.load(f)
+
+                return {
+                    "status": status_data,
+                    "status_file": str(status_file),
+                    "log_dir_used": str(log_session_dir) if log_session_dir else "",
+                }
+            except Exception as e:
+                return JSONResponse(
+                    {"error": f"Failed to read status.json: {e}", "status": None},
+                    status_code=500,
+                )
+
+        return {
+            "status": None,
+            "status_file": None,
+            "log_dir_used": str(log_session_dir) if log_session_dir else "",
+            "error": "No status.json found",
+        }
+
+    @app.get("/api/sessions/{session_id}/answer-workspaces")
+    async def get_answer_workspaces(session_id: str, log_dir: str = None):
+        """Get workspaces linked to specific answer versions.
+
+        Uses status.json as the single source of truth:
+        - agents.{id}.workspace_paths.workspace for current workspaces
+        - historical_workspaces for historical answer snapshots
+
+        Falls back to directory scanning only if status.json is unavailable.
+        """
         from massgen.logger_config import get_log_session_dir
 
         display = manager.get_display(session_id)
         agent_ids = display.agent_ids if display else []
 
         workspaces = []
-        log_session_dir = get_log_session_dir()
+        cwd = Path.cwd()
+        sources = []
 
-        if not log_session_dir or not log_session_dir.exists():
-            return {"workspaces": [], "current": []}
+        # Determine log session dir
+        log_session_dir = None
+        if log_dir:
+            log_session_dir = Path(log_dir).resolve()
+        elif display and getattr(display, "log_session_dir", None):
+            log_session_dir = Path(display.log_session_dir).resolve()
+        else:
+            log_session_dir = get_log_session_dir()
 
-        # Try to use snapshot_mappings.json for accurate workspace info
-        snapshot_mappings_file = log_session_dir / "snapshot_mappings.json"
-        if snapshot_mappings_file.exists():
-            try:
-                with open(snapshot_mappings_file) as f:
-                    snapshot_mappings = json.load(f)
+        # PRIMARY SOURCE: Read from status.json
+        status_data = None
+        try:
+            status_response = await get_session_status(session_id, log_dir)
+            status_data = status_response.get("status")
+        except Exception as e:
+            print(f"[WARNING] Failed to get status.json: {e}")
 
-                for label, mapping in snapshot_mappings.items():
-                    # Only include answers (not votes or final)
-                    if mapping.get("type") != "answer":
-                        continue
-
-                    agent_id = mapping.get("agent_id", "")
-                    timestamp = mapping.get("timestamp", "")
-
-                    # Build workspace path from mapping
-                    workspace_path = log_session_dir / agent_id / timestamp / "workspace"
-                    if workspace_path.exists():
+        if status_data:
+            # Extract historical workspaces (answer snapshots)
+            if "historical_workspaces" in status_data:
+                for ws_data in status_data["historical_workspaces"]:
+                    workspace_path = ws_data.get("workspacePath")
+                    if workspace_path and Path(workspace_path).exists():
                         workspaces.append(
                             {
-                                "answerId": f"{agent_id}-{timestamp}",
-                                "agentId": agent_id,
-                                "answerNumber": mapping.get("round", 1),
-                                "answerLabel": label,  # Use the canonical label from mappings
-                                "timestamp": timestamp,
-                                "workspacePath": str(workspace_path),
+                                "answerId": ws_data.get("answerId"),
+                                "agentId": ws_data.get("agentId"),
+                                "answerNumber": ws_data.get("answerNumber", 1),
+                                "answerLabel": ws_data.get("answerLabel"),
+                                "timestamp": ws_data.get("timestamp", ""),
+                                "workspacePath": workspace_path,
                             },
                         )
-            except Exception as e:
-                print(f"[WARNING] Failed to load snapshot_mappings.json: {e}")
-                # Fall through to directory scanning
+                if workspaces:
+                    sources.append("status_json")
 
-        # Fallback: Scan log directory structure if no mappings found
-        if not workspaces:
-            for entry in log_session_dir.iterdir():
-                if not entry.is_dir():
-                    continue
+        # FALLBACK: Directory scanning if no status.json data
+        if not workspaces and log_session_dir and log_session_dir.exists():
+            # Helper to scan a directory for agent workspaces
+            # Only includes directories that have answer.txt (not update_message.txt or vote.json)
+            def scan_for_workspaces(base_dir: Path):
+                found = []
+                agent_dirs = [p for p in base_dir.iterdir() if p.is_dir() and p.name.startswith("agent_")]
+                for agent_dir in agent_dirs:
+                    agent_id = agent_dir.name
+                    agent_index = (agent_ids.index(agent_id) + 1) if agent_id in agent_ids else 0
+                    answer_count = 0
+                    for ts_dir in sorted(agent_dir.iterdir(), key=lambda x: x.name):
+                        ws_path = ts_dir / "workspace"
+                        answer_file = ts_dir / "answer.txt"
+                        # Only include if both workspace dir AND answer.txt exist
+                        if ts_dir.is_dir() and ws_path.exists() and answer_file.exists():
+                            answer_count += 1
+                            found.append(
+                                {
+                                    "answerId": f"{agent_id}-{ts_dir.name}",
+                                    "agentId": agent_id,
+                                    "answerNumber": answer_count,
+                                    "answerLabel": f"agent{agent_index}.{answer_count}",
+                                    "timestamp": ts_dir.name,
+                                    "workspacePath": str(ws_path),
+                                },
+                            )
+                return found
 
-                # Check for turn directories (turn_1, turn_2, etc.)
-                if entry.name.startswith("turn_"):
-                    for agent_dir in entry.iterdir():
-                        if not agent_dir.is_dir():
-                            continue
-                        agent_id = agent_dir.name
-                        agent_index = (agent_ids.index(agent_id) + 1) if agent_id in agent_ids else 0
+            # Try direct agent_* directories first
+            workspaces = scan_for_workspaces(log_session_dir)
 
-                        # Find timestamp directories with workspaces
-                        answer_count = 0
-                        for ts_dir in sorted(agent_dir.iterdir(), key=lambda x: x.name):
-                            if ts_dir.is_dir() and (ts_dir / "workspace").exists():
-                                answer_count += 1
-                                workspaces.append(
+            # If not found, try turn_*/attempt_* subdirectories
+            if not workspaces:
+                for turn_dir in sorted(log_session_dir.glob("turn_*")):
+                    for attempt_dir in sorted(turn_dir.glob("attempt_*")):
+                        workspaces = scan_for_workspaces(attempt_dir)
+                        if workspaces:
+                            break
+                    if workspaces:
+                        break
+
+            if workspaces:
+                sources.append("log_dir_scan")
+
+            # Also scan for final/ directories (winner's workspace after consensus)
+            def scan_for_final_workspaces(base_dir: Path):
+                found = []
+                final_dir = base_dir / "final"
+                if final_dir.exists() and final_dir.is_dir():
+                    for agent_dir in final_dir.iterdir():
+                        if agent_dir.is_dir() and agent_dir.name.startswith("agent_"):
+                            agent_id = agent_dir.name
+                            ws_path = agent_dir / "workspace"
+                            if ws_path.exists():
+                                found.append(
                                     {
-                                        "answerId": f"{agent_id}-{ts_dir.name}",
+                                        "answerId": f"{agent_id}-final",
                                         "agentId": agent_id,
-                                        "answerNumber": answer_count,
-                                        "answerLabel": f"agent{agent_index}.{answer_count}",
-                                        "timestamp": ts_dir.name,
-                                        "workspacePath": str(ts_dir / "workspace"),
+                                        "answerNumber": 0,  # 0 indicates final
+                                        "answerLabel": "Final",
+                                        "timestamp": "final",
+                                        "workspacePath": str(ws_path),
                                     },
                                 )
+                return found
 
-        # Also include current workspaces from cwd
-        cwd = Path.cwd()
+            # Try to find final workspaces in log_session_dir
+            final_workspaces = scan_for_final_workspaces(log_session_dir)
+
+            # If not found, try turn_*/attempt_* subdirectories
+            if not final_workspaces:
+                for turn_dir in sorted(log_session_dir.glob("turn_*")):
+                    for attempt_dir in sorted(turn_dir.glob("attempt_*")):
+                        final_workspaces = scan_for_final_workspaces(attempt_dir)
+                        if final_workspaces:
+                            break
+                    if final_workspaces:
+                        break
+
+            if final_workspaces:
+                workspaces.extend(final_workspaces)
+                sources.append("final_scan")
+
+        # Include current workspaces from cwd
         current = []
         for path in cwd.iterdir():
             if path.is_dir() and path.name.startswith("workspace"):
@@ -1444,8 +2055,15 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
                         "type": "current",
                     },
                 )
+        if current:
+            sources.append("cwd_current")
 
-        return {"workspaces": workspaces, "current": current}
+        return {
+            "workspaces": workspaces,
+            "current": current,
+            "sources": sources,
+            "log_dir_used": str(log_session_dir) if log_session_dir else "",
+        }
 
     @app.get("/api/workspace/file")
     async def get_file_content(path: str, workspace: str):
@@ -1465,26 +2083,51 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
             }
         """
         import mimetypes
+        import re
+        import time as time_module
+        from urllib.parse import unquote
 
-        workspace_path = Path(workspace).resolve()
+        request_start = time_module.time()
+
+        # Normalize paths to fix 404 issues from path format inconsistencies
+        # Handle URL encoding, trailing slashes, and multiple slashes
+        workspace = unquote(workspace).rstrip("/")
+        workspace = re.sub(r"/+", "/", workspace)
+        path = unquote(path).lstrip("/")
+        path = re.sub(r"/+", "/", path)
+
+        workspace_logger.info(f"FILE request: path={path}, workspace={workspace}")
+
+        # Handle both absolute and relative workspace paths
+        workspace_path = Path(workspace)
+        if not workspace_path.is_absolute():
+            # Relative paths are relative to the MassGen project root
+            massgen_root = Path(__file__).parent.parent.parent.parent
+            workspace_path = massgen_root / workspace
+        workspace_path = workspace_path.resolve()
+
+        workspace_logger.debug(f"FILE resolved workspace: {workspace_path}")
         file_path = (workspace_path / path).resolve()
 
         # Security: Ensure file is within workspace (prevent directory traversal)
         try:
             file_path.relative_to(workspace_path)
         except ValueError:
+            workspace_logger.warning(f"FILE 403: path traversal attempt: {path}")
             return JSONResponse(
                 {"error": "Access denied: path outside workspace"},
                 status_code=403,
             )
 
         if not file_path.exists():
+            workspace_logger.warning(f"FILE 404: file not found: {path} in {workspace}")
             return JSONResponse(
                 {"error": "File not found"},
                 status_code=404,
             )
 
         if not file_path.is_file():
+            workspace_logger.warning(f"FILE 400: not a file: {path}")
             return JSONResponse(
                 {"error": "Path is not a file"},
                 status_code=400,
@@ -1494,76 +2137,79 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
         stat = file_path.stat()
         size = stat.st_size
 
-        # Detect MIME type
-        mime_type, _ = mimetypes.guess_type(str(file_path))
-        mime_type = mime_type or "application/octet-stream"
-
-        # Map extensions to syntax highlighting languages
-        extension_to_language = {
-            ".py": "python",
-            ".js": "javascript",
-            ".jsx": "javascript",
-            ".ts": "typescript",
-            ".tsx": "typescript",
-            ".json": "json",
-            ".yaml": "yaml",
-            ".yml": "yaml",
-            ".md": "markdown",
-            ".html": "html",
-            ".htm": "html",
-            ".css": "css",
-            ".scss": "scss",
-            ".less": "less",
-            ".sh": "bash",
-            ".bash": "bash",
-            ".zsh": "bash",
-            ".sql": "sql",
-            ".rs": "rust",
-            ".go": "go",
-            ".java": "java",
-            ".c": "c",
-            ".cpp": "cpp",
-            ".h": "c",
-            ".hpp": "cpp",
-            ".rb": "ruby",
-            ".php": "php",
-            ".swift": "swift",
-            ".kt": "kotlin",
-            ".scala": "scala",
-            ".r": "r",
-            ".R": "r",
-            ".lua": "lua",
-            ".pl": "perl",
-            ".xml": "xml",
-            ".toml": "toml",
-            ".ini": "ini",
-            ".cfg": "ini",
-            ".conf": "ini",
-            ".dockerfile": "dockerfile",
-            ".gitignore": "gitignore",
-            ".env": "dotenv",
-            ".txt": "plaintext",
-            ".log": "plaintext",
-        }
-
+        # Get file extension for MIME type and language detection
         suffix = file_path.suffix.lower()
-        language = extension_to_language.get(suffix, "plaintext")
+
+        # Detect MIME type with fallbacks for common types that mimetypes may not know
+        mime_type, _ = mimetypes.guess_type(str(file_path))
+        if mime_type is None:
+            # Fallback mappings for types that Python's mimetypes may not recognize
+            mime_fallbacks = {
+                ".md": "text/markdown",
+                ".markdown": "text/markdown",
+                ".mmd": "text/plain",  # Mermaid diagrams
+                ".mermaid": "text/plain",
+                ".yaml": "text/yaml",
+                ".yml": "text/yaml",
+                ".toml": "text/plain",
+                ".env": "text/plain",
+                ".tsx": "text/typescript",
+                ".jsx": "text/javascript",
+            }
+            mime_type = mime_fallbacks.get(suffix, "application/octet-stream")
+
+        # Get language from shared constants (EXTENSION_TO_LANGUAGE)
+        language = get_language_for_extension(suffix)
 
         # Special case for Dockerfile without extension
         if file_path.name.lower() == "dockerfile":
             language = "dockerfile"
 
-        # Check if binary by reading first chunk
+        # Check if binary by mime type first, then by content
+        # Known binary mime type prefixes
+        binary_mime_prefixes = (
+            "image/",
+            "audio/",
+            "video/",
+            "application/pdf",
+            "application/zip",
+            "application/x-tar",
+            "application/gzip",
+            "application/octet-stream",
+            "application/vnd.",  # Office documents, etc.
+        )
+
         try:
             with open(file_path, "rb") as f:
                 chunk = f.read(8192)
 
-            # Check for null bytes (binary indicator)
-            is_binary = b"\x00" in chunk
+            # Check for null bytes OR known binary mime types
+            # PNG files don't have null bytes in header, so we need mime check
+            is_binary = b"\x00" in chunk or any(mime_type.startswith(prefix) for prefix in binary_mime_prefixes)
 
             if is_binary:
+                # For binary files, read and base64 encode the content
+                # Limit binary files to 50MB (increased from 10MB for large presentations/PDFs)
+                max_binary_size = 50 * 1024 * 1024
+                if size > max_binary_size:
+                    return {
+                        "content": "",
+                        "binary": True,
+                        "size": size,
+                        "mimeType": mime_type,
+                        "language": language,
+                        "error": f"File too large for preview ({size} bytes, max {max_binary_size})",
+                    }
+
+                with open(file_path, "rb") as f:
+                    binary_content = f.read()
+
+                duration_ms = (time_module.time() - request_start) * 1000
+                workspace_logger.info(
+                    f"FILE complete: {path}, size={size}, binary=True, duration={duration_ms:.1f}ms",
+                )
                 return {
-                    "content": "",
+                    "content": base64.b64encode(binary_content).decode("utf-8"),
                     "binary": True,
                     "size": size,
                     "mimeType": mime_type,
@@ -1580,6 +2226,10 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
                 with open(file_path, "r", encoding="utf-8", errors="replace") as f:
                     content = f.read()
 
+            duration_ms = (time_module.time() - request_start) * 1000
+            workspace_logger.info(
+                f"FILE complete: {path}, size={size}, binary=False, duration={duration_ms:.1f}ms",
+            )
             return {
                 "content": content,
                 "binary": False,
@@ -1589,8 +2239,897 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
             }
 
         except Exception as e:
+            workspace_logger.error(f"FILE 500: failed to read {path}: {e}")
             return JSONResponse(
                 {"error": f"Failed to read file: {str(e)}"},
+                status_code=500,
+            )
+
+    @app.get("/workspace-preview/{session_id}/{agent_id}/{file_path:path}")
+    async def serve_workspace_preview(
+        session_id: str,
+        agent_id: str,
+        file_path: str,
+        workspace: str = None,  # Optional: direct workspace path for historical workspaces
+    ):
+        """Serve workspace files directly for HTML preview with working relative links.
+
+        This endpoint serves files from an agent's workspace at a stable URL path,
+        allowing relative links in HTML files to work correctly.
+
+        Security:
+        - Validates session_id exists
+        - Gets workspace path from status.json (trusted source) or query param
+        - Prevents directory traversal attacks
+        - Only serves files within the workspace
+
+        Args:
+            session_id: Active session ID
+            agent_id: Agent ID (e.g., "agent_a")
+            file_path: Relative path within workspace (e.g., "index.html" or "about/index.html")
+            workspace: Optional direct workspace path (for historical workspaces)
+
+        Returns:
+            FileResponse with appropriate content type
+        """
+        import mimetypes
+
+        from starlette.responses import FileResponse
+
+        # Default to index.html if no file specified or path ends with /
+        if not file_path or file_path.endswith("/"):
+            file_path = file_path.rstrip("/") + "/index.html" if file_path else "index.html"
+
+        # Get workspace path - prefer query param for historical workspaces
+        workspace_path = None
+
+        # First, try the explicit workspace parameter (for historical workspaces)
+        if workspace:
+            explicit_path = Path(workspace)
+            if explicit_path.exists() and explicit_path.is_dir():
+                workspace_path = explicit_path
+
+        # If not provided or invalid, try status.json
+        if not workspace_path:
+            try:
+                # Try to get workspace from display's status.json
+                display = manager.get_display(session_id)
+                log_session_dir = getattr(display, "log_session_dir", None) if display else None
+
+                # Fallback to global logger
+                if not log_session_dir:
+                    from massgen.logger_config import get_log_session_dir
+
+                    log_session_dir = get_log_session_dir()
+
+                if log_session_dir:
+                    status_file = log_session_dir / "status.json"
+                    if status_file.exists():
+                        with open(status_file) as f:
+                            status_data = json.load(f)
+
+                        agents_data = status_data.get("agents", {})
+                        agent_data = agents_data.get(agent_id, {})
+                        workspace_paths = agent_data.get("workspace_paths", {})
+                        workspace_str = workspace_paths.get("workspace")
+                        if workspace_str:
+                            workspace_path = Path(workspace_str)
+            except Exception as e:
+                print(f"[WebUI] Warning: Could not get workspace path from status.json: {e}")
+
+        # Fallback: Try common workspace patterns
+        if not workspace_path or not workspace_path.exists():
+            cwd = Path.cwd()
+            # Try workspace{N} pattern based on agent index
+            agent_match = agent_id.replace("agent_", "")
+            agent_index = ord(agent_match[0]) - ord("a") + 1 if agent_match and agent_match[0].isalpha() else 1
+            fallback_path = cwd / f"workspace{agent_index}"
+            if fallback_path.exists():
+                workspace_path = fallback_path
+
+        if not workspace_path or not workspace_path.exists():
+            return JSONResponse(
+                {"error": f"Workspace not found for agent {agent_id}"},
+                status_code=404,
+            )
+
+        # Resolve the full file path
+        workspace_path = workspace_path.resolve()
+        full_file_path = (workspace_path / file_path).resolve()
+
+        # Security: Ensure file is within workspace (prevent directory traversal)
+        try:
+            full_file_path.relative_to(workspace_path)
+        except ValueError:
+            return JSONResponse(
+                {"error": "Access denied: path outside workspace"},
+                status_code=403,
+            )
+
+        # If path is a directory, try index.html
+        if full_file_path.is_dir():
+            full_file_path = full_file_path / "index.html"
+
+        if not full_file_path.exists():
+            return JSONResponse(
+                {"error": f"File not found: {file_path}"},
+                status_code=404,
+            )
+
+        if not full_file_path.is_file():
+            return JSONResponse(
+                {"error": "Path is not a file"},
+                status_code=400,
+            )
+
+        # Determine content type
+        mime_type, _ = mimetypes.guess_type(str(full_file_path))
+        mime_type = mime_type or "application/octet-stream"
+
+        # For HTML files, inject a <base> tag and rewrite root-relative links
+        # so navigation works within the workspace preview
+        if mime_type == "text/html":
+            import re
+
+            from starlette.responses import HTMLResponse
+
+            try:
+                html_content = full_file_path.read_text(encoding="utf-8")
+            except UnicodeDecodeError:
+                html_content = full_file_path.read_text(encoding="latin-1")
+
+            # Build the base URL for this workspace
+            base_url = f"/workspace-preview/{session_id}/{agent_id}/"
+
+            # Rewrite root-relative links (href="/about") to workspace-relative
+            # This handles links like <a href="/about"> -> <a href="/workspace-preview/.../about">
+            def rewrite_root_relative(match):
+                attr = match.group(1)  # href or src
+                path = match.group(2)  # the path starting with /
+                # Don't rewrite if it's already our workspace-preview path
+                if path.startswith("/workspace-preview/"):
+                    return match.group(0)
+                # Rewrite to workspace-relative path
+                return f'{attr}="{base_url}{path.lstrip("/")}"'
+
+            # Match href="/..." or src="/..." (root-relative paths)
+            html_content = re.sub(
+                r'(href|src)="(/[^"]*)"',
+                rewrite_root_relative,
+                html_content,
+                flags=re.IGNORECASE,
+            )
+            # Also handle single quotes
+            html_content = re.sub(
+                r"(href|src)='(/[^']*)'",
+                lambda m: f"{m.group(1)}='{base_url}{m.group(2).lstrip('/')}'",
+                html_content,
+                flags=re.IGNORECASE,
+            )
+
+            # Inject <base> tag for truly relative links (./about, about, etc.)
+            # This goes right after <head> to ensure it applies to all resources
+            if "<head>" in html_content.lower():
+                # Find <head> case-insensitively and inject base tag after it
+                head_match = re.search(r"<head[^>]*>", html_content, re.IGNORECASE)
+                if head_match:
+                    insert_pos = head_match.end()
+                    base_tag = f'\n<base href="{base_url}">\n'
+                    html_content = html_content[:insert_pos] + base_tag + html_content[insert_pos:]
+            elif "<html" in html_content.lower():
+                # No <head>, inject after <html>
+                html_match = re.search(r"<html[^>]*>", html_content, re.IGNORECASE)
+                if html_match:
+                    insert_pos = html_match.end()
+                    base_tag = f'\n<head><base href="{base_url}"></head>\n'
+                    html_content = html_content[:insert_pos] + base_tag + html_content[insert_pos:]
+            else:
+                # No HTML structure, prepend base tag
+                html_content = f'<base href="{base_url}">\n' + html_content
+
+            return HTMLResponse(content=html_content, media_type="text/html")
+
+        return FileResponse(
+            path=full_file_path,
+            media_type=mime_type,
+            filename=full_file_path.name,
+        )
+
+    @app.post("/api/convert/document")
+    async def convert_document_to_pdf(request: Request):
+        """Convert DOCX/PPTX/XLSX to PDF using the MassGen Docker container.
+
+        This endpoint uses LibreOffice inside the MassGen container to convert
+        Office documents to PDF format for preview in the webui.
+
+        Request body:
+            {
+                "path": str,        # Relative path to file within workspace
+                "workspace": str,   # Absolute path to workspace directory
+            }
+
+        Returns:
+            {
+                "content": str,     # Base64-encoded PDF content
+                "success": bool,    # Whether conversion succeeded
+                "error": str,       # Error message if failed
+            }
+        """
+        import base64
+        import tempfile
+
+        try:
+            data = await request.json()
+            file_path_str = data.get("path")
+            workspace = data.get("workspace")
+
+            if not file_path_str or not workspace:
+                return JSONResponse(
+                    {
+                        "success": False,
+                        "error": "Both 'path' and 'workspace' are required",
+                    },
+                    status_code=400,
+                )
+
+            workspace_path = Path(workspace).resolve()
+            file_path = (workspace_path / file_path_str).resolve()
+
+            # Security: Ensure file is within workspace
+            try:
+                file_path.relative_to(workspace_path)
+            except ValueError:
+                return JSONResponse(
+                    {
+                        "success": False,
+                        "error": "Access denied: path outside workspace",
+                    },
+                    status_code=403,
+                )
+
+            if not file_path.exists():
+                return JSONResponse(
+                    {"success": False, "error": "File not found"},
+                    status_code=404,
+                )
+
+            # Get file mtime for cache validation
+            file_mtime = file_path.stat().st_mtime
+
+            # Check cache first - avoid expensive Docker conversion if already done
+            cached_pdf = _get_cached_pdf(workspace, file_path_str, file_mtime)
+            if cached_pdf:
+                workspace_logger.info(f"PDF cache hit for {file_path_str}")
+                return {
+                    "success": True,
+                    "content": cached_pdf,
+                    "mimeType": "application/pdf",
+                    "cached": True,
+                }
+
+            # Check file extension
+            suffix = file_path.suffix.lower()
+            if suffix not in [
+                ".docx",
+                ".pptx",
+                ".xlsx",
+                ".doc",
+                ".ppt",
+                ".xls",
+                ".odt",
+                ".odp",
+                ".ods",
+            ]:
+                return JSONResponse(
+                    {"success": False, "error": f"Unsupported file type: {suffix}"},
+                    status_code=400,
+                )
+
+            # Check if Docker is available
+            try:
+                import docker
+
+                client = docker.from_env()
+                client.ping()
+            except Exception:
+                return JSONResponse(
+                    {
+                        "success": False,
+                        "error": "Docker is not available. Install Docker and pull the MassGen container to enable document preview.",
+                        "docker_required": True,
+                    },
+                    status_code=503,
+                )
+
+            # Check if MassGen image exists
+            massgen_image = "ghcr.io/massgen/mcp-runtime:latest"
+            try:
+                client.images.get(massgen_image)
+            except docker.errors.ImageNotFound:
+                return JSONResponse(
+                    {
+                        "success": False,
+                        "error": f"MassGen Docker image not found. Run: docker pull {massgen_image}",
+                        "docker_required": True,
+                    },
+                    status_code=503,
+                )
+
+            # Create temp directory for output
+            with tempfile.TemporaryDirectory() as temp_dir:
+                temp_dir_path = Path(temp_dir)
+
+                # Run LibreOffice conversion in container
+                # Mount the file's parent directory and temp output directory
+                input_dir = file_path.parent
+                input_filename = file_path.name
+                output_filename = file_path.stem + ".pdf"
+
+                try:
+                    # Run soffice in container
+                    result = client.containers.run(
+                        massgen_image,
+                        command=[
+                            "/bin/sh",
+                            "-c",
+                            f"soffice --headless --convert-to pdf --outdir /output '/input/{input_filename}'",
+                        ],
+                        volumes={
+                            str(input_dir): {"bind": "/input", "mode": "ro"},
+                            str(temp_dir_path): {"bind": "/output", "mode": "rw"},
+                        },
+                        remove=True,
+                        user="root",  # LibreOffice needs write access to home dir
+                        stderr=True,
+                        stdout=True,
+                    )
+
+                    # Check if PDF was created
+                    output_pdf = temp_dir_path / output_filename
+                    if not output_pdf.exists():
+                        # Try alternate output name (sometimes LibreOffice changes case)
+                        for f in temp_dir_path.iterdir():
+                            if f.suffix.lower() == ".pdf":
+                                output_pdf = f
+                                break
+
+                    if not output_pdf.exists():
+                        return JSONResponse(
+                            {
+                                "success": False,
+                                "error": "Conversion failed: PDF not generated",
+                                "details": result.decode("utf-8") if isinstance(result, bytes) else str(result),
+                            },
+                            status_code=500,
+                        )
+
+                    # Read and encode the PDF
+                    with open(output_pdf, "rb") as f:
+                        pdf_content = base64.b64encode(f.read()).decode("utf-8")
+
+                    # Cache the conversion result for future requests
+                    _cache_pdf(workspace, file_path_str, file_mtime, pdf_content)
+                    workspace_logger.info(f"PDF conversion cached for {file_path_str}")
+
+                    return {
+                        "success": True,
+                        "content": pdf_content,
+                        "mimeType": "application/pdf",
+                    }
+
+                except docker.errors.ContainerError as e:
+                    return JSONResponse(
+                        {
+                            "success": False,
+                            "error": f"Container error: {e.stderr.decode() if e.stderr else str(e)}",
+                        },
+                        status_code=500,
+                    )
+
+        except Exception as e:
+            return JSONResponse(
+                {"success": False, "error": f"Conversion failed: {str(e)}"},
+                status_code=500,
+            )
+
+    @app.post("/api/tester/upload")
+    async def upload_test_file(request: Request):
+        """Upload a file temporarily for testing artifact preview with Docker conversion.
+
+        This endpoint saves a base64-encoded file to a temp directory so the
+        artifact tester can test Docker-based document conversion.
+
+        Request body:
+            {
+                "fileName": str,    # Original file name
+                "content": str,     # Base64-encoded file content
+            }
+
+        Returns:
+            {
+                "success": bool,
+                "workspacePath": str,   # Temp directory path
+                "filePath": str,        # Relative file path within workspace
+            }
+        """
+        import base64
+        import tempfile
+
+        try:
+            data = await request.json()
+            file_name = data.get("fileName")
+            content_b64 = data.get("content")
+
+            if not file_name or not content_b64:
+                return JSONResponse(
+                    {
+                        "success": False,
+                        "error": "Both 'fileName' and 'content' are required",
+                    },
+                    status_code=400,
+                )
+
+            # Create a persistent temp directory (won't be auto-deleted)
+            # We use a fixed location so files persist across requests
+            temp_base = Path(tempfile.gettempdir()) / "massgen_artifact_tester"
+            temp_base.mkdir(exist_ok=True)
+
+            # Create a unique subdirectory for this upload
+            import uuid
+
+            upload_id = str(uuid.uuid4())[:8]
+            workspace_path = temp_base / upload_id
+            workspace_path.mkdir(exist_ok=True)
+
+            # Decode and save the file
+            try:
+                file_bytes = base64.b64decode(content_b64)
+            except Exception as e:
+                return JSONResponse(
+                    {"success": False, "error": f"Invalid base64 content: {str(e)}"},
+                    status_code=400,
+                )
+
+            file_path = workspace_path / file_name
+            with open(file_path, "wb") as f:
+                f.write(file_bytes)
+
+            return {
+                "success": True,
+                "workspacePath": str(workspace_path),
+                "filePath": file_name,
+            }
+
+        except Exception as e:
+            return JSONResponse(
+                {"success": False, "error": f"Upload failed: {str(e)}"},
+                status_code=500,
+            )
+
+    @app.post("/api/workspace/open")
+    async def open_workspace_in_finder(request: Request):
+        """Open a workspace folder in the native file browser.
+
+        Args:
+            request body: { "path": str }  # Absolute path to workspace directory
+
+        Returns:
+            { "success": bool, "message": str }
+        """
+        import platform
+        import subprocess
+
+        try:
+            data = await request.json()
+            workspace_path = data.get("path")
+
+            if not workspace_path:
+                return JSONResponse(
+                    {"error": "Path is required"},
+                    status_code=400,
+                )
+
+            path = Path(workspace_path).resolve()
+
+            if not path.exists():
+                return JSONResponse(
+                    {"error": f"Path does not exist: {workspace_path}"},
+                    status_code=404,
+                )
+
+            if not path.is_dir():
+                return JSONResponse(
+                    {"error": "Path is not a directory"},
+                    status_code=400,
+                )
+
+            # Open in native file browser based on platform
+            system = platform.system()
+
+            if system == "Darwin":  # macOS
+                subprocess.Popen(["open", str(path)])
+            elif system == "Windows":
+                subprocess.Popen(["explorer", str(path)])
+            elif system == "Linux":
+                # Try common Linux file managers
+                for cmd in ["xdg-open", "nautilus", "dolphin", "thunar", "pcmanfm"]:
+                    try:
+                        subprocess.Popen([cmd, str(path)])
+                        break
+                    except FileNotFoundError:
+                        continue
+                else:
+                    return JSONResponse(
+                        {"error": "No supported file browser found on Linux"},
+                        status_code=500,
+                    )
+            else:
+                return JSONResponse(
+                    {"error": f"Unsupported platform: {system}"},
+                    status_code=500,
+                )
+
+            return {"success": True, "message": f"Opened {path}"}
+
+        except Exception as e:
+            return JSONResponse(
+                {"error": f"Failed to open workspace: {str(e)}"},
+                status_code=500,
+            )
+
+    # Frontend debug logging endpoint - writes to webui_debug.log
+    # When session_id is provided and active, writes to the session's log_dir
+    # Otherwise falls back to the MassGen root directory
+    _fallback_log_file = Path(__file__).parent.parent.parent.parent / "webui_debug.log"
+
+    @app.post("/api/debug/log")
+    async def frontend_debug_log(request: Request):
+        """Log frontend debug messages to file for easier debugging.
+
+        Request body:
+        {
+            "level": "debug" | "info" | "warn" | "error",
+            "message": str,
+            "data": dict (optional),
+            "sessionId": str (optional - routes logs to session log_dir)
+        }
+        """
+        import datetime
+
+        try:
+            body = await request.json()
+            level = body.get("level", "info").upper()
+            message = body.get("message", "")
+            data = body.get("data")
+            session_id = body.get("sessionId")
+
+            # Determine log file location
+            log_file = _fallback_log_file
+            if session_id and session_id in manager.session_log_dirs:
+                session_dir = manager.session_log_dirs[session_id]
+                log_file = session_dir / "webui_debug.log"
+
+            timestamp = datetime.datetime.now().isoformat()
+            log_line = f"[{timestamp}] [{level}] {message}"
+            if data:
+                log_line += f" | {json.dumps(data)}"
+            log_line += "\n"
+
+            with open(log_file, "a") as f:
+                f.write(log_line)
+
+            return {"success": True}
+        except Exception as e:
+            return JSONResponse(
+                {"error": str(e)},
+                status_code=500,
+            )
+
+    @app.post("/api/browse/files")
+    async def browse_files(request: Request):
+        """Open a native file picker dialog and return selected paths.
+
+        Request body:
+        {
+            "mode": "files" | "directory",  # What to select
+            "multiple": bool,  # Allow multiple selection (files only)
+            "title": str  # Optional dialog title
+        }
+
+        Returns:
+            { "paths": [str, ...] }  # List of selected absolute paths
+        """
+        import platform
+        import subprocess
+
+        try:
+            data = await request.json()
+            mode = data.get("mode", "files")
+            multiple = data.get("multiple", True)
+            title = data.get(
+                "title",
+                "Select Files" if mode == "files" else "Select Directory",
+            )
+
+            system = platform.system()
+            paths = []
+
+            if system == "Darwin":
+                # macOS - use AppleScript
+                if mode == "directory":
+                    script = f"""
+                    tell application "System Events"
+                        activate
+                    end tell
+                    set chosenFolder to choose folder with prompt "{title}"
+                    return POSIX path of chosenFolder
+                    """
+                else:
+                    if multiple:
+                        script = f"""
+                        tell application "System Events"
+                            activate
+                        end tell
+                        set chosenFiles to choose file with prompt "{title}" with multiple selections allowed
+                        set posixPaths to {{}}
+                        repeat with aFile in chosenFiles
+                            set end of posixPaths to POSIX path of aFile
+                        end repeat
+                        set AppleScript's text item delimiters to linefeed
+                        return posixPaths as text
+                        """
+                    else:
+                        script = f"""
+                        tell application "System Events"
+                            activate
+                        end tell
+                        set chosenFile to choose file with prompt "{title}"
+                        return POSIX path of chosenFile
+                        """
+
+                result = subprocess.run(
+                    ["osascript", "-e", script],
+                    capture_output=True,
+                    text=True,
+                    timeout=300,
+                )
+
+                if result.returncode == 0 and result.stdout.strip():
+                    # Parse the output - may be multiple paths separated by newlines
+                    paths = [p.strip() for p in result.stdout.strip().split("\n") if p.strip()]
+
+            elif system == "Linux":
+                # Linux - try zenity first, then kdialog
+                try:
+                    if mode == "directory":
+                        result = subprocess.run(
+                            [
+                                "zenity",
+                                "--file-selection",
+                                "--directory",
+                                "--title",
+                                title,
+                            ],
+                            capture_output=True,
+                            text=True,
+                            timeout=300,
+                        )
+                    else:
+                        cmd = ["zenity", "--file-selection", "--title", title]
+                        if multiple:
+                            cmd.append("--multiple")
+                            cmd.extend(["--separator", "\n"])
+                        result = subprocess.run(
+                            cmd,
+                            capture_output=True,
+                            text=True,
+                            timeout=300,
+                        )
+
+                    if result.returncode == 0 and result.stdout.strip():
+                        paths = [p.strip() for p in result.stdout.strip().split("\n") if p.strip()]
+                except FileNotFoundError:
+                    # Try kdialog as fallback
+                    try:
+                        if mode == "directory":
+                            result = subprocess.run(
+                                [
+                                    "kdialog",
+                                    "--getexistingdirectory",
+                                    ".",
+                                    "--title",
+                                    title,
+                                ],
+                                capture_output=True,
+                                text=True,
+                                timeout=300,
+                            )
+                        else:
+                            cmd = [
+                                "kdialog",
+                                "--getopenfilename",
+                                ".",
+                                "--title",
+                                title,
+                            ]
+                            if multiple:
+                                cmd = [
+                                    "kdialog",
+                                    "--getopenfilename",
+                                    ".",
+                                    "--multiple",
+                                    "--title",
+                                    title,
+                                ]
+                            result = subprocess.run(
+                                cmd,
+                                capture_output=True,
+                                text=True,
+                                timeout=300,
+                            )
+
+                        if result.returncode == 0 and result.stdout.strip():
+                            paths = [p.strip() for p in result.stdout.strip().split("\n") if p.strip()]
+                    except FileNotFoundError:
+                        return JSONResponse(
+                            {
+                                "error": "No file dialog available. Please install zenity or kdialog.",
+                            },
+                            status_code=500,
+                        )
+
+            elif system == "Windows":
+                # Windows - use PowerShell
+                if mode == "directory":
+                    ps_script = """
+                    Add-Type -AssemblyName System.Windows.Forms
+                    $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
+                    $dialog.Description = "{}"
+                    if ($dialog.ShowDialog() -eq 'OK') {{ $dialog.SelectedPath }}
+                    """.format(
+                        title,
+                    )
+                else:
+                    ps_script = """
+                    Add-Type -AssemblyName System.Windows.Forms
+                    $dialog = New-Object System.Windows.Forms.OpenFileDialog
+                    $dialog.Title = "{}"
+                    $dialog.Multiselect = ${}
+                    if ($dialog.ShowDialog() -eq 'OK') {{ $dialog.FileNames -join "`n" }}
+                    """.format(
+                        title,
+                        "true" if multiple else "false",
+                    )
+
+                result = subprocess.run(
+                    ["powershell", "-Command", ps_script],
+                    capture_output=True,
+                    text=True,
+                    timeout=300,
+                )
+
+                if result.returncode == 0 and result.stdout.strip():
+                    paths = [p.strip() for p in result.stdout.strip().split("\n") if p.strip()]
+
+            else:
+                return JSONResponse(
+                    {"error": f"Unsupported platform: {system}"},
+                    status_code=500,
+                )
+
+            return {"paths": paths}
+
+        except subprocess.TimeoutExpired:
+            return JSONResponse(
+                {"error": "Dialog timed out"},
+                status_code=408,
+            )
+        except Exception as e:
+            return JSONResponse(
+                {"error": f"Failed to open file dialog: {str(e)}"},
+                status_code=500,
+            )
+
+    @app.get("/api/path/autocomplete")
+    async def path_autocomplete(
+        prefix: str = "",
+        base_path: str | None = None,
+    ):
+        """Get path suggestions for autocomplete.
+
+        Used by the Web UI to provide inline file path completion
+        when users type @path syntax.
+
+        Args:
+            prefix: The partial path to complete (e.g., "~/Doc" or "./src")
+            base_path: Optional base directory to resolve relative paths from.
+                       If not provided, uses user's home directory.
+
+        Returns:
+            {
+                "suggestions": [
+                    {"path": "/full/path", "name": "filename", "is_dir": bool},
+                    ...
+                ]
+            }
+        """
+        import os
+        from pathlib import Path
+
+        MAX_SUGGESTIONS = 50
+
+        try:
+            # Expand ~ to home directory
+            if prefix.startswith("~"):
+                prefix = os.path.expanduser(prefix)
+            elif prefix.startswith("./") or prefix.startswith("../"):
+                # Resolve relative paths
+                if base_path:
+                    base = Path(base_path).expanduser().resolve()
+                else:
+                    base = Path.home()
+                prefix = str(base / prefix)
+            elif not prefix.startswith("/"):
+                # If no prefix or just a filename, use base_path or home
+                if base_path:
+                    base = Path(base_path).expanduser().resolve()
+                else:
+                    base = Path.home()
+                prefix = str(base / prefix) if prefix else str(base) + "/"
+
+            prefix_path = Path(prefix)
+
+            # Determine parent directory and partial name to match
+            if prefix.endswith("/") or prefix_path.is_dir():
+                # User is browsing a directory
+                parent_dir = prefix_path if prefix_path.is_dir() else prefix_path.parent
+                partial_name = ""
+            else:
+                # User is typing a partial name
+                parent_dir = prefix_path.parent
+                partial_name = prefix_path.name.lower()
+
+            # Security: Resolve to absolute path and verify it exists
+            parent_dir = parent_dir.resolve()
+
+            if not parent_dir.exists() or not parent_dir.is_dir():
+                return {"suggestions": []}
+
+            # List directory contents
+            suggestions = []
+            try:
+                for entry in parent_dir.iterdir():
+                    # Skip hidden files unless explicitly requested
+                    if entry.name.startswith(".") and not partial_name.startswith("."):
+                        continue
+
+                    # Match partial name (case-insensitive)
+                    if partial_name and not entry.name.lower().startswith(partial_name):
+                        continue
+
+                    is_dir = entry.is_dir()
+                    suggestions.append(
+                        {
+                            "path": str(entry),
+                            "name": entry.name + ("/" if is_dir else ""),
+                            "is_dir": is_dir,
+                        },
+                    )
+
+                    if len(suggestions) >= MAX_SUGGESTIONS:
+                        break
+
+            except PermissionError:
+                return {"suggestions": []}
+
+            # Sort: directories first, then alphabetically
+            suggestions.sort(key=lambda x: (not x["is_dir"], x["name"].lower()))
+
+            return {"suggestions": suggestions}
+
+        except Exception as e:
+            return JSONResponse(
+                {"error": f"Failed to get path suggestions: {str(e)}"},
                 status_code=500,
             )
 
@@ -1643,11 +3182,21 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
         start_time = min(timestamps) if timestamps else 0
         end_time = max(timestamps) if timestamps else None
 
+        # Calculate current voting round (max round from vote nodes)
+        # This lets the frontend determine which votes are superseded
+        vote_rounds = [n.get("round", 1) for n in nodes if n.get("type") == "vote"]
+        current_voting_round = max(vote_rounds) if vote_rounds else 1
+
+        # Debug: log vote rounds
+        vote_info = [(n.get("label"), n.get("round")) for n in nodes if n.get("type") == "vote"]
+        print(f"[DEBUG] Timeline API: vote_info={vote_info}, currentVotingRound={current_voting_round}")
+
         return {
             "nodes": nodes,
             "agents": agent_ids,
             "startTime": start_time,
             "endTime": end_time,
+            "currentVotingRound": current_voting_round,
         }
 
     @app.get("/api/sessions/{session_id}")
@@ -1676,17 +3225,23 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
 
         print(f"[DEBUG] get_final_answer: session_id={session_id}")
         print(f"[DEBUG] get_final_answer: display={display}")
-        print(f"[DEBUG] get_final_answer: log_session_dir from display={log_session_dir}")
+        print(
+            f"[DEBUG] get_final_answer: log_session_dir from display={log_session_dir}",
+        )
 
         # Fallback to global log session dir if display doesn't have it
         if not log_session_dir:
             from massgen.logger_config import get_log_session_dir
 
             log_session_dir = get_log_session_dir()
-            print(f"[DEBUG] get_final_answer: log_session_dir from global={log_session_dir}")
+            print(
+                f"[DEBUG] get_final_answer: log_session_dir from global={log_session_dir}",
+            )
 
         if not log_session_dir or not log_session_dir.exists():
-            print("[DEBUG] get_final_answer: log_session_dir not found or doesn't exist")
+            print(
+                "[DEBUG] get_final_answer: log_session_dir not found or doesn't exist",
+            )
             return JSONResponse(
                 {"error": "Log directory not found", "answer": None},
                 status_code=404,
@@ -1709,7 +3264,9 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
                 if answer_file.exists():
                     try:
                         answer_content = answer_file.read_text(encoding="utf-8")
-                        print(f"[DEBUG] get_final_answer: Found answer! Length={len(answer_content)}")
+                        print(
+                            f"[DEBUG] get_final_answer: Found answer! Length={len(answer_content)}",
+                        )
                         return {
                             "answer": answer_content,
                             "agent_id": agent_dir.name,
@@ -1725,7 +3282,10 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
         result = find_answer_in_final_dir(final_dir)
         if result:
             if "error" in result:
-                return JSONResponse({"error": result["error"], "answer": None}, status_code=500)
+                return JSONResponse(
+                    {"error": result["error"], "answer": None},
+                    status_code=500,
+                )
             return result
 
         # Try 2: Check for attempt_N subdirectories (log_session_dir/attempt_N/final)
@@ -1738,7 +3298,10 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
             result = find_answer_in_final_dir(final_dir)
             if result:
                 if "error" in result:
-                    return JSONResponse({"error": result["error"], "answer": None}, status_code=500)
+                    return JSONResponse(
+                        {"error": result["error"], "answer": None},
+                        status_code=500,
+                    )
                 return result
 
         # Fallback: search in turn subdirectories (for older log structure or if log_session_dir is base)
@@ -1751,23 +3314,82 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
             result = find_answer_in_final_dir(turn_dir / "final")
             if result:
                 if "error" in result:
-                    return JSONResponse({"error": result["error"], "answer": None}, status_code=500)
+                    return JSONResponse(
+                        {"error": result["error"], "answer": None},
+                        status_code=500,
+                    )
                 return result
 
             # Check attempt_N subdirectories within turn dir
             for attempt_dir in sorted(turn_dir.iterdir(), reverse=True):
-                if not attempt_dir.is_dir() or not attempt_dir.name.startswith("attempt_"):
+                if not attempt_dir.is_dir() or not attempt_dir.name.startswith(
+                    "attempt_",
+                ):
                     continue
                 result = find_answer_in_final_dir(attempt_dir / "final")
                 if result:
                     if "error" in result:
-                        return JSONResponse({"error": result["error"], "answer": None}, status_code=500)
+                        return JSONResponse(
+                            {"error": result["error"], "answer": None},
+                            status_code=500,
+                        )
                     return result
 
         return JSONResponse(
             {"error": "Final answer not found", "answer": None},
             status_code=404,
         )
+
+    @app.post("/api/sessions/{session_id}/share")
+    async def share_session_gist(session_id: str):
+        """Upload session to GitHub Gist and return viewer URL.
+
+        Requires GitHub CLI (gh) to be installed and authenticated.
+        Returns the viewer URL for the shared session.
+        """
+        from massgen.share import ShareError, share_session
+
+        # Get the log session dir from the display
+        display = manager.get_display(session_id)
+        log_session_dir = getattr(display, "log_session_dir", None) if display else None
+
+        # Fallback to global log session dir
+        if not log_session_dir:
+            from massgen.logger_config import get_log_session_dir
+
+            log_session_dir = get_log_session_dir()
+
+        if not log_session_dir or not log_session_dir.exists():
+            return JSONResponse(
+                {"error": "Log directory not found. Session may not have started yet."},
+                status_code=404,
+            )
+
+        try:
+            # Share the session (creates gist and returns viewer URL)
+            viewer_url = share_session(log_session_dir, console=None)
+
+            return JSONResponse(
+                {
+                    "success": True,
+                    "viewer_url": viewer_url,
+                    "message": "Session shared successfully!",
+                },
+            )
+
+        except ShareError as e:
+            return JSONResponse(
+                {"error": str(e)},
+                status_code=400,
+            )
+        except Exception as e:
+            import traceback
+
+            traceback.print_exc()
+            return JSONResponse(
+                {"error": f"Failed to share session: {str(e)}"},
+                status_code=500,
+            )
 
     @app.post("/api/sessions/{session_id}/start")
     async def start_coordination(session_id: str, request: dict):
@@ -1784,7 +3406,9 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
 
         if not cfg_path:
             return JSONResponse(
-                {"error": "No config specified. Use --config flag or provide in request."},
+                {
+                    "error": "No config specified. Use --config flag or provide in request.",
+                },
                 status_code=400,
             )
 
@@ -1799,6 +3423,87 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
                 "status": "started",
                 "session_id": session_id,
                 "config": cfg_path,
+            },
+        )
+
+    @app.post("/api/sessions/{session_id}/cancel")
+    async def cancel_coordination(session_id: str):
+        """Cancel an active coordination session."""
+        task = manager.tasks.get(session_id)
+
+        if not task:
+            return JSONResponse(
+                {"error": "No active session found", "session_id": session_id},
+                status_code=404,
+            )
+
+        if task.done():
+            return JSONResponse(
+                {
+                    "status": "already_completed",
+                    "session_id": session_id,
+                    "message": "Coordination has already completed",
+                },
+            )
+
+        # Set cancellation flag on orchestrator first (for graceful stop)
+        orchestrator = manager.orchestrators.get(session_id)
+        if orchestrator:
+            if hasattr(orchestrator, "cancellation_manager") and orchestrator.cancellation_manager:
+                orchestrator.cancellation_manager._cancelled = True
+                print(f"[WebUI] Set cancellation flag for session {session_id}")
+            # Also cancel the background status update task if it exists
+            if hasattr(orchestrator, "_status_update_task") and orchestrator._status_update_task:
+                orchestrator._status_update_task.cancel()
+
+        # Also cancel the asyncio task
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+        # Update status.json to show cancelled state
+        try:
+            from massgen.logger_config import get_log_session_dir
+
+            log_dir = get_log_session_dir()
+            if log_dir:
+                status_file = log_dir / "status.json"
+                if status_file.exists():
+                    import json
+                    import time
+
+                    with open(status_file, "r") as f:
+                        status_data = json.load(f)
+                    status_data["coordination"] = status_data.get("coordination", {})
+                    status_data["coordination"]["phase"] = "cancelled"
+                    status_data["coordination"]["cancelled"] = True
+                    status_data["coordination"]["cancelled_at"] = time.time()
+                    with open(status_file, "w") as f:
+                        json.dump(status_data, f, indent=2)
+        except Exception as status_err:
+            print(f"[WebUI] Warning: Could not update status.json: {status_err}")
+
+        # Cleanup orchestrator reference
+        if session_id in manager.orchestrators:
+            del manager.orchestrators[session_id]
+
+        # Notify connected clients
+        await manager.broadcast(
+            session_id,
+            {
+                "type": "coordination_cancelled",
+                "session_id": session_id,
+                "message": "Coordination cancelled by user",
+            },
+        )
+
+        return JSONResponse(
+            {
+                "status": "cancelled",
+                "session_id": session_id,
+                "message": "Coordination cancelled successfully",
             },
         )
 
@@ -1853,6 +3558,40 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
                         continue
 
                     if question:
+                        # Parse @path references from question
+                        context_paths = []
+                        try:
+                            from massgen.path_handling import (
+                                PromptParserError,
+                                parse_prompt_for_context,
+                            )
+
+                            parsed = parse_prompt_for_context(question)
+                            if parsed.context_paths:
+                                context_paths = parsed.context_paths
+                                question = parsed.cleaned_prompt
+                                # Notify client about extracted paths
+                                await websocket.send_json(
+                                    {
+                                        "type": "context_paths_extracted",
+                                        "paths": context_paths,
+                                        "session_id": session_id,
+                                    },
+                                )
+                        except PromptParserError as e:
+                            await websocket.send_json(
+                                {
+                                    "type": "error",
+                                    "message": f"Path error: {e}",
+                                },
+                            )
+                            continue
+                        except ImportError as e:
+                            # Log warning - path_handling module not available
+                            workspace_logger.warning(
+                                f"Path handling module not available: {e}. " "@path syntax will not be processed.",
+                            )
+
                         # Send immediate acknowledgment that we received the prompt
                         await websocket.send_json(
                             {
@@ -1864,7 +3603,7 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
                         )
 
                         task = asyncio.create_task(
-                            run_coordination(session_id, question, cfg_path),
+                            run_coordination(session_id, question, cfg_path, context_paths),
                         )
                         manager.tasks[session_id] = task
                         await websocket.send_json(
@@ -1903,6 +3642,40 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
                         )
                         continue
 
+                    # Parse @path references from follow-up question
+                    context_paths = []
+                    try:
+                        from massgen.path_handling import (
+                            PromptParserError,
+                            parse_prompt_for_context,
+                        )
+
+                        parsed = parse_prompt_for_context(followup_question)
+                        if parsed.context_paths:
+                            context_paths = parsed.context_paths
+                            followup_question = parsed.cleaned_prompt
+                            # Notify client about extracted paths
+                            await websocket.send_json(
+                                {
+                                    "type": "context_paths_extracted",
+                                    "paths": context_paths,
+                                    "session_id": session_id,
+                                },
+                            )
+                    except PromptParserError as e:
+                        await websocket.send_json(
+                            {
+                                "type": "error",
+                                "message": f"Path error: {e}",
+                            },
+                        )
+                        continue
+                    except ImportError as e:
+                        # Log warning - path_handling module not available
+                        workspace_logger.warning(
+                            f"Path handling module not available: {e}. " "@path syntax will not be processed.",
+                        )
+
                     # Get session info from previous turn
                     session_log_dir = manager.session_log_dirs.get(session_id)
                     current_turn = manager.session_turns.get(session_id, 0)
@@ -1935,6 +3708,7 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
                             config_path=cfg_path,
                             session_log_dir=session_log_dir,
                             turn_number=next_turn,
+                            context_paths=context_paths,
                         ),
                     )
                     manager.tasks[session_id] = task
@@ -1947,6 +3721,46 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
                             "is_continuation": True,
                         },
                     )
+
+                elif action == "cancel":
+                    # Cancel the running coordination task
+                    task = manager.tasks.get(session_id)
+                    if task and not task.done():
+                        # Set cancellation flag on orchestrator first (for graceful stop)
+                        orchestrator = manager.orchestrators.get(session_id)
+                        if orchestrator:
+                            if hasattr(orchestrator, "cancellation_manager") and orchestrator.cancellation_manager:
+                                orchestrator.cancellation_manager._cancelled = True
+                                print(f"[WebUI] Set cancellation flag for session {session_id}")
+                            # Also cancel the background status update task if it exists
+                            if hasattr(orchestrator, "_status_update_task") and orchestrator._status_update_task:
+                                orchestrator._status_update_task.cancel()
+
+                        # Also cancel the asyncio task
+                        task.cancel()
+                        try:
+                            await task
+                        except asyncio.CancelledError:
+                            pass
+
+                        # Cleanup orchestrator reference
+                        if session_id in manager.orchestrators:
+                            del manager.orchestrators[session_id]
+
+                        await websocket.send_json(
+                            {
+                                "type": "coordination_cancelled",
+                                "session_id": session_id,
+                                "message": "Coordination cancelled by user",
+                            },
+                        )
+                    else:
+                        await websocket.send_json(
+                            {
+                                "type": "info",
+                                "message": "No active coordination to cancel",
+                            },
+                        )
 
         except WebSocketDisconnect:
             manager.disconnect(websocket, session_id)
@@ -1962,6 +3776,219 @@ def create_app(config_path: Optional[str] = None, automation_mode: bool = False)
             except Exception:
                 pass
             manager.disconnect(websocket, session_id)
+
+    # =========================================================================
+    # Workspace WebSocket Endpoint (for real-time file change notifications)
+    # =========================================================================
+
+    @app.websocket("/ws/workspace/{session_id}")
+    async def workspace_websocket_endpoint(websocket: WebSocket, session_id: str):
+        """WebSocket endpoint for real-time workspace file change notifications.
+
+        Clients connect to receive push notifications when files are created,
+        modified, or deleted in watched workspace directories.
+
+        Protocol:
+        - On connect: Client sends { "action": "watch", "paths": ["/path/to/workspace1", ...] }
+        - Server sends: { "type": "workspace_connected", "watched_paths": [...] }
+        - On file change: Server pushes { "type": "workspace_file_change", "file_path": ..., "operation": ... }
+        - Client can request refresh: { "action": "refresh", "path": "/path/to/workspace" }
+        """
+        workspace_logger.info(f"WS endpoint: new connection for session={session_id}")
+
+        # Get workspace paths from query params or wait for watch action
+        initial_paths = []
+
+        # Try to get workspace paths from status.json if session exists
+        try:
+            display = manager.get_display(session_id)
+            log_session_dir = getattr(display, "log_session_dir", None) if display else None
+            workspace_logger.debug(f"WS endpoint: display={display is not None}, log_dir={log_session_dir}")
+
+            if not log_session_dir:
+                from massgen.logger_config import get_log_session_dir
+
+                log_session_dir = get_log_session_dir()
+                workspace_logger.debug(f"WS endpoint: using fallback log_dir={log_session_dir}")
+
+            if log_session_dir:
+                status_file = Path(log_session_dir) / "status.json"
+                if status_file.exists():
+                    workspace_logger.debug(f"WS endpoint: reading status.json from {status_file}")
+                    with open(status_file) as f:
+                        status_data = json.load(f)
+
+                    agents_data = status_data.get("agents", {})
+                    for agent_id_key, agent_info in agents_data.items():
+                        workspace_paths = agent_info.get("workspace_paths", {})
+                        workspace_path = workspace_paths.get("workspace")
+                        if workspace_path and Path(workspace_path).exists():
+                            initial_paths.append(workspace_path)
+                            workspace_logger.debug(f"WS endpoint: found workspace for {agent_id_key}: {workspace_path}")
+                else:
+                    workspace_logger.debug(f"WS endpoint: status.json not found at {status_file}")
+        except Exception as e:
+            workspace_logger.warning(f"WS endpoint: could not get workspace paths from status.json: {e}")
+
+        workspace_logger.info(f"WS endpoint: connecting with {len(initial_paths)} initial paths")
+
+        # Connect with initial paths (may be empty)
+        await workspace_manager.connect(websocket, session_id, initial_paths)
+
+        try:
+            # Handle incoming messages
+            while True:
+                data = await websocket.receive_json()
+                action = data.get("action")
+                workspace_logger.debug(f"WS message received: action={action}, session={session_id}")
+
+                if action == "watch_session":
+                    # Watch all workspaces for this session (reads from status.json)
+                    # Frontend uses this on initial connect to get all workspace files
+                    workspace_logger.info(f"WS watch_session request for session={session_id}")
+
+                    # Re-read status.json to get current workspace paths
+                    session_paths: list[str] = []
+                    try:
+                        if log_session_dir:
+                            status_file = Path(log_session_dir) / "status.json"
+                            if status_file.exists():
+                                with open(status_file) as f:
+                                    status_data = json.load(f)
+                                agents_data = status_data.get("agents", {})
+                                for agent_id_key, agent_info in agents_data.items():
+                                    workspace_paths = agent_info.get("workspace_paths", {})
+                                    workspace_path = workspace_paths.get("workspace")
+                                    if workspace_path and Path(workspace_path).exists():
+                                        session_paths.append(workspace_path)
+                    except Exception as e:
+                        workspace_logger.warning(f"WS watch_session: failed to read status.json: {e}")
+
+                    # Collect initial files for each workspace
+                    initial_files: dict[str, list[dict]] = {}
+                    for path in session_paths:
+                        workspace_path = Path(path)
+                        if workspace_path.exists() and workspace_path.is_dir():
+                            try:
+                                files = _scan_workspace_files(workspace_path)
+                                # Normalize path for consistent key format
+                                normalized_path = _normalize_workspace_path(path)
+                                initial_files[normalized_path] = files
+                                workspace_logger.debug(
+                                    f"WS watch_session: scanned {len(files)} files for {workspace_path.name}",
+                                )
+                            except Exception as e:
+                                workspace_logger.warning(f"WS watch_session: failed to scan {path}: {e}")
+                                # Use normalized path for error case too
+                                normalized_path = _normalize_workspace_path(path)
+                                initial_files[normalized_path] = []
+
+                    # Normalize watched_paths for consistency
+                    normalized_watched_paths = [_normalize_workspace_path(p) for p in session_paths]
+                    await websocket.send_json(
+                        {
+                            "type": "workspace_connected",
+                            "session_id": session_id,
+                            "timestamp": asyncio.get_event_loop().time(),
+                            "watched_paths": normalized_watched_paths,
+                            "initial_files": initial_files,
+                        },
+                    )
+                    workspace_logger.info(f"WS watch_session: sent {len(session_paths)} workspaces with files")
+
+                elif action == "watch":
+                    # Start watching additional paths
+                    # Support both "paths" and "workspace_paths" keys for compatibility
+                    paths = data.get("paths", []) or data.get("workspace_paths", [])
+                    workspace_logger.info(f"WS watch request: {len(paths)} paths for session={session_id}")
+
+                    # Collect initial files for each watched path
+                    initial_files: dict[str, list[dict]] = {}
+                    for path in paths:
+                        workspace_path = Path(path)
+                        if workspace_path.exists() and workspace_path.is_dir():
+                            try:
+                                files = _scan_workspace_files(workspace_path)
+                                # FIX: Normalize path for consistency with broadcasts
+                                normalized_path = _normalize_workspace_path(path)
+                                initial_files[normalized_path] = files
+                                workspace_logger.debug(
+                                    f"WS watch: scanned {len(files)} files for {workspace_path.name}",
+                                )
+                            except Exception as e:
+                                workspace_logger.warning(f"WS watch: failed to scan {path}: {e}")
+                                normalized_path = _normalize_workspace_path(path)
+                                initial_files[normalized_path] = []
+
+                    await websocket.send_json(
+                        {
+                            "type": "workspace_connected",
+                            "session_id": session_id,
+                            "timestamp": asyncio.get_event_loop().time(),
+                            "watched_paths": paths,
+                            "initial_files": initial_files,
+                        },
+                    )
+
+                elif action == "refresh":
+                    # Request a full file list for a workspace path
+                    path = data.get("path")
+                    # FIX: Normalize path for consistency with broadcasts and initial_files
+                    normalized_path = _normalize_workspace_path(path) if path else None
+                    workspace_logger.info(f"WS refresh request: path={path}, normalized={normalized_path}, session={session_id}")
+                    if normalized_path and Path(normalized_path).exists():
+                        workspace_path = Path(normalized_path)
+                        try:
+                            files = _scan_workspace_files(workspace_path)
+                        except Exception as e:
+                            await websocket.send_json(
+                                {
+                                    "type": "workspace_error",
+                                    "session_id": session_id,
+                                    "timestamp": asyncio.get_event_loop().time(),
+                                    "error": str(e),
+                                    "workspace_path": normalized_path,
+                                },
+                            )
+                            continue
+
+                        await websocket.send_json(
+                            {
+                                "type": "workspace_refresh",
+                                "session_id": session_id,
+                                "timestamp": asyncio.get_event_loop().time(),
+                                "workspace_path": normalized_path,
+                                "files": files,
+                            },
+                        )
+                    else:
+                        await websocket.send_json(
+                            {
+                                "type": "workspace_error",
+                                "session_id": session_id,
+                                "timestamp": asyncio.get_event_loop().time(),
+                                "error": "Workspace path not found",
+                                "workspace_path": normalized_path or path,
+                            },
+                        )
+
+        except WebSocketDisconnect:
+            workspace_logger.info(f"WS endpoint: client disconnected, session={session_id}")
+            workspace_manager.disconnect(websocket, session_id)
+        except Exception as e:
+            workspace_logger.error(f"WS endpoint: error in message loop for session={session_id}: {e}")
+            try:
+                await websocket.send_json(
+                    {
+                        "type": "workspace_error",
+                        "session_id": session_id,
+                        "timestamp": asyncio.get_event_loop().time(),
+                        "error": str(e),
+                    },
+                )
+            except Exception:
+                pass
+            workspace_manager.disconnect(websocket, session_id)
 
     # =========================================================================
     # Static File Serving (React build)
@@ -2054,7 +4081,9 @@ async def _save_session_metadata(
         turn_dir = get_log_session_dir_base()
         session_dir = get_log_session_root()
 
-        print(f"[WebUI] Saving metadata: turn_dir={turn_dir}, session_dir={session_dir}")
+        print(
+            f"[WebUI] Saving metadata: turn_dir={turn_dir}, session_dir={session_dir}",
+        )
 
         # Save metadata.json at turn level (CLI-compatible format)
         metadata = {
@@ -2079,7 +4108,9 @@ async def _save_session_metadata(
         history_file = session_dir / "winning_agents_history.json"
         if history_file.exists():
             try:
-                winning_agents_history = json.loads(history_file.read_text(encoding="utf-8"))
+                winning_agents_history = json.loads(
+                    history_file.read_text(encoding="utf-8"),
+                )
             except (json.JSONDecodeError, IOError):
                 pass
 
@@ -2091,7 +4122,10 @@ async def _save_session_metadata(
                 "timestamp": datetime.now().isoformat(),
             },
         )
-        history_file.write_text(json.dumps(winning_agents_history, indent=2), encoding="utf-8")
+        history_file.write_text(
+            json.dumps(winning_agents_history, indent=2),
+            encoding="utf-8",
+        )
 
         # Register session with SessionRegistry for `massgen --list-sessions` compatibility
         try:
@@ -2114,7 +4148,9 @@ async def _save_session_metadata(
         manager.session_turns[session_id] = turn_number
         manager.session_configs[session_id] = config_path
 
-        print(f"[WebUI] Saved session metadata: turn={turn_number}, winner={winning_agent}")
+        print(
+            f"[WebUI] Saved session metadata: turn={turn_number}, winner={winning_agent}",
+        )
 
     except Exception as e:
         print(f"[WebUI] Error saving session metadata: {e}")
@@ -2129,6 +4165,7 @@ async def run_coordination_with_history(
     config_path: str,
     session_log_dir: Path,
     turn_number: int,
+    context_paths: Optional[list] = None,
 ) -> None:
     """Run coordination with conversation history from previous turns.
 
@@ -2141,6 +4178,7 @@ async def run_coordination_with_history(
         session_id: WebSocket session identifier
         question: The follow-up question
         config_path: Path to the config file
+        context_paths: Optional list of context paths from @path syntax
         session_log_dir: Path to the session log directory (e.g., .massgen/massgen_logs/log_xxx)
         turn_number: The turn number for this coordination (2, 3, etc.)
     """
@@ -2157,6 +4195,7 @@ async def run_coordination_with_history(
         from massgen.frontend.coordination_ui import CoordinationUI
         from massgen.logger_config import (
             get_log_session_dir,
+            save_execution_metadata,
             set_log_base_session_dir,
             set_log_turn,
         )
@@ -2164,7 +4203,9 @@ async def run_coordination_with_history(
 
         # IMPORTANT: Set the base session dir to reuse the existing session log directory
         # This must happen before set_log_turn() or get_log_session_dir() is called
-        set_log_base_session_dir(session_log_dir.name)  # e.g., "log_20251202_235530_074788"
+        set_log_base_session_dir(
+            session_log_dir.name,
+        )  # e.g., "log_20251202_235530_074788"
 
         # Restore session state from previous turns
         previous_turns = []
@@ -2176,21 +4217,33 @@ async def run_coordination_with_history(
 
             # The session_log_dir is the base log dir (e.g., .massgen/massgen_logs/log_xxx)
             # We need to tell restore_session to look in the massgen_logs directory
-            print(f"[WebUI] Attempting to restore session: session_log_dir={session_log_dir}")
-            print(f"[WebUI] session_log_dir.name={session_log_dir.name}, parent={session_log_dir.parent}")
+            print(
+                f"[WebUI] Attempting to restore session: session_log_dir={session_log_dir}",
+            )
+            print(
+                f"[WebUI] session_log_dir.name={session_log_dir.name}, parent={session_log_dir.parent}",
+            )
             session_state = restore_session(
                 session_log_dir.name,  # e.g., "log_20251130_211636_581944"
-                session_storage=str(session_log_dir.parent),  # e.g., ".massgen/massgen_logs"
+                session_storage=str(
+                    session_log_dir.parent,
+                ),  # e.g., ".massgen/massgen_logs"
             )
             if session_state:
                 previous_turns = session_state.previous_turns
                 winning_agents_history = session_state.winning_agents_history
                 conversation_history = session_state.conversation_history or []
-                print(f"[WebUI] Restored {len(previous_turns)} previous turns, {len(winning_agents_history)} winners, {len(conversation_history)} history messages")
+                print(
+                    f"[WebUI] Restored {len(previous_turns)} previous turns, {len(winning_agents_history)} winners, {len(conversation_history)} history messages",
+                )
                 if conversation_history:
-                    print(f"[WebUI] Conversation history preview: {conversation_history[0] if conversation_history else 'empty'}")
+                    print(
+                        f"[WebUI] Conversation history preview: {conversation_history[0] if conversation_history else 'empty'}",
+                    )
             else:
-                print(f"[WebUI] restore_session returned None for {session_log_dir.name}")
+                print(
+                    f"[WebUI] restore_session returned None for {session_log_dir.name}",
+                )
         except Exception as e:
             print(f"[WebUI] ERROR restoring session state: {e}")
             traceback.print_exc()
@@ -2204,7 +4257,17 @@ async def run_coordination_with_history(
         if resolved_path is None:
             raise ValueError(f"Could not resolve config path: {config_path}")
 
-        config = load_config_file(str(resolved_path))
+        config, raw_config_for_metadata = load_config_file(str(resolved_path))
+
+        # Inject context paths from @path syntax if provided
+        if context_paths:
+            if "orchestrator" not in config:
+                config["orchestrator"] = {}
+            if "context_paths" not in config["orchestrator"]:
+                config["orchestrator"]["context_paths"] = []
+            # Add the new paths (accumulate with existing)
+            for ctx in context_paths:
+                config["orchestrator"]["context_paths"].append(ctx)
 
         # Extract orchestrator config dict from YAML
         orchestrator_cfg = config.get("orchestrator", {})
@@ -2228,7 +4291,10 @@ async def run_coordination_with_history(
                 },
             )
 
-        await emit_preparation_status("Initializing agents...", f"{num_agents} agent{'s' if num_agents != 1 else ''}")
+        await emit_preparation_status(
+            "Initializing agents...",
+            f"{num_agents} agent{'s' if num_agents != 1 else ''}",
+        )
 
         def progress_callback(status: str, detail: str) -> None:
             """Thread-safe callback to queue progress updates."""
@@ -2246,6 +4312,8 @@ async def run_coordination_with_history(
                 config_path=str(resolved_path),
                 memory_session_id=session_id,
                 progress_callback=progress_callback,
+                filesystem_session_id=session_id,
+                session_storage_base=".massgen/sessions",
             ),
         )
 
@@ -2284,27 +4352,59 @@ async def run_coordination_with_history(
         # Apply coordination config from YAML (includes enable_agent_task_planning, etc.)
         coord_cfg = orchestrator_cfg.get("coordination", {})
         if coord_cfg:
+            # Parse persona_generator config if present
+            from massgen.persona_generator import PersonaGeneratorConfig
+
+            persona_generator_config = PersonaGeneratorConfig()
+            if "persona_generator" in coord_cfg:
+                pg_cfg = coord_cfg["persona_generator"]
+                persona_generator_config = PersonaGeneratorConfig(
+                    enabled=pg_cfg.get("enabled", False),
+                    diversity_mode=pg_cfg.get("diversity_mode", "perspective"),
+                    persona_guidelines=pg_cfg.get("persona_guidelines"),
+                    persist_across_turns=pg_cfg.get("persist_across_turns", False),
+                )
+
             orchestrator_config.coordination_config = CoordinationConfig(
                 enable_planning_mode=coord_cfg.get("enable_planning_mode", False),
                 planning_mode_instruction=coord_cfg.get(
                     "planning_mode_instruction",
                     "During coordination, describe what you would do without actually executing actions.",
                 ),
-                max_orchestration_restarts=coord_cfg.get("max_orchestration_restarts", 0),
-                enable_agent_task_planning=coord_cfg.get("enable_agent_task_planning", False),
+                max_orchestration_restarts=coord_cfg.get(
+                    "max_orchestration_restarts",
+                    0,
+                ),
+                enable_agent_task_planning=coord_cfg.get(
+                    "enable_agent_task_planning",
+                    False,
+                ),
                 max_tasks_per_plan=coord_cfg.get("max_tasks_per_plan", 10),
                 broadcast=coord_cfg.get("broadcast", False),
                 broadcast_sensitivity=coord_cfg.get("broadcast_sensitivity", "medium"),
                 response_depth=coord_cfg.get("response_depth", "medium"),
                 broadcast_timeout=coord_cfg.get("broadcast_timeout", 300),
-                broadcast_wait_by_default=coord_cfg.get("broadcast_wait_by_default", True),
+                broadcast_wait_by_default=coord_cfg.get(
+                    "broadcast_wait_by_default",
+                    True,
+                ),
                 max_broadcasts_per_agent=coord_cfg.get("max_broadcasts_per_agent", 10),
-                task_planning_filesystem_mode=coord_cfg.get("task_planning_filesystem_mode", False),
-                enable_memory_filesystem_mode=coord_cfg.get("enable_memory_filesystem_mode", False),
+                task_planning_filesystem_mode=coord_cfg.get(
+                    "task_planning_filesystem_mode",
+                    False,
+                ),
+                enable_memory_filesystem_mode=coord_cfg.get(
+                    "enable_memory_filesystem_mode",
+                    False,
+                ),
                 use_skills=coord_cfg.get("use_skills", False),
                 massgen_skills=coord_cfg.get("massgen_skills", []),
                 skills_directory=coord_cfg.get("skills_directory", ".agent/skills"),
-                load_previous_session_skills=coord_cfg.get("load_previous_session_skills", False),
+                load_previous_session_skills=coord_cfg.get(
+                    "load_previous_session_skills",
+                    False,
+                ),
+                persona_generator=persona_generator_config,
             )
 
         # Get context sharing parameters
@@ -2322,9 +4422,49 @@ async def run_coordination_with_history(
             winning_agents_history=winning_agents_history,
         )
 
+        # Set up cancellation manager for WebUI cancellation support
+        from massgen.cancellation import CancellationManager
+
+        cancellation_mgr = CancellationManager()
+        # Don't register signal handlers (WebUI uses API-based cancellation)
+        # Just set the basic attributes so the orchestrator can check is_cancelled
+        cancellation_mgr._orchestrator = orchestrator
+        cancellation_mgr._cancelled = False
+        orchestrator.cancellation_manager = cancellation_mgr
+
+        # Store orchestrator reference for cancellation support
+        manager.orchestrators[session_id] = orchestrator
+
         # Store the log session directory in the display
         display.log_session_dir = get_log_session_dir()
-        print(f"[WebUI] run_coordination_with_history: turn={turn_number}, log_dir={display.log_session_dir}")
+        print(
+            f"[WebUI] run_coordination_with_history: turn={turn_number}, log_dir={display.log_session_dir}",
+        )
+
+        # Save execution metadata for session export/sharing (same as CLI)
+        # Use raw_config_for_metadata to avoid logging expanded secrets
+        if display.log_session_dir:
+            save_execution_metadata(
+                query=question,
+                config_path=str(resolved_path),
+                config_content=raw_config_for_metadata,
+            )
+
+            # IMPORTANT: Save initial status.json with workspace paths immediately
+            # This allows the WebUI to display workspace files right away without waiting
+            # for coordination to start
+            # Run in executor to avoid blocking event loop
+            try:
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(
+                    None,
+                    orchestrator.coordination_tracker.save_status_file,
+                    display.log_session_dir,
+                    orchestrator,
+                )
+                print("[WebUI] Saved initial status.json with workspace paths")
+            except Exception as e:
+                print(f"[WebUI] Warning: Could not save initial status.json: {e}")
 
         # Create coordination UI with web display
         ui = CoordinationUI(
@@ -2339,7 +4479,9 @@ async def run_coordination_with_history(
 
         if len(messages) > 1:
             # Multi-turn: use coordinate_with_context so agents see previous conversation
-            print(f"[WebUI] Running coordination with {len(conversation_history)} history messages")
+            print(
+                f"[WebUI] Running coordination with {len(conversation_history)} history messages",
+            )
             await ui.coordinate_with_context(orchestrator, question, messages)
         else:
             # First turn: standard coordination
@@ -2372,11 +4514,61 @@ async def run_coordination_with_history(
             config=str(resolved_path) if resolved_path else None,
         )
 
+        # Cleanup orchestrator reference on completion
+        if session_id in manager.orchestrators:
+            del manager.orchestrators[session_id]
+
+    except asyncio.CancelledError:
+        # Task was cancelled by user - don't broadcast completion or error
+        print(f"[WebUI] Coordination cancelled for session {session_id} (turn {turn_number})")
+
+        # Update status.json to show cancelled state
+        try:
+            from massgen.logger_config import get_log_session_dir
+
+            log_dir = get_log_session_dir()
+            if log_dir:
+                status_file = log_dir / "status.json"
+                if status_file.exists():
+                    import json
+
+                    with open(status_file, "r") as f:
+                        status_data = json.load(f)
+                    status_data["coordination"] = status_data.get("coordination", {})
+                    status_data["coordination"]["phase"] = "cancelled"
+                    status_data["coordination"]["cancelled"] = True
+                    status_data["coordination"]["cancelled_at"] = __import__("time").time()
+                    with open(status_file, "w") as f:
+                        json.dump(status_data, f, indent=2)
+        except Exception as status_err:
+            print(f"[WebUI] Warning: Could not update status.json: {status_err}")
+
+        # Cleanup orchestrator reference
+        if session_id in manager.orchestrators:
+            del manager.orchestrators[session_id]
+
+        # Broadcast cancellation
+        await manager.broadcast(
+            session_id,
+            {
+                "type": "coordination_cancelled",
+                "session_id": session_id,
+                "turn": turn_number,
+                "message": "Coordination cancelled by user",
+            },
+        )
+        # Re-raise to properly terminate the task
+        raise
+
     except Exception as e:
         # Log the full traceback for debugging
         error_msg = f"{type(e).__name__}: {str(e)}"
         print(f"[WebUI Error] {error_msg}")
         traceback.print_exc()
+
+        # Cleanup orchestrator reference on error
+        if session_id in manager.orchestrators:
+            del manager.orchestrators[session_id]
 
         # Broadcast error
         await manager.broadcast(
@@ -2393,6 +4585,7 @@ async def run_coordination(
     session_id: str,
     question: str,
     config_path: Optional[str] = None,
+    context_paths: Optional[list] = None,
 ) -> None:
     """Run coordination with web display.
 
@@ -2400,6 +4593,7 @@ async def run_coordination(
         session_id: Session identifier
         question: Question for coordination
         config_path: Optional path to config YAML
+        context_paths: Optional list of context paths from @path syntax
     """
     import traceback
 
@@ -2454,7 +4648,17 @@ async def run_coordination(
         if resolved_path is None:
             raise ValueError(f"Could not resolve config path: {config_path}")
 
-        config = load_config_file(str(resolved_path))
+        config, raw_config_for_metadata = load_config_file(str(resolved_path))
+
+        # Inject context paths from @path syntax if provided
+        if context_paths:
+            if "orchestrator" not in config:
+                config["orchestrator"] = {}
+            if "context_paths" not in config["orchestrator"]:
+                config["orchestrator"]["context_paths"] = []
+            # Add the new paths (accumulate with existing)
+            for ctx in context_paths:
+                config["orchestrator"]["context_paths"].append(ctx)
 
         # Extract orchestrator config dict from YAML
         orchestrator_cfg = config.get("orchestrator", {})
@@ -2467,10 +4671,16 @@ async def run_coordination(
         # Check if Docker is being used
         uses_docker = config.get("execution", {}).get("use_docker", False)
         if uses_docker:
-            await emit_preparation_status("Preparing Docker environment...", "Setting up isolated containers")
+            await emit_preparation_status(
+                "Preparing Docker environment...",
+                "Setting up isolated containers",
+            )
 
         # Create agents from config with progress updates
-        await emit_preparation_status("Initializing agents...", f"{num_agents} agent{'s' if num_agents != 1 else ''}")
+        await emit_preparation_status(
+            "Initializing agents...",
+            f"{num_agents} agent{'s' if num_agents != 1 else ''}",
+        )
 
         # Create progress callback that sends WebSocket updates
         # We run agent creation in a thread so progress updates can be sent in real-time
@@ -2493,6 +4703,8 @@ async def run_coordination(
                 config_path=str(resolved_path),
                 memory_session_id=session_id,
                 progress_callback=progress_callback,
+                filesystem_session_id=session_id,
+                session_storage_base=".massgen/sessions",
             ),
         )
 
@@ -2510,10 +4722,17 @@ async def run_coordination(
             if model_name:
                 agent_models[agent_id] = model_name
 
-        await send_init_status(f"Agents ready: {', '.join(agent_ids)}", "agents_ready", 60)
+        await send_init_status(
+            f"Agents ready: {', '.join(agent_ids)}",
+            "agents_ready",
+            60,
+        )
 
         # Emit status about loaded agents
-        await emit_preparation_status("Configuring orchestrator...", ", ".join(agent_ids))
+        await emit_preparation_status(
+            "Configuring orchestrator...",
+            ", ".join(agent_ids),
+        )
 
         # Create web display with agent_models
         display = manager.create_display(session_id, agent_ids, agent_models)
@@ -2538,27 +4757,59 @@ async def run_coordination(
         # Apply coordination config from YAML (includes enable_agent_task_planning, etc.)
         coord_cfg = orchestrator_cfg.get("coordination", {})
         if coord_cfg:
+            # Parse persona_generator config if present
+            from massgen.persona_generator import PersonaGeneratorConfig
+
+            persona_generator_config = PersonaGeneratorConfig()
+            if "persona_generator" in coord_cfg:
+                pg_cfg = coord_cfg["persona_generator"]
+                persona_generator_config = PersonaGeneratorConfig(
+                    enabled=pg_cfg.get("enabled", False),
+                    diversity_mode=pg_cfg.get("diversity_mode", "perspective"),
+                    persona_guidelines=pg_cfg.get("persona_guidelines"),
+                    persist_across_turns=pg_cfg.get("persist_across_turns", False),
+                )
+
             orchestrator_config.coordination_config = CoordinationConfig(
                 enable_planning_mode=coord_cfg.get("enable_planning_mode", False),
                 planning_mode_instruction=coord_cfg.get(
                     "planning_mode_instruction",
                     "During coordination, describe what you would do without actually executing actions.",
                 ),
-                max_orchestration_restarts=coord_cfg.get("max_orchestration_restarts", 0),
-                enable_agent_task_planning=coord_cfg.get("enable_agent_task_planning", False),
+                max_orchestration_restarts=coord_cfg.get(
+                    "max_orchestration_restarts",
+                    0,
+                ),
+                enable_agent_task_planning=coord_cfg.get(
+                    "enable_agent_task_planning",
+                    False,
+                ),
                 max_tasks_per_plan=coord_cfg.get("max_tasks_per_plan", 10),
                 broadcast=coord_cfg.get("broadcast", False),
                 broadcast_sensitivity=coord_cfg.get("broadcast_sensitivity", "medium"),
                 response_depth=coord_cfg.get("response_depth", "medium"),
                 broadcast_timeout=coord_cfg.get("broadcast_timeout", 300),
-                broadcast_wait_by_default=coord_cfg.get("broadcast_wait_by_default", True),
+                broadcast_wait_by_default=coord_cfg.get(
+                    "broadcast_wait_by_default",
+                    True,
+                ),
                 max_broadcasts_per_agent=coord_cfg.get("max_broadcasts_per_agent", 10),
-                task_planning_filesystem_mode=coord_cfg.get("task_planning_filesystem_mode", False),
-                enable_memory_filesystem_mode=coord_cfg.get("enable_memory_filesystem_mode", False),
+                task_planning_filesystem_mode=coord_cfg.get(
+                    "task_planning_filesystem_mode",
+                    False,
+                ),
+                enable_memory_filesystem_mode=coord_cfg.get(
+                    "enable_memory_filesystem_mode",
+                    False,
+                ),
                 use_skills=coord_cfg.get("use_skills", False),
                 massgen_skills=coord_cfg.get("massgen_skills", []),
                 skills_directory=coord_cfg.get("skills_directory", ".agent/skills"),
-                load_previous_session_skills=coord_cfg.get("load_previous_session_skills", False),
+                load_previous_session_skills=coord_cfg.get(
+                    "load_previous_session_skills",
+                    False,
+                ),
+                persona_generator=persona_generator_config,
             )
 
         # Get context sharing parameters
@@ -2574,17 +4825,56 @@ async def run_coordination(
             agent_temporary_workspace=agent_temporary_workspace,
         )
 
+        # Set up cancellation manager for WebUI cancellation support
+        from massgen.cancellation import CancellationManager
+
+        cancellation_mgr = CancellationManager()
+        # Don't register signal handlers (WebUI uses API-based cancellation)
+        # Just set the basic attributes so the orchestrator can check is_cancelled
+        cancellation_mgr._orchestrator = orchestrator
+        cancellation_mgr._cancelled = False
+        orchestrator.cancellation_manager = cancellation_mgr
+
+        # Store orchestrator reference for cancellation support
+        manager.orchestrators[session_id] = orchestrator
+
         # Store the log session directory in the display BEFORE coordination
         # This ensures the API can find it when coordination_complete is sent
-        from massgen.logger_config import get_log_session_dir
+        from massgen.logger_config import get_log_session_dir, save_execution_metadata
 
         display.log_session_dir = get_log_session_dir()
-        print(f"[DEBUG] run_coordination: Set display.log_session_dir = {display.log_session_dir}")
+        print(
+            f"[DEBUG] run_coordination: Set display.log_session_dir = {display.log_session_dir}",
+        )
 
         # Print status.json location for automation mode monitoring
         if display.log_session_dir:
             print(f"LOG_DIR: {display.log_session_dir}")
             print(f"STATUS: {display.log_session_dir / 'status.json'}")
+
+            # Save execution metadata for session export/sharing (same as CLI)
+            # Use raw_config_for_metadata to avoid logging expanded secrets
+            save_execution_metadata(
+                query=question,
+                config_path=str(resolved_path),
+                config_content=raw_config_for_metadata,
+            )
+
+            # IMPORTANT: Save initial status.json with workspace paths immediately
+            # This allows the WebUI to display workspace files right away without waiting
+            # for coordination to start
+            # Run in executor to avoid blocking event loop
+            try:
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(
+                    None,
+                    orchestrator.coordination_tracker.save_status_file,
+                    display.log_session_dir,
+                    orchestrator,
+                )
+                print("[WebUI] Saved initial status.json with workspace paths")
+            except Exception as e:
+                print(f"[WebUI] Warning: Could not save initial status.json: {e}")
 
         # Create coordination UI with web display
         ui = CoordinationUI(
@@ -2595,7 +4885,10 @@ async def run_coordination(
         await send_init_status("Starting coordination...", "starting", 100)
 
         # Final preparation status before starting
-        await emit_preparation_status("Launching agents...", "Agents will appear momentarily")
+        await emit_preparation_status(
+            "Launching agents...",
+            "Agents will appear momentarily",
+        )
 
         # Run coordination
         await ui.coordinate(orchestrator, question)
@@ -2625,11 +4918,60 @@ async def run_coordination(
             config=str(resolved_path) if resolved_path else None,
         )
 
+        # Cleanup orchestrator reference on completion
+        if session_id in manager.orchestrators:
+            del manager.orchestrators[session_id]
+
+    except asyncio.CancelledError:
+        # Task was cancelled by user - don't broadcast completion or error
+        print(f"[WebUI] Coordination cancelled for session {session_id}")
+
+        # Update status.json to show cancelled state
+        try:
+            from massgen.logger_config import get_log_session_dir
+
+            log_dir = get_log_session_dir()
+            if log_dir:
+                status_file = log_dir / "status.json"
+                if status_file.exists():
+                    import json
+
+                    with open(status_file, "r") as f:
+                        status_data = json.load(f)
+                    status_data["coordination"] = status_data.get("coordination", {})
+                    status_data["coordination"]["phase"] = "cancelled"
+                    status_data["coordination"]["cancelled"] = True
+                    status_data["coordination"]["cancelled_at"] = __import__("time").time()
+                    with open(status_file, "w") as f:
+                        json.dump(status_data, f, indent=2)
+        except Exception as status_err:
+            print(f"[WebUI] Warning: Could not update status.json: {status_err}")
+
+        # Cleanup orchestrator reference
+        if session_id in manager.orchestrators:
+            del manager.orchestrators[session_id]
+
+        # Broadcast cancellation (already done by cancel endpoint, but ensure it's sent)
+        await manager.broadcast(
+            session_id,
+            {
+                "type": "coordination_cancelled",
+                "session_id": session_id,
+                "message": "Coordination cancelled by user",
+            },
+        )
+        # Re-raise to properly terminate the task
+        raise
+
     except Exception as e:
         # Log the full traceback for debugging
         error_msg = f"{type(e).__name__}: {str(e)}"
         print(f"[WebUI Error] {error_msg}")
         traceback.print_exc()
+
+        # Cleanup orchestrator reference on error
+        if session_id in manager.orchestrators:
+            del manager.orchestrators[session_id]
 
         # Broadcast error
         await manager.broadcast(
@@ -2682,8 +5024,16 @@ def run_server(
         logging.getLogger("uvicorn.error").setLevel(logging.WARNING)
 
         # Suppress websockets deprecation warnings
-        warnings.filterwarnings("ignore", category=DeprecationWarning, module="websockets")
-        warnings.filterwarnings("ignore", category=DeprecationWarning, module="uvicorn.protocols.websockets")
+        warnings.filterwarnings(
+            "ignore",
+            category=DeprecationWarning,
+            module="websockets",
+        )
+        warnings.filterwarnings(
+            "ignore",
+            category=DeprecationWarning,
+            module="uvicorn.protocols.websockets",
+        )
 
         uvicorn.run(
             app,

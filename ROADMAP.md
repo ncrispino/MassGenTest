@@ -1,10 +1,10 @@
 # MassGen Roadmap
 
-**Current Version:** v0.1.26
+**Current Version:** v0.1.36
 
 **Release Schedule:** Mondays, Wednesdays, Fridays @ 9am PT
 
-**Last Updated:** December 17, 2025
+**Last Updated:** January 9, 2026
 
 This roadmap outlines MassGen's development priorities for upcoming releases. Each release focuses on specific capabilities with real-world use cases.
 
@@ -42,81 +42,102 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 | Release | Target | Feature | Owner | Use Case |
 |---------|--------|---------|-------|----------|
-| **v0.1.27** | 12/19/25 | Add system reminders | @ncrispino | Framework for injecting system reminders mid-run during LLM streaming |
-| | | Memory as Tools | @ncrispino | Include memory (including filesystem) as callable tools for agents |
-| **v0.1.28** | 12/22/25 | Grok 4.1 Fast Model Support | @praneeth999 | Add support for xAI's Grok 4.1 Fast model for rapid agent responses |
-| | | Automatic Context Compression | @ncrispino | Automatic context compression to manage long conversations efficiently |
-| **v0.1.29** | 12/24/25 | Expose MassGen as OpenAI-Compatible Chat Server | @ncrispino | Run MassGen as an OpenAI-compatible API server for integration with other tools |
+| **v0.1.37** | 01/12/26 | OpenAI Responses /compact Endpoint | @ncrispino | Use OpenAI's native compact endpoint instead of custom summarization |
+| | | Add Fara-7B for Computer Use | @ncrispino | Support for Fara-7B model for computer use tasks |
+| **v0.1.38** | 01/14/26 | Integrate Smart Semantic Search | @ncrispino | Advanced semantic search capabilities for improved retrieval |
+| | | Add Model Selector for Log Analysis | @ncrispino | Choose model for `massgen logs analyze` self-analysis mode |
+| **v0.1.39** | 01/16/26 | Improve Log Sharing and Analysis | @ncrispino | Enhanced log sharing workflows and analysis tools |
 
 *All releases ship on MWF @ 9am PT when ready*
 
 ---
 
-## 📋 v0.1.27 - System Reminders & Memory as Tools
+## ✅ v0.1.36 - Hook Framework & Unified @path Context Handling (COMPLETED)
+
+**Released: January 9, 2026**
 
 ### Features
 
-**1. Add system reminders** (@ncrispino)
-- Issue: [#557](https://github.com/massgen/MassGen/issues/557)
-- Framework for injecting system reminders mid-run during LLM streaming
-- Support for context awareness, human feedback, safety, and memory reminders
-- Generic and extensible design for flexible downstream usage
-- **Use Case**: Keep agents focused on key objectives and constraints throughout long conversations
+- **Hook Framework**: General hook framework for agent lifecycle events ([MAS-215](https://linear.app/massgen-ai/issue/MAS-215), [PR #769](https://github.com/massgen/MassGen/pull/769))
+  - PreToolUse/PostToolUse hooks for permission validation and content injection
+  - Injection strategies: `tool_result` and `user_message`
+  - Built-in MidStreamInjectionHook and HighPriorityTaskReminderHook
+  - Custom Python callable hooks with glob-style pattern matching
+  - Configurable fail-open/fail-closed error handling
 
-**2. Memory as Tools** (@ncrispino)
-- Issue: [#461](https://github.com/massgen/MassGen/issues/461)
-- Include memory (including filesystem) as callable tools for agents
-- Agents can explicitly invoke memory operations via tool calls
-- Unified interface for different memory backends
-- **Use Case**: Enable agents to have explicit control over memory operations, allowing them to store, retrieve, and manage persistent information as tool calls
+- **Unified `@path` Context Handling**: Inline context path references ([PR #771](https://github.com/massgen/MassGen/pull/771))
+  - Inline file picker with `@` trigger for autocomplete
+  - Syntax: `@path` (read), `@path:w` (write), `@dir/` (directory)
+  - Context accumulation across turns
+  - Deferred agent creation for Docker efficiency
 
-### Success Criteria
-- ✅ System reminders can be configured and injected into conversations
-- ✅ Memory operations are available as callable tools
-- ✅ Agents can explicitly store and retrieve information
+- **Claude Code Native Hooks**: Integration with Claude Code's hook system
+
+### Fixed
+
+- Docker resource cleanup when recreating agents for new `@path` references
+- Path handling consistency across CLI and Web UI
+
+*See [Ongoing Work](#-ongoing-work--continuous-releases) section for detailed track information.*
 
 ---
 
-## 📋 v0.1.28 - Grok 4.1 Fast & Context Compression
+## 📋 v0.1.37 - OpenAI Compact Endpoint & Model Support
 
 ### Features
 
-**1. Grok 4.1 Fast Model Support** (@praneeth999)
-- Issue: [#540](https://github.com/massgen/MassGen/issues/540)
-- Add support for xAI's Grok 4.1 Fast model
-- Integration with existing Grok backend infrastructure
-- Pricing and token counting configuration
-- **Use Case**: Provide access to xAI's latest high-speed model for rapid agent responses
+**1. OpenAI Responses /compact Endpoint** (@ncrispino)
+- Issue: [#739](https://github.com/massgen/MassGen/issues/739)
+- Use OpenAI's native `/compact` endpoint instead of custom summarization
+- Leverage API-level context compression for better efficiency
+- **Use Case**: Reduce token usage and improve response quality with native compression
 
-**2. Automatic Context Compression** (@ncrispino)
-- Issue: [#617](https://github.com/massgen/MassGen/issues/617)
-- Automatic context compression to manage long conversations efficiently
-- Intelligent summarization of conversation history when context limits are reached
-- Configurable compression thresholds and strategies
-- **Use Case**: Enable longer multi-turn conversations without losing important context
+**2. Add Fara-7B for Computer Use** (@ncrispino)
+- Issue: [#646](https://github.com/massgen/MassGen/issues/646)
+- Support for Fara-7B model for computer use tasks
+- Integration with existing computer use infrastructure
+- **Use Case**: Alternative model option for GUI automation workflows
 
 ### Success Criteria
-- ✅ Grok 4.1 Fast model is accessible via configuration
-- ✅ Token counting and pricing are accurate for Grok 4.1 Fast
-- ✅ Context compression activates automatically when approaching limits
-- ✅ Compressed context preserves essential conversation information
+- ✅ OpenAI compact endpoint integration working
+- ✅ Fara-7B working with computer use features
 
 ---
 
-## 📋 v0.1.29 - OpenAI-Compatible Server
+## 📋 v0.1.38 - Smart Semantic Search & Log Analysis Model Selector
 
 ### Features
 
-**1. Expose MassGen as OpenAI-Compatible Chat Server** (@ncrispino)
-- Issue: [#628](https://github.com/massgen/MassGen/issues/628)
-- Run MassGen as an OpenAI-compatible API server
-- Enable integration with tools expecting OpenAI API format (Cursor, Continue, etc.)
-- Support for streaming responses and tool calling
-- **Use Case**: Use MassGen multi-agent coordination as a drop-in replacement for OpenAI API in existing workflows
+**1. Integrate Smart Semantic Search** (@ncrispino)
+- Issue: [#639](https://github.com/massgen/MassGen/issues/639)
+- Advanced semantic search capabilities for improved retrieval
+- Integration with existing search infrastructure
+- **Use Case**: Better context retrieval and information discovery
+
+**2. Add Model Selector for Log Analysis** (@ncrispino)
+- Issue: [#766](https://github.com/massgen/MassGen/issues/766)
+- Allow users to choose which model to use for `massgen logs analyze` self-analysis mode
+- Configurable model selection for different analysis requirements
+- **Use Case**: Flexibility in choosing analysis model based on cost/quality tradeoffs
 
 ### Success Criteria
-- ✅ MassGen server responds to OpenAI-compatible API calls
-- ✅ External tools can connect to MassGen as an OpenAI provider
+- ✅ Semantic search integrated and functional
+- ✅ Model selector working for log analysis command
+
+---
+
+## 📋 v0.1.39 - Log Sharing & Analysis
+
+### Features
+
+**1. Improve Log Sharing and Analysis** (@ncrispino)
+- Issue: [#722](https://github.com/massgen/MassGen/issues/722)
+- Enhanced log sharing workflows
+- Improved analysis tools and visualizations
+- **Use Case**: Better collaboration and debugging workflows
+
+### Success Criteria
+- ✅ Log sharing improvements deployed
 
 ---
 
@@ -448,42 +469,215 @@ These features are being actively developed on **separate parallel tracks** and 
 - API key management endpoints and environment checks
 - **Status:** ✅ Completed in v0.1.26
 
-### Track: Grok 4.1 Fast Model Support (@praneeth999, ram2561)
-- Issue: [#540](https://github.com/massgen/MassGen/issues/540)
-- Add support for xAI's Grok 4.1 Fast model
-- Integration with existing Grok backend infrastructure
-- **Target:** v0.1.28
+### Track: Multimodal Backend Integration (@ncrispino, @qidanrui, nickcrispino, danrui2020)
+- Commits: 598a32f8, dc920078
+- Native multimodal understanding for Gemini and OpenAI backends
+- Image, audio, video understanding via `read_media` with backend-native APIs
+- **Status:** ✅ Completed in v0.1.28
 
-### Track: Automatic Context Compression (@ncrispino, nickcrispino)
+### Track: Multimodal Generation Consolidation (@ncrispino, nickcrispino)
+- Commit: dc920078
+- Unified `generate_media` tool with provider selection
+- New `generation/` module for OpenAI (DALL-E, Sora, TTS), Google (Imagen, Veo), OpenRouter
+- **Status:** ✅ Completed in v0.1.28
+
+### Track: Web UI Artifact Previewer (@ncrispino, @voidcenter, nickcrispino, justin_zhang)
+- Commit: 598a32f8
+- Preview workspace artifacts directly in web interface
+- Support for PDF, DOCX, PPTX, XLSX, images, HTML, SVG, Markdown, Mermaid
+- **Status:** ✅ Completed in v0.1.28
+
+### Track: Minimum Answers Before Voting (@ncrispino, nickcrispino)
+- Commit: bc7881d2
+- New `min_answers_before_voting` orchestrator configuration option
+- Integrated into CLI quickstart wizard and Web UI CoordinationStep
+- **Status:** ✅ Completed in v0.1.28
+
+### Track: Azure OpenAI Workflow Fixes (@AbhimanyuAryan, abhimanyuaryan)
+- Commit: c71094ac
+- Parameter filtering for unsupported Azure parameters
+- Fixed tool_choice handling, message validation, and response format extraction
+- **Status:** ✅ Completed in v0.1.28
+
+### Track: OpenRouter Tool-Capable Model Filtering (@shubham2345)
+- Commit: 40acf82c
+- Model list filters to only show models supporting tool calling
+- Checks `supported_parameters` for "tools" capability
+- **Status:** ✅ Completed in v0.1.28
+
+### Track: Subagent System (@ncrispino, nickcrispino)
+- PR: [#690](https://github.com/massgen/MassGen/pull/690)
+- Spawn parallel child MassGen processes for independent task execution
+- Process isolation with independent workspaces per subagent
+- New `spawn_subagents` tool with result aggregation and token tracking
+- **Status:** ✅ Completed in v0.1.29
+
+### Track: Tool Metrics Distribution Statistics (@ncrispino, nickcrispino)
+- Commit: 30aca047
+- Enhanced `get_tool_metrics_summary()` with per-call averages
+- Output distribution stats (min/max/median) for bottleneck analysis
+- **Status:** ✅ Completed in v0.1.29
+
+### Track: CLI Per-Agent System Messages (@ncrispino, nickcrispino)
+- Commit: 78177372
+- New mode for assigning different system messages per agent in quickstart
+- Options: "Skip", "Same for all", "Different per agent"
+- **Status:** ✅ Completed in v0.1.29
+
+### Track: OpenAI Responses API Fixes (@ncrispino, nickcrispino)
+- PR: [#685](https://github.com/massgen/MassGen/pull/685)
+- Fixed duplicate item errors when using `previous_response_id`
+- Preserved function call ID for proper reasoning item pairing
+- **Status:** ✅ Completed in v0.1.29
+
+### Track: OpenRouter Web Search Plugin (@shubham2345)
+- PR: [#693](https://github.com/massgen/MassGen/pull/693)
+- Native web search integration via OpenRouter's plugins array
+- Maps `enable_web_search` to `{"id": "web"}` plugin format
+- **Status:** ✅ Completed in v0.1.30
+
+### Track: Persona Generator Diversity Modes (@ncrispino, nickcrispino)
+- PR: [#699](https://github.com/massgen/MassGen/pull/699)
+- Two diversity modes: `perspective` (values/priorities) and `implementation` (solution types)
+- Phase-based adaptation with softened personas for convergence
+- **Status:** ✅ Completed in v0.1.30
+
+### Track: Azure OpenAI Multi-Endpoint Support (@AbhimanyuAryan, abhimanyuaryan)
+- PR: [#698](https://github.com/massgen/MassGen/pull/698)
+- Support both Azure-specific and OpenAI-compatible endpoints
+- Environment variable expansion (`${VAR}`) in config files
+- **Status:** ✅ Completed in v0.1.30
+
+### Track: Test Suite Fixes (@maxim-saplin)
+- PR: [#688](https://github.com/massgen/MassGen/pull/688)
+- Comprehensive test fixes with xfail registry
+- Fixed persistent memory retrieval and backend tool registration
+- **Status:** ✅ Completed in v0.1.30
+
+### Track: Logfire Observability Integration (@ncrispino, nickcrispino)
+- PR: [#708](https://github.com/massgen/MassGen/pull/708)
+- Comprehensive structured logging and tracing via Logfire (Pydantic team)
+- Automatic LLM instrumentation for OpenAI, Anthropic Claude, and Google Gemini backends
+- Tool execution tracing with timing metrics and agent coordination observability
+- Enable via `--logfire` CLI flag or `MASSGEN_LOGFIRE_ENABLED=true` environment variable
+- **Status:** ✅ Completed in v0.1.31
+
+### Track: Azure OpenAI Native Tool Call Streaming (@AbhimanyuAryan, abhimanyuaryan)
+- PR: [#705](https://github.com/massgen/MassGen/pull/705)
+- Tool calls accumulated and yielded as structured `tool_calls` chunks
+- Fixed streaming behavior for Azure OpenAI tool calling
+- **Status:** ✅ Completed in v0.1.31
+
+### Track: OpenRouter Web Search Logging (@shubham2345)
+- PR: [#704](https://github.com/massgen/MassGen/pull/704)
+- Fixed logging output for web search operations
+- **Status:** ✅ Completed in v0.1.31
+
+### Track: Session Export Multi-Turn Support (@ncrispino, nickcrispino)
+- PR: [#715](https://github.com/massgen/MassGen/pull/715)
+- Enhanced `massgen export` with turn range selection and workspace options
+- Multi-turn file collection preserving turn/attempt structure
+- **Status:** ✅ Completed in v0.1.32
+
+### Track: Logfire Optional Dependency (@AbhimanyuAryan, abhimanyuaryan)
+- PR: [#711](https://github.com/massgen/MassGen/pull/711)
+- Moved Logfire from required to optional `[observability]` extra
+- Helpful error message when `--logfire` used without Logfire installed
+- **Status:** ✅ Completed in v0.1.32
+
+### Track: Per-Attempt Logging (@ncrispino, nickcrispino)
+- Commit: a808d730
+- Separate log files per orchestration restart attempt
+- Handler reconfiguration via `set_log_attempt()` function
+- **Status:** ✅ Completed in v0.1.32
+
+### Track: Office Document PDF Conversion (@ncrispino, nickcrispino)
+- Commit: 7c7a32e3
+- Automatic DOCX/PPTX/XLSX to PDF conversion for session sharing
+- Docker + LibreOffice headless conversion with image fallback
+- **Status:** ✅ Completed in v0.1.32
+
+### Track: Reactive Context Compression (@ncrispino, nickcrispino)
 - Issue: [#617](https://github.com/massgen/MassGen/issues/617)
-- Automatic context compression for long conversations
-- Intelligent summarization when context limits are reached
-- **Target:** v0.1.28
+- PR: [#697](https://github.com/massgen/MassGen/pull/697)
+- Automatic context compression when context length errors are detected
+- Streaming buffer system for compression recovery
+- **Status:** ✅ Completed in v0.1.33
 
-### Track: OpenAI-Compatible Chat Server (@ncrispino, nickcrispino)
+### Track: Backend Model List Auto-Update (@ncrispino, nickcrispino)
+- Issue: [#645](https://github.com/massgen/MassGen/issues/645)
+- PR: [#669](https://github.com/massgen/MassGen/pull/669)
+- Native model listing APIs for providers (Groq, Together, and others)
+- Research third-party wrappers; document manual update processes
+- **Status:** ✅ Completed in v0.1.34
+
+### Track: OpenAI-Compatible Chat Server (@maxim-saplin)
 - Issue: [#628](https://github.com/massgen/MassGen/issues/628)
+- PR: [#689](https://github.com/massgen/MassGen/pull/689)
 - Run MassGen as an OpenAI-compatible API server
-- Integration with Cursor, Continue, and other tools
-- **Target:** v0.1.29
+- **Status:** ✅ Completed in v0.1.34
 
-### Track: RL Integration (@qidanrui, @praneeth999, danrui2020, ram2561)
-- Issue: [#527](https://github.com/massgen/MassGen/issues/527)
-- Reinforcement learning integration for agent optimization
-- Adaptive agent behavior based on feedback and outcomes
-- Reward modeling for multi-agent coordination
-- **Target:** v0.1.27
+### Track: Code-Based Tools in Web UI (@ncrispino, nickcrispino)
+- Issue: [#612](https://github.com/massgen/MassGen/issues/612)
+- Ensure code-based tools work properly in Web UI
+- Integration with new Web UI features
+- **Status:** ✅ Completed in v0.1.34
 
-### Track: Smithery MCP Tools Support (@ncrispino, nickcrispino)
-- Issue: [#521](https://github.com/massgen/MassGen/issues/521)
-- Integration with Smithery to expand available MCP tools
-- Automatic discovery and installation of Smithery MCP servers
-- **Target:** v0.1.27
+### Track: Test MassGen for PPTX Slides (@ncrispino, nickcrispino)
+- Issue: [#686](https://github.com/massgen/MassGen/issues/686)
+- Verify and improve PPTX generation capabilities
+- Test slide generation workflows and output quality
+- **Status:** ✅ Completed in v0.1.34
 
-### Track: Memory as Tools (@ncrispino, nickcrispino)
-- Issue: [#461](https://github.com/massgen/MassGen/issues/461)
-- Include memory (including filesystem) as callable tools for agents
-- Unified interface for different memory backends
-- **Target:** v0.1.27
+### Track: OpenRouter Tool-Use Model Filtering (@shubham2345)
+- Issue: [#647](https://github.com/massgen/MassGen/issues/647)
+- Restrict OpenRouter model list to only show models that support tool use
+- Filter based on `supported_parameters` capability checks
+- **Status:** ✅ Completed in v0.1.34
+
+### Track: OpenAI Responses /compact Endpoint (@ncrispino, nickcrispino)
+- Issue: [#739](https://github.com/massgen/MassGen/issues/739)
+- Use OpenAI's native `/compact` endpoint instead of custom summarization
+- Leverage API-level context compression for better efficiency
+- **Target:** v0.1.37
+
+### Track: Improve Logging (@ncrispino, nickcrispino)
+- Issue: [#683](https://github.com/massgen/MassGen/issues/683)
+- PR: [#761](https://github.com/massgen/MassGen/pull/761)
+- Enhanced logging for better debugging and observability via Logfire workflow attributes
+- New `massgen logs analyze` CLI command with self-analysis mode
+- **Status:** ✅ Completed in v0.1.35
+
+### Track: Add Fara-7B for Computer Use (@ncrispino, nickcrispino)
+- Issue: [#646](https://github.com/massgen/MassGen/issues/646)
+- Support for Fara-7B model for computer use tasks
+- Integration with existing computer use infrastructure
+- **Target:** v0.1.37
+
+### Track: Integrate Smart Semantic Search (@ncrispino, nickcrispino)
+- Issue: [#639](https://github.com/massgen/MassGen/issues/639)
+- Advanced semantic search capabilities for improved retrieval
+- Integration with existing search infrastructure
+- **Target:** v0.1.38
+
+### Track: Add Model Selector for Log Analysis (@ncrispino, nickcrispino)
+- Issue: [#766](https://github.com/massgen/MassGen/issues/766)
+- Allow users to choose which model to use for `massgen logs analyze` self-analysis mode
+- Configurable model selection for different analysis requirements
+- **Target:** v0.1.38
+
+### Track: General Hook Framework (@ncrispino, nickcrispino)
+- Issue: [#745](https://github.com/massgen/MassGen/issues/745)
+- PR: [#769](https://github.com/massgen/MassGen/pull/769)
+- Extensible hook system for agent lifecycle events
+- Enable custom actions at key orchestration points
+- **Status:** ✅ Completed in v0.1.36
+
+### Track: Improve Log Sharing and Analysis (@ncrispino, nickcrispino)
+- Issue: [#722](https://github.com/massgen/MassGen/issues/722)
+- Enhanced log sharing workflows
+- Improved analysis tools and visualizations
+- **Target:** v0.1.39
 
 ### Track: Coding Agent Enhancements (@ncrispino, nickcrispino)
 - PR: [#251](https://github.com/massgen/MassGen/pull/251)
@@ -560,5 +754,5 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, code standards, te
 
 *This roadmap is community-driven. Releases ship on **Mondays, Wednesdays, Fridays @ 9am PT**. Timelines may shift based on priorities and feedback. Open an issue to suggest changes!*
 
-**Last Updated:** December 17, 2025
+**Last Updated:** January 9, 2026
 **Maintained By:** MassGen Team

@@ -8,7 +8,7 @@ import { useState, useCallback, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Send, Wifi, WifiOff, AlertCircle, XCircle, ArrowLeft, Loader2, Trophy } from 'lucide-react';
 import { useWebSocket, ConnectionStatus } from './hooks/useWebSocket';
-import { useAgentStore, selectQuestion, selectIsComplete, selectAnswers, selectViewMode, selectSelectedAgent, selectAgents, selectFinalAnswer, selectSelectingWinner, selectVoteDistribution, selectAutomationMode, selectInitStatus } from './stores/agentStore';
+import { useAgentStore, selectQuestion, selectIsComplete, selectAnswers, selectViewMode, selectSelectedAgent, selectAgents, selectFinalAnswer, selectSelectingWinner, selectVoteDistribution, selectAutomationMode, selectInitStatus, selectPreparationStatus } from './stores/agentStore';
 import { useThemeStore } from './stores/themeStore';
 import { AgentCarousel } from './components/AgentCarousel';
 import { AgentCard } from './components/AgentCard';
@@ -20,11 +20,14 @@ import { FinalAnswerView } from './components/FinalAnswerView';
 import { QuickstartWizard } from './components/QuickstartWizard';
 import { NotificationToast } from './components/NotificationToast';
 import { KeyboardShortcutsModal } from './components/KeyboardShortcutsModal';
+import { PathAutocomplete, type PathAutocompleteHandle } from './components/PathAutocomplete';
 import { ConversationHistory } from './components/ConversationHistory';
 import { AutomationView } from './components/AutomationView';
 import { ConfigEditorModal } from './components/ConfigEditorModal';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
+import { useWorkspaceConnection } from './hooks/useWorkspaceConnection';
 import { useWizardStore } from './stores/wizardStore';
+import { debugLog } from './utils/debugLogger';
 import type { Notification } from './stores/notificationStore';
 
 function ConnectionIndicator({ status }: { status: ConnectionStatus }) {
@@ -71,6 +74,7 @@ export function App() {
   const voteDistribution = useAgentStore(selectVoteDistribution);
   const automationMode = useAgentStore(selectAutomationMode);
   const initStatus = useAgentStore(selectInitStatus);
+  const preparationStatus = useAgentStore(selectPreparationStatus);
   const reset = useAgentStore((s) => s.reset);
   const backToCoordination = useAgentStore((s) => s.backToCoordination);
   const setViewMode = useAgentStore((s) => s.setViewMode);
@@ -83,12 +87,24 @@ export function App() {
   // Store scroll position when leaving coordination view
   const coordinationScrollRef = useRef<number>(0);
 
+  // Path autocomplete ref
+  const pathAutocompleteRef = useRef<PathAutocompleteHandle>(null);
+
   // Theme - apply effective theme class to document
   const getEffectiveTheme = useThemeStore((s) => s.getEffectiveTheme);
   const themeMode = useThemeStore((s) => s.mode);
 
   // Wizard store - for auto-opening wizard via URL param
   const openWizard = useWizardStore((s) => s.openWizard);
+
+  // Always-on workspace WebSocket connection
+  // Connects when session exists, keeps file lists updated in background
+  useWorkspaceConnection();
+
+  // Sync session ID to debug logger for routing logs to session log_dir
+  useEffect(() => {
+    debugLog.setSessionId(sessionId);
+  }, [sessionId]);
 
   useEffect(() => {
     const effectiveTheme = getEffectiveTheme();
@@ -476,7 +492,7 @@ export function App() {
                                   initial={{ opacity: 0, x: -20 }}
                                   animate={{ opacity: 1, x: 0 }}
                                   transition={{ delay: idx * 0.1 }}
-                                  className={`flex items-center justify-between px-3 py-2 rounded-lg ${
+                                  className={`flex items-center justify-between gap-4 px-3 py-2 rounded-lg ${
                                     isLeading
                                       ? 'bg-yellow-500/30 border border-yellow-500/50'
                                       : 'bg-gray-700/50'
@@ -484,7 +500,7 @@ export function App() {
                                 >
                                   <span className={isLeading ? 'font-medium' : ''}>{displayName}</span>
                                   <span className={`font-bold ${isLeading ? 'text-yellow-400' : 'text-gray-400'}`}>
-                                    {votes} vote{votes !== 1 ? 's' : ''}
+                                    {votes} {votes === 1 ? 'vote' : 'votes'}
                                   </span>
                                 </motion.div>
                               );
@@ -599,10 +615,12 @@ export function App() {
                 </button>
               </form>
             </div>
-          ) : question ? (
-            /* Cancel button during coordination */
+          ) : (question || initStatus || preparationStatus) ? (
+            /* Cancel button during coordination or preparation */
             <div className="flex items-center justify-center gap-4">
-              <span className="text-gray-600 dark:text-gray-400">Coordination in progress...</span>
+              <span className="text-gray-600 dark:text-gray-400">
+                {preparationStatus || 'Coordination in progress...'}
+              </span>
               <button
                 onClick={handleCancel}
                 className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-500 rounded-lg transition-colors text-white"
@@ -612,13 +630,30 @@ export function App() {
               </button>
             </div>
           ) : (
-            <form onSubmit={handleSubmit} className="flex gap-4">
+            <form onSubmit={handleSubmit} className="flex gap-4 relative">
+              {/* Path autocomplete dropdown */}
+              <PathAutocomplete
+                ref={pathAutocompleteRef}
+                inputValue={inputQuestion}
+                onSelect={(path, suffix) => {
+                  // Path was selected - focus returns to input automatically
+                  console.log('Selected path:', path, suffix);
+                }}
+                onInputChange={setInputQuestion}
+                enabled={status === 'connected' && !!selectedConfig}
+              />
               <input
                 type="text"
                 value={inputQuestion}
                 onChange={(e) => setInputQuestion(e.target.value)}
+                onKeyDown={(e) => {
+                  // Let autocomplete handle keys if it's showing
+                  if (pathAutocompleteRef.current?.handleKeyDown(e)) {
+                    return;
+                  }
+                }}
                 placeholder={selectedConfig
-                  ? "Enter your question for multi-agent coordination..."
+                  ? "Enter your question (use @path for context, @path:w for write access)..."
                   : "Select a config first..."
                 }
                 disabled={status !== 'connected' || !selectedConfig}

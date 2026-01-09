@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from ..logger_config import logger
 from ..mcp_tools.hooks import HookResult
 from ._base import Permission
+from ._constants import BINARY_FILE_EXTENSIONS, DEFAULT_EXCLUDED_DIRS
 from ._file_operation_tracker import FileOperationTracker
 from ._workspace_tools_server import get_copy_file_pairs
 
@@ -75,82 +76,12 @@ class PathPermissionManager:
     - Path access control
     """
 
-    DEFAULT_EXCLUDED_PATTERNS = [
-        ".massgen",
-        ".env",
-        ".git",
-        "node_modules",
-        "__pycache__",
-        ".venv",
-        "venv",
-        ".pytest_cache",
-        ".mypy_cache",
-        ".ruff_cache",
-        ".DS_Store",
-        "massgen_logs",
-    ]
+    # Use centralized constants
+    DEFAULT_EXCLUDED_PATTERNS = list(DEFAULT_EXCLUDED_DIRS)
 
     # Binary file extensions that should not be read by text-based tools
     # These files should be handled by specialized tools (understand_image, understand_video, etc.)
-    BINARY_FILE_EXTENSIONS = {
-        # Images
-        ".jpg",
-        ".jpeg",
-        ".png",
-        ".gif",
-        ".bmp",
-        ".ico",
-        ".svg",
-        ".webp",
-        ".tiff",
-        ".tif",
-        # Videos
-        ".mp4",
-        ".avi",
-        ".mov",
-        ".mkv",
-        ".flv",
-        ".wmv",
-        ".webm",
-        ".m4v",
-        ".mpg",
-        ".mpeg",
-        # Audio
-        ".mp3",
-        ".wav",
-        ".ogg",
-        ".flac",
-        ".aac",
-        ".m4a",
-        ".wma",
-        # Archives
-        ".zip",
-        ".tar",
-        ".gz",
-        ".bz2",
-        ".7z",
-        ".rar",
-        ".xz",
-        # Executables and binaries
-        ".exe",
-        ".bin",
-        ".dll",
-        ".so",
-        ".dylib",
-        ".o",
-        ".a",
-        ".pyc",
-        ".class",
-        ".jar",
-        # Office documents (binary formats - use understand_file tool)
-        ".doc",  # Old Word (not supported by understand_file)
-        ".xls",  # Old Excel (not supported by understand_file)
-        ".ppt",  # Old PowerPoint (not supported by understand_file)
-        ".pdf",  # PDF (supported by understand_file with PyPDF2)
-        ".docx",  # Word (supported by understand_file with python-docx)
-        ".xlsx",  # Excel (supported by understand_file with openpyxl)
-        ".pptx",  # PowerPoint (supported by understand_file with python-pptx)
-    }
+    BINARY_FILE_EXTENSIONS = BINARY_FILE_EXTENSIONS
 
     def __init__(
         self,
@@ -395,7 +326,7 @@ class PathPermissionManager:
         Check if a path matches any default excluded patterns.
 
         System files like .massgen/, .env, .git/ are always excluded from write access,
-        EXCEPT when they are within a managed workspace path (which has explicit permissions).
+        EXCEPT when they are within a managed workspace or temp_workspace path (which have explicit permissions).
 
         Args:
             path: Path to check
@@ -403,9 +334,9 @@ class PathPermissionManager:
         Returns:
             True if path should be excluded from write access
         """
-        # First check if this path is inside a workspace - workspaces override exclusions
+        # First check if this path is inside a workspace or temp_workspace - these override exclusions
         for managed_path in self.managed_paths:
-            if managed_path.path_type == "workspace" and managed_path.contains(path):
+            if managed_path.path_type in ("workspace", "temp_workspace") and managed_path.contains(path):
                 return False
 
         # Now check if path contains any excluded patterns
@@ -558,6 +489,31 @@ class PathPermissionManager:
         ]
 
         for pattern in write_patterns:
+            if re.match(pattern, tool_name):
+                return True
+
+        return False
+
+    def _is_pure_write_tool(self, tool_name: str) -> bool:
+        """
+        Check if tool is a pure write (create) tool, not edit.
+
+        Returns True for Write/write_file tools that create new files.
+        Returns False for Edit/edit_file tools that modify existing files.
+
+        This distinction is important because:
+        - Write tools should NOT overwrite existing files (use edit instead)
+        - Edit tools are expected to work on existing files
+        """
+        # Pure write tools - these create new files and should not overwrite
+        write_only_patterns = [
+            r"^Write$",  # Claude Code Write (exact match)
+            r"^write_file$",  # MCP write_file (exact match)
+            r"^mcp__filesystem__write_file$",  # Prefixed MCP filesystem
+            r"^mcp__[a-zA-Z0-9_]+__write_file$",  # Any MCP server write_file
+        ]
+
+        for pattern in write_only_patterns:
             if re.match(pattern, tool_name):
                 return True
 
@@ -958,6 +914,15 @@ class PathPermissionManager:
         # Resolve relative paths against workspace
         file_path = self._resolve_path_against_workspace(file_path)
         path = Path(file_path).resolve()
+
+        # Check for file overwrite protection: write_file should not overwrite existing files
+        # Use edit_file instead, or delete the file first then recreate
+        if self._is_pure_write_tool(tool_name) and path.exists() and path.is_file():
+            return (
+                False,
+                f"Cannot overwrite existing file '{path.name}' with write_file. " f"Use edit_file to modify existing files, or delete the file first then recreate it.",
+            )
+
         permission = self.get_permission(path)
         logger.debug(f"[PathPermissionManager] Validating write tool '{tool_name}' for path: {path} with permission: {permission}")
 
@@ -1300,6 +1265,15 @@ class PathPermissionManager:
         workspace_paths = [str(mp.path) for mp in self.managed_paths if mp.path_type == "workspace"]
         other_paths = [str(mp.path) for mp in self.managed_paths if mp.path_type != "workspace" and not mp.is_file]
         out = workspace_paths + other_paths
+
+        # Log path existence for debugging MCP filesystem server issues
+        for path_str in out:
+            path = Path(path_str)
+            exists = path.exists()
+            logger.debug(f"[PathPermissionManager] MCP filesystem path: {path_str} (exists={exists})")
+            if not exists:
+                logger.warning(f"[PathPermissionManager] MCP filesystem path does not exist: {path_str}")
+
         return out
 
     def get_permission_summary(self) -> str:
