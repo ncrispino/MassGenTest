@@ -56,9 +56,36 @@ class GeminiFormatter(FormatterBase):
         self,
         custom_tools: Optional[List[Dict[str, Any]]] = None,
         mcp_functions: Optional[Dict[str, Any]] = None,
+        workflow_tools: Optional[List[Dict[str, Any]]] = None,
     ) -> List[Dict[str, Any]]:
-        """Format tools for the Gemini Interactions API."""
+        """Format tools for the Gemini Interactions API.
+
+        Args:
+            custom_tools: Custom tool schemas in OpenAI format
+            mcp_functions: MCP function objects
+            workflow_tools: Workflow tools (new_answer, vote) in OpenAI format
+
+        Returns:
+            List of tools in Interactions API format
+        """
         interactions_tools = []
+
+        # Add workflow tools first (new_answer, vote)
+        if workflow_tools:
+            for tool in workflow_tools:
+                if isinstance(tool, dict) and tool.get("type") == "function" and "function" in tool:
+                    func_def = tool["function"]
+                    tool_name = func_def.get("name", "")
+                    # Only include actual workflow tools
+                    if tool_name in ("new_answer", "vote", "ask_others"):
+                        interactions_tools.append(
+                            {
+                                "type": "function",
+                                "name": tool_name,
+                                "description": func_def.get("description", ""),
+                                "parameters": func_def.get("parameters", {}),
+                            },
+                        )
 
         if custom_tools:
             for tool in custom_tools:
