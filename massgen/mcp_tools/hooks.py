@@ -97,6 +97,10 @@ class HookResult:
 
     This dataclass is backward compatible with the old HookResult class
     while adding new fields for the general hook framework.
+
+    The `hook_errors` field tracks any errors that occurred during hook execution
+    when using fail-open behavior. This allows callers to be aware of partial
+    failures even when the overall result is "allow".
     """
 
     # Legacy fields (for backward compatibility)
@@ -110,6 +114,9 @@ class HookResult:
     updated_input: Optional[Dict[str, Any]] = None  # For PreToolUse
     inject: Optional[Dict[str, Any]] = None  # For PostToolUse injection
 
+    # Error tracking for fail-open scenarios
+    hook_errors: List[str] = field(default_factory=list)
+
     def __post_init__(self):
         """Sync legacy and new fields for compatibility."""
         # Sync decision with allowed
@@ -117,6 +124,14 @@ class HookResult:
             self.decision = "deny"
         elif self.decision == "deny":
             self.allowed = False
+
+    def add_error(self, error: str) -> None:
+        """Add an error message to track partial failures in fail-open mode."""
+        self.hook_errors.append(error)
+
+    def has_errors(self) -> bool:
+        """Check if any errors occurred during hook execution."""
+        return len(self.hook_errors) > 0
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "HookResult":
@@ -129,6 +144,7 @@ class HookResult:
             reason=data.get("reason"),
             updated_input=data.get("updated_input"),
             inject=data.get("inject"),
+            hook_errors=data.get("hook_errors", []),
         )
 
     @classmethod
@@ -540,9 +556,21 @@ class GeneralHookManager:
                 if result.inject:
                     all_injections.append(result.inject)
 
+                # Propagate any errors from the individual hook result
+                if result.has_errors():
+                    for err in result.hook_errors:
+                        final_result.add_error(err)
+
             except Exception as e:
-                logger.error(f"[GeneralHookManager] Hook {hook.name} failed unexpectedly: {e}")
-                # Fail open
+                error_msg = f"Hook '{hook.name}' failed unexpectedly: {e}"
+                logger.error(f"[GeneralHookManager] {error_msg}", exc_info=True)
+                # Track the error but fail open (allow tool execution to proceed)
+                # This ensures users can see which hooks failed even in fail-open mode
+                final_result.add_error(error_msg)
+
+                # Check if hook requires fail-closed behavior
+                if hasattr(hook, "fail_closed") and hook.fail_closed:
+                    return HookResult.deny(reason=error_msg)
 
         # Build final result
         final_result.modified_args = modified_args if modified_args != arguments else None
@@ -690,7 +718,11 @@ class MidStreamInjectionHook(PatternHook):
         context: Optional[Dict[str, Any]] = None,
         **kwargs,
     ) -> HookResult:
-        """Execute the mid-stream injection hook."""
+        """Execute the mid-stream injection hook.
+
+        This is a critical infrastructure hook for multi-agent coordination.
+        Errors are tracked in the result so callers can be aware of injection failures.
+        """
         if not self._injection_callback:
             return HookResult.allow()
 
@@ -712,7 +744,15 @@ class MidStreamInjectionHook(PatternHook):
                     },
                 )
         except Exception as e:
-            logger.warning(f"[MidStreamInjectionHook] Callback failed: {e}")
+            # Log as error (not warning) since this is critical infrastructure
+            error_msg = f"Injection callback failed: {e}"
+            logger.error(f"[MidStreamInjectionHook] {error_msg}", exc_info=True)
+            # Return allow but track the error so callers know injection was skipped
+            # This is fail-open behavior but with visibility into the failure
+            result = HookResult.allow()
+            result.add_error(error_msg)
+            result.metadata["injection_skipped"] = True
+            return result
 
         return HookResult.allow()
 

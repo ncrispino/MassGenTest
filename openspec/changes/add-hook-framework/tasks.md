@@ -6,7 +6,7 @@
 - [x] 1.2 Add `HookEvent` dataclass
 - [x] 1.3 Enhance `HookResult` with new fields (backward compatible)
 - [x] 1.4 Implement `PythonCallableHook` class
-- [x] 1.5 Implement `ExternalCommandHook` class
+- [ ] 1.5 Implement `ExternalCommandHook` class (Deferred to MAS-232)
 - [x] 1.6 Implement `GeneralHookManager` class
 
 ## 2. Configuration ✅
@@ -25,12 +25,12 @@
 ## 4. Built-in Hooks ✅
 
 - [x] 4.1 Create `MidStreamInjectionHook` built-in class
-- [x] 4.2 Create `ReminderExtractionHook` built-in class
+- [x] 4.2 Create `HighPriorityTaskReminderHook` built-in class
 
 ## 5. Testing & Documentation ✅
 
 - [x] 5.1 Unit tests for PythonCallableHook
-- [x] 5.2 Unit tests for ExternalCommandHook
+- [ ] 5.2 Unit tests for ExternalCommandHook (Deferred to MAS-232)
 - [x] 5.3 Unit tests for GeneralHookManager
 - [x] 5.4 Unit tests for built-in hooks
 - [x] 5.5 Example YAML config in massgen/configs/hooks/
@@ -70,13 +70,13 @@ removing duplicate code and unifying the approach.
 - ~~If found, injects as user message with `⚠️ SYSTEM REMINDER` header~~
 
 **Target state** (IMPLEMENTED):
-- `ReminderExtractionHook` registered as PostToolUse hook handles this
+- `HighPriorityTaskReminderHook` registered as PostToolUse hook handles this
 - Hook returns `inject: {content: formatted_reminder, strategy: "user_message"}`
 - PostToolUse hook integration code handles the injection
 
 **Tasks**:
-- [x] 6.2.1 Register `ReminderExtractionHook` as a default PostToolUse hook in `_setup_hook_manager_for_agent()`
-- [x] 6.2.2 Update `ReminderExtractionHook` to format reminders with `⚠️ SYSTEM REMINDER` header
+- [x] 6.2.1 Register `HighPriorityTaskReminderHook` as a default PostToolUse hook in `_setup_hook_manager_for_agent()`
+- [x] 6.2.2 Update `HighPriorityTaskReminderHook` to format reminders with `⚠️ SYSTEM REMINDER` header
 - [x] 6.2.3 Remove inline reminder extraction code (lines 1755-1799)
 - [x] 6.2.4 Unify reminder formatting (both use same `⚠️ SYSTEM REMINDER` header)
 
@@ -91,7 +91,7 @@ removing duplicate code and unifying the approach.
 ### 6.4 Testing Migration ✅
 
 - [x] 6.4.1 Unit tests for hook framework (32 tests passing)
-- [x] 6.4.2 Unit test for `ReminderExtractionHook` with formatting
+- [x] 6.4.2 Unit test for `HighPriorityTaskReminderHook` with formatting
 - [x] 6.4.3 Verify existing tests still pass (orchestrator, hook, backend tests)
 - [x] 6.4.4 Created integration test script at `scripts/test_hook_backends.py`
 - [x] 6.4.5 Added `--e2e` mode for end-to-end testing with real API calls
@@ -99,7 +99,7 @@ removing duplicate code and unifying the approach.
 **E2E Testing Features**:
 - `--e2e` flag runs tests with real API calls across all 5 standard backends
 - Tests full hook flow: PreToolUse → tool execution → PostToolUse → injection
-- Custom tool returns reminder field to verify ReminderExtractionHook
+- Custom tool returns reminder field to verify HighPriorityTaskReminderHook
 - Logging hooks verify PreToolUse and PostToolUse fire correctly
 - Follow-up question verifies model actually received and understood injected reminder
 - `--verbose` flag shows detailed hook execution logs
@@ -140,7 +140,7 @@ AFTER:
 | `massgen/orchestrator.py` | Add `_setup_hook_manager_for_agent()`, replace callback with hook manager |
 | `massgen/backend/base.py` | Remove `set_mid_stream_injection_callback`, `get_mid_stream_injection` |
 | `massgen/backend/base_with_custom_tool_and_mcp.py` | Remove `get_mid_stream_injection()` call, remove inline reminder code |
-| `massgen/mcp_tools/hooks.py` | Enhance `ReminderExtractionHook` to handle MCP objects |
+| `massgen/mcp_tools/hooks.py` | Enhance `HighPriorityTaskReminderHook` to handle MCP objects |
 
 ## Risks and Mitigations
 
@@ -148,7 +148,7 @@ AFTER:
    - **Mitigation**: Run integration tests with multi-agent configs before/after
 
 2. **Risk**: Reminder extraction regression (MCP vs custom tool handling)
-   - **Mitigation**: Ensure `ReminderExtractionHook` handles both MCP `CallToolResult` and dict results
+   - **Mitigation**: Ensure `HighPriorityTaskReminderHook` handles both MCP `CallToolResult` and dict results
 
 3. **Risk**: Hook execution order affecting injection timing
    - **Mitigation**: Mid-stream hook should be registered first to maintain current behavior

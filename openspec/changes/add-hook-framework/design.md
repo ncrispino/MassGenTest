@@ -185,7 +185,7 @@ Tool Result Message (modified):
   actual_output + "\n" + separator + injection_content + separator
 ```
 
-#### 2. `user_message` Strategy (Default for ReminderExtractionHook)
+#### 2. `user_message` Strategy (Default for HighPriorityTaskReminderHook)
 
 Injects as a separate user message after the tool result. Used for system reminders.
 
@@ -333,7 +333,7 @@ The injection flow in MassGen:
 │ PostToolUse hooks execute                                        │
 │ 1. MidStreamInjectionHook checks for pending updates            │
 │ 2. If new answers exist → get_injection_content() called        │
-│ 3. ReminderExtractionHook checks tool output for reminders      │
+│ 3. HighPriorityTaskReminderHook checks tool output for reminders      │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼

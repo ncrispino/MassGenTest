@@ -11,7 +11,7 @@ Tests:
 """
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pytest
 
@@ -41,7 +41,7 @@ class TestHookEvent:
             session_id="session-123",
             orchestrator_id="orch-456",
             agent_id="agent-1",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             tool_name="my_tool",
             tool_input={"arg1": "value1"},
         )
@@ -57,7 +57,7 @@ class TestHookEvent:
             session_id="session-123",
             orchestrator_id="orch-456",
             agent_id="agent-1",
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             tool_name="my_tool",
             tool_input={"arg1": "value1"},
             tool_output="Tool result here",
@@ -66,7 +66,7 @@ class TestHookEvent:
 
     def test_to_dict(self):
         """Test conversion to dictionary."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         event = HookEvent(
             hook_type="PreToolUse",
             session_id="s123",
@@ -679,3 +679,524 @@ class TestHighPriorityTaskReminderHook:
         assert "=" * 60 in result.inject["content"]  # Border separator
         assert "memory/long_term" in result.inject["content"]  # Memory paths
         assert result.inject["strategy"] == "user_message"
+
+
+# =============================================================================
+# HookResult Error Tracking Tests
+# =============================================================================
+
+
+class TestHookResultErrorTracking:
+    """Tests for HookResult error tracking functionality."""
+
+    def test_add_error(self):
+        """Test adding errors to HookResult."""
+        result = HookResult.allow()
+        result.add_error("First error")
+        result.add_error("Second error")
+        assert len(result.hook_errors) == 2
+        assert "First error" in result.hook_errors
+        assert "Second error" in result.hook_errors
+
+    def test_has_errors(self):
+        """Test has_errors method."""
+        result = HookResult.allow()
+        assert not result.has_errors()
+        result.add_error("Error occurred")
+        assert result.has_errors()
+
+    def test_from_dict_with_errors(self):
+        """Test creating HookResult from dict with errors."""
+        data = {
+            "allowed": True,
+            "hook_errors": ["error1", "error2"],
+        }
+        result = HookResult.from_dict(data)
+        assert result.hook_errors == ["error1", "error2"]
+        assert result.has_errors()
+
+    def test_default_empty_errors(self):
+        """Test that hook_errors defaults to empty list."""
+        result = HookResult()
+        assert result.hook_errors == []
+        assert not result.has_errors()
+
+
+class TestMidStreamInjectionHookErrorHandling:
+    """Tests for MidStreamInjectionHook error handling."""
+
+    @pytest.mark.asyncio
+    async def test_callback_exception_tracks_error(self):
+        """Test that callback exceptions are tracked in result."""
+        hook = MidStreamInjectionHook()
+
+        def failing_callback():
+            raise RuntimeError("Callback crashed!")
+
+        hook.set_callback(failing_callback)
+        result = await hook.execute("tool", "{}")
+
+        # Should allow (fail-open) but track the error
+        assert result.allowed is True
+        assert result.has_errors()
+        assert any("Callback crashed" in err for err in result.hook_errors)
+        assert result.metadata.get("injection_skipped") is True
+
+    @pytest.mark.asyncio
+    async def test_async_callback_returns_content(self):
+        """Test hook with async callback returning content."""
+        import asyncio
+
+        hook = MidStreamInjectionHook()
+
+        async def async_callback():
+            await asyncio.sleep(0.01)
+            return "Async injected content"
+
+        hook.set_callback(async_callback)
+        result = await hook.execute("tool", "{}")
+        assert result.inject is not None
+        assert result.inject["content"] == "Async injected content"
+
+    @pytest.mark.asyncio
+    async def test_async_callback_returns_none(self):
+        """Test hook with async callback returning None."""
+
+        async def async_callback():
+            return None
+
+        hook = MidStreamInjectionHook()
+        hook.set_callback(async_callback)
+        result = await hook.execute("tool", "{}")
+        assert result.inject is None
+
+
+class TestGeneralHookManagerErrorTracking:
+    """Tests for GeneralHookManager error tracking in execute_hooks."""
+
+    @pytest.mark.asyncio
+    async def test_execute_hooks_tracks_errors_on_unexpected_exception(self):
+        """Test that unexpected exceptions in hook execution are tracked."""
+        manager = GeneralHookManager()
+
+        # Create a hook subclass that raises in execute() to bypass PythonCallableHook's try-except
+        class FailingHook(PatternHook):
+            async def execute(self, *args, **kwargs):
+                raise RuntimeError("Unexpected hook failure!")
+
+        manager.register_global_hook(
+            HookType.PRE_TOOL_USE,
+            FailingHook("failing", matcher="*"),
+        )
+
+        result = await manager.execute_hooks(
+            HookType.PRE_TOOL_USE,
+            "tool",
+            "{}",
+            {},
+        )
+
+        # Should allow (fail-open) but track the error
+        assert result.allowed is True
+        assert result.has_errors()
+        assert any("failing" in err.lower() for err in result.hook_errors)
+
+    @pytest.mark.asyncio
+    async def test_execute_hooks_fail_closed_denies_on_error(self):
+        """Test that fail_closed hooks deny on error."""
+        manager = GeneralHookManager()
+
+        def failing_hook(event):
+            raise RuntimeError("Hook crashed!")
+
+        manager.register_global_hook(
+            HookType.PRE_TOOL_USE,
+            PythonCallableHook("failing", failing_hook, fail_closed=True),
+        )
+
+        result = await manager.execute_hooks(
+            HookType.PRE_TOOL_USE,
+            "tool",
+            "{}",
+            {},
+        )
+
+        # Should deny due to fail_closed=True
+        assert result.allowed is False
+        assert result.decision == "deny"
+
+    @pytest.mark.asyncio
+    async def test_execute_hooks_propagates_child_errors(self):
+        """Test that errors from hook results are propagated to final result."""
+        manager = GeneralHookManager()
+
+        def hook_with_errors(event):
+            result = HookResult.allow()
+            result.add_error("Error from child hook")
+            return result
+
+        manager.register_global_hook(
+            HookType.PRE_TOOL_USE,
+            PythonCallableHook("with_errors", hook_with_errors),
+        )
+
+        result = await manager.execute_hooks(
+            HookType.PRE_TOOL_USE,
+            "tool",
+            "{}",
+            {},
+        )
+
+        # Should propagate errors from child hooks
+        assert result.allowed is True
+        assert result.has_errors()
+        assert "Error from child hook" in result.hook_errors
+
+
+# =============================================================================
+# Native Hook Adapter Tests
+# =============================================================================
+
+
+class TestNativeHookAdapterBase:
+    """Tests for NativeHookAdapter base class."""
+
+    def test_create_hook_event_from_native(self):
+        """Test creating HookEvent from native input."""
+        from massgen.mcp_tools.native_hook_adapters.base import NativeHookAdapter
+
+        native_input = {
+            "tool_name": "test_tool",
+            "tool_input": {"arg1": "value1"},
+            "tool_output": "output result",
+        }
+        context = {
+            "session_id": "sess-123",
+            "orchestrator_id": "orch-456",
+            "agent_id": "agent-1",
+        }
+
+        event = NativeHookAdapter.create_hook_event_from_native(
+            native_input,
+            HookType.POST_TOOL_USE,
+            context,
+        )
+
+        assert event.tool_name == "test_tool"
+        assert event.tool_input == {"arg1": "value1"}
+        assert event.tool_output == "output result"
+        assert event.session_id == "sess-123"
+        assert event.orchestrator_id == "orch-456"
+        assert event.agent_id == "agent-1"
+        assert event.hook_type == "PostToolUse"
+
+    def test_create_hook_event_with_empty_input(self):
+        """Test creating HookEvent with minimal native input."""
+        from massgen.mcp_tools.native_hook_adapters.base import NativeHookAdapter
+
+        native_input = {}
+        context = {}
+
+        event = NativeHookAdapter.create_hook_event_from_native(
+            native_input,
+            HookType.PRE_TOOL_USE,
+            context,
+        )
+
+        assert event.tool_name == ""
+        assert event.tool_input == {}
+        assert event.tool_output is None
+        assert event.session_id == ""
+        assert event.hook_type == "PreToolUse"
+
+    def test_convert_hook_result_to_native_raises(self):
+        """Test that base class raises NotImplementedError."""
+        from massgen.mcp_tools.native_hook_adapters.base import NativeHookAdapter
+
+        with pytest.raises(NotImplementedError):
+            NativeHookAdapter.convert_hook_result_to_native(
+                HookResult.allow(),
+                HookType.PRE_TOOL_USE,
+            )
+
+
+# Only run Claude SDK adapter tests if SDK is available
+try:
+    from claude_agent_sdk import HookMatcher
+
+    CLAUDE_SDK_AVAILABLE = True
+except ImportError:
+    CLAUDE_SDK_AVAILABLE = False
+
+
+@pytest.mark.skipif(not CLAUDE_SDK_AVAILABLE, reason="Claude Agent SDK not installed")
+class TestClaudeCodeNativeHookAdapter:
+    """Tests for ClaudeCodeNativeHookAdapter."""
+
+    def test_supports_pre_and_post_tool_use(self):
+        """Test that adapter supports both PreToolUse and PostToolUse."""
+        from massgen.mcp_tools.native_hook_adapters import ClaudeCodeNativeHookAdapter
+
+        adapter = ClaudeCodeNativeHookAdapter()
+        assert adapter.supports_hook_type(HookType.PRE_TOOL_USE)
+        assert adapter.supports_hook_type(HookType.POST_TOOL_USE)
+
+    def test_convert_deny_result_to_claude_format(self):
+        """Test converting deny result to Claude SDK format."""
+        from massgen.mcp_tools.native_hook_adapters import ClaudeCodeNativeHookAdapter
+
+        adapter = ClaudeCodeNativeHookAdapter()
+        result = HookResult.deny(reason="Access denied")
+
+        claude_format = adapter._convert_result_to_claude_format(
+            result,
+            HookType.PRE_TOOL_USE,
+        )
+
+        assert "hookSpecificOutput" in claude_format
+        assert claude_format["hookSpecificOutput"]["permissionDecision"] == "deny"
+        assert "Access denied" in claude_format["hookSpecificOutput"]["permissionDecisionReason"]
+
+    def test_convert_ask_result_to_claude_format(self):
+        """Test converting ask result to Claude SDK format."""
+        from massgen.mcp_tools.native_hook_adapters import ClaudeCodeNativeHookAdapter
+
+        adapter = ClaudeCodeNativeHookAdapter()
+        result = HookResult.ask(reason="Needs confirmation")
+
+        claude_format = adapter._convert_result_to_claude_format(
+            result,
+            HookType.PRE_TOOL_USE,
+        )
+
+        # ask maps to deny with confirmation message
+        assert claude_format["hookSpecificOutput"]["permissionDecision"] == "deny"
+        assert "confirmation" in claude_format["hookSpecificOutput"]["permissionDecisionReason"].lower()
+
+    def test_convert_allow_result_to_claude_format(self):
+        """Test converting allow result to Claude SDK format."""
+        from massgen.mcp_tools.native_hook_adapters import ClaudeCodeNativeHookAdapter
+
+        adapter = ClaudeCodeNativeHookAdapter()
+        result = HookResult.allow()
+
+        claude_format = adapter._convert_result_to_claude_format(
+            result,
+            HookType.PRE_TOOL_USE,
+        )
+
+        # Allow returns empty dict
+        assert claude_format == {}
+
+    def test_convert_injection_result_to_claude_format(self):
+        """Test converting PostToolUse injection result to Claude SDK format."""
+        from massgen.mcp_tools.native_hook_adapters import ClaudeCodeNativeHookAdapter
+
+        adapter = ClaudeCodeNativeHookAdapter()
+        result = HookResult(
+            allowed=True,
+            inject={"content": "Injected content", "strategy": "tool_result"},
+        )
+
+        claude_format = adapter._convert_result_to_claude_format(
+            result,
+            HookType.POST_TOOL_USE,
+        )
+
+        assert "hookSpecificOutput" in claude_format
+        assert claude_format["hookSpecificOutput"]["modifiedOutput"] == "Injected content"
+        assert claude_format["hookSpecificOutput"]["injectionStrategy"] == "tool_result"
+
+    def test_convert_modified_input_to_claude_format(self):
+        """Test converting PreToolUse modified input result to Claude SDK format."""
+        from massgen.mcp_tools.native_hook_adapters import ClaudeCodeNativeHookAdapter
+
+        adapter = ClaudeCodeNativeHookAdapter()
+        result = HookResult(
+            allowed=True,
+            updated_input={"modified_arg": "new_value"},
+        )
+
+        claude_format = adapter._convert_result_to_claude_format(
+            result,
+            HookType.PRE_TOOL_USE,
+        )
+
+        assert "hookSpecificOutput" in claude_format
+        assert claude_format["hookSpecificOutput"]["updatedInput"] == {"modified_arg": "new_value"}
+        assert claude_format["hookSpecificOutput"]["permissionDecision"] == "allow"
+
+    def test_convert_hook_to_native_returns_hook_matcher(self):
+        """Test that convert_hook_to_native returns a HookMatcher."""
+        from massgen.mcp_tools.native_hook_adapters import ClaudeCodeNativeHookAdapter
+
+        adapter = ClaudeCodeNativeHookAdapter()
+
+        def my_hook(event):
+            return HookResult.allow()
+
+        hook = PythonCallableHook("test", my_hook, matcher="Write|Edit")
+
+        native = adapter.convert_hook_to_native(hook, HookType.PRE_TOOL_USE)
+
+        assert isinstance(native, HookMatcher)
+        assert native.matcher == "Write|Edit"
+        assert len(native.hooks) == 1
+
+    def test_build_native_hooks_config(self):
+        """Test building complete native hooks config from GeneralHookManager."""
+        from massgen.mcp_tools.native_hook_adapters import ClaudeCodeNativeHookAdapter
+
+        adapter = ClaudeCodeNativeHookAdapter()
+        manager = GeneralHookManager()
+
+        def pre_hook(event):
+            return HookResult.allow()
+
+        def post_hook(event):
+            return HookResult.allow()
+
+        manager.register_global_hook(
+            HookType.PRE_TOOL_USE,
+            PythonCallableHook("pre", pre_hook),
+        )
+        manager.register_global_hook(
+            HookType.POST_TOOL_USE,
+            PythonCallableHook("post", post_hook),
+        )
+
+        config = adapter.build_native_hooks_config(manager)
+
+        assert "PreToolUse" in config
+        assert "PostToolUse" in config
+        assert len(config["PreToolUse"]) == 1
+        assert len(config["PostToolUse"]) == 1
+
+    def test_merge_native_configs(self):
+        """Test merging multiple native configs."""
+        from massgen.mcp_tools.native_hook_adapters import ClaudeCodeNativeHookAdapter
+
+        adapter = ClaudeCodeNativeHookAdapter()
+
+        def hook1(event):
+            return HookResult.allow()
+
+        def hook2(event):
+            return HookResult.allow()
+
+        matcher1 = HookMatcher(matcher="*", hooks=[hook1])
+        matcher2 = HookMatcher(matcher="Write", hooks=[hook2])
+
+        config1 = {"PreToolUse": [matcher1]}
+        config2 = {"PreToolUse": [matcher2], "PostToolUse": [matcher1]}
+
+        merged = adapter.merge_native_configs(config1, config2)
+
+        assert len(merged["PreToolUse"]) == 2
+        assert len(merged["PostToolUse"]) == 1
+
+    def test_merge_native_configs_with_empty(self):
+        """Test merging with empty configs."""
+        from massgen.mcp_tools.native_hook_adapters import ClaudeCodeNativeHookAdapter
+
+        adapter = ClaudeCodeNativeHookAdapter()
+
+        def hook(event):
+            return HookResult.allow()
+
+        matcher = HookMatcher(matcher="*", hooks=[hook])
+        config = {"PreToolUse": [matcher]}
+
+        merged = adapter.merge_native_configs(config, {}, None)
+
+        assert len(merged["PreToolUse"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_hook_wrapper_executes_hook(self):
+        """Test that the hook wrapper correctly executes MassGen hooks."""
+        from massgen.mcp_tools.native_hook_adapters import ClaudeCodeNativeHookAdapter
+
+        adapter = ClaudeCodeNativeHookAdapter()
+        executed = []
+
+        def tracking_hook(event):
+            executed.append(event.tool_name)
+            return HookResult.allow()
+
+        hook = PythonCallableHook("tracker", tracking_hook, matcher="*")
+        native = adapter.convert_hook_to_native(hook, HookType.PRE_TOOL_USE)
+
+        # Call the wrapper directly
+        wrapper_func = native.hooks[0]
+        input_data = {"tool_name": "TestTool", "tool_input": {"arg": "val"}}
+
+        result = await wrapper_func(input_data, "tool-use-123", None)
+
+        assert "TestTool" in executed
+        assert result == {}  # Allow returns empty dict
+
+    @pytest.mark.asyncio
+    async def test_hook_wrapper_pattern_mismatch_returns_allow(self):
+        """Test that pattern mismatch in wrapper returns allow (empty dict)."""
+        from massgen.mcp_tools.native_hook_adapters import ClaudeCodeNativeHookAdapter
+
+        adapter = ClaudeCodeNativeHookAdapter()
+
+        def deny_hook(event):
+            return HookResult.deny(reason="Should not be called")
+
+        hook = PythonCallableHook("deny", deny_hook, matcher="SpecificTool")
+        native = adapter.convert_hook_to_native(hook, HookType.PRE_TOOL_USE)
+
+        wrapper_func = native.hooks[0]
+        input_data = {"tool_name": "OtherTool", "tool_input": {}}
+
+        result = await wrapper_func(input_data, "tool-use-123", None)
+
+        # Pattern didn't match, so should return empty (allow)
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_hook_wrapper_fail_open_on_error(self):
+        """Test that hook wrapper fails open by default."""
+        from massgen.mcp_tools.native_hook_adapters import ClaudeCodeNativeHookAdapter
+
+        adapter = ClaudeCodeNativeHookAdapter()
+
+        def failing_hook(event):
+            raise RuntimeError("Hook crashed!")
+
+        hook = PythonCallableHook("failing", failing_hook, matcher="*", fail_closed=False)
+        native = adapter.convert_hook_to_native(hook, HookType.PRE_TOOL_USE)
+
+        wrapper_func = native.hooks[0]
+        input_data = {"tool_name": "TestTool", "tool_input": {}}
+
+        result = await wrapper_func(input_data, "tool-use-123", None)
+
+        # Should return empty dict (allow) on error with fail_closed=False
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_hook_wrapper_fail_closed_on_error(self):
+        """Test that hook wrapper fails closed when configured."""
+        from massgen.mcp_tools.native_hook_adapters import ClaudeCodeNativeHookAdapter
+
+        adapter = ClaudeCodeNativeHookAdapter()
+
+        def failing_hook(event):
+            raise RuntimeError("Hook crashed!")
+
+        hook = PythonCallableHook("failing", failing_hook, matcher="*", fail_closed=True)
+        native = adapter.convert_hook_to_native(hook, HookType.PRE_TOOL_USE)
+
+        wrapper_func = native.hooks[0]
+        input_data = {"tool_name": "TestTool", "tool_input": {}}
+
+        result = await wrapper_func(input_data, "tool-use-123", None)
+
+        # Should return deny on error with fail_closed=True
+        assert "hookSpecificOutput" in result
+        assert result["hookSpecificOutput"]["permissionDecision"] == "deny"
+        # Error message format is "Hook {name} failed: {error}"
+        assert "failed" in result["hookSpecificOutput"]["permissionDecisionReason"].lower()

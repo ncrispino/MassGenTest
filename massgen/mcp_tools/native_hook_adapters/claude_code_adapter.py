@@ -166,9 +166,10 @@ class ClaudeCodeNativeHookAdapter(NativeHookAdapter):
                 return self._convert_result_to_claude_format(result, hook_type)
 
             except Exception as e:
-                # Log error
+                # Log error with stack trace for debugging
                 logger.error(
                     f"[ClaudeCodeNativeHookAdapter] Hook {hook.name} failed: {e}",
+                    exc_info=True,
                 )
 
                 # Check fail_closed setting

@@ -1762,11 +1762,11 @@ class CustomToolAndMCPBackend(LLMBackend):
                     )
 
             # Inject hook-based reminder as user message (from PostToolUse hooks)
-            # Reminder extraction is now handled by ReminderExtractionHook which formats the content
+            # Reminder extraction is now handled by HighPriorityTaskReminderHook which formats the content
             if post_hook_reminder:
                 hook_reminder_message = {
                     "role": "user",
-                    "content": post_hook_reminder,  # Already formatted by ReminderExtractionHook
+                    "content": post_hook_reminder,  # Already formatted by HighPriorityTaskReminderHook
                 }
                 updated_messages.append(hook_reminder_message)
                 # Log first 100 chars, stripping formatting for readability
