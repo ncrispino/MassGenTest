@@ -7,9 +7,9 @@ After posting, update the social links below.
 
 ## Release Summary
 
-We're excited to release MassGen v0.1.36, adding Hook Framework & Unified @path Context Handling!
+We're excited to release MassGen v0.1.36, adding @path Context Handling & Hook Framework!
 
-Extend agent behavior with PreToolUse/PostToolUse hooks for permission validation, content injection, and custom processing. Reference files inline with `@path` syntax - just type `@` to trigger an autocomplete file picker (like Claude Code). Plus: Claude Code native hooks integration and improved Docker resource management.
+Reference files inline with `@path` syntax - just type `@` to trigger an autocomplete file picker (like Claude Code). Extend agent behavior with PreToolUse/PostToolUse hooks for permission validation, content injection, and custom processing. Plus: Claude Code native hooks integration and improved Docker resource management.
 
 ## Install
 
@@ -31,11 +31,17 @@ Copy everything below this line, then append content from `feature-highlights.md
 
 ---
 
-We're excited to release MassGen v0.1.36, adding Hook Framework & Unified @path Context Handling!
+We're excited to release MassGen v0.1.36, adding @path Context Handling & Hook Framework!
 
-Extend agent behavior with PreToolUse/PostToolUse hooks for permission validation, content injection, and custom processing. Reference files inline with `@path` syntax - just type `@` to trigger an autocomplete file picker (like Claude Code). Plus: Claude Code native hooks integration and improved Docker resource management.
+Reference files inline with `@path` syntax - just type `@` to trigger an autocomplete file picker (like Claude Code). Extend agent behavior with PreToolUse/PostToolUse hooks for permission validation, content injection, and custom processing. Plus: Claude Code native hooks integration and improved Docker resource management.
 
 **Key Features:**
+
+**@path Context Handling** - Inline context path references:
+- Type `@` in CLI for autocomplete file picker popup
+- `@path` (read), `@path:w` (write), `@dir/` (directory)
+- Context accumulation across turns
+- Deferred agent creation - Docker launches once with all paths
 
 **Hook Framework** - General hook framework for agent lifecycle events:
 - PreToolUse hooks for permission validation and argument modification
@@ -43,12 +49,6 @@ Extend agent behavior with PreToolUse/PostToolUse hooks for permission validatio
 - Built-in MidStreamInjectionHook for cross-agent updates without losing work
 - Custom Python callable hooks with glob-style pattern matching
 - Configurable fail-open/fail-closed error handling
-
-**Unified @path Syntax** - Inline context path references:
-- Type `@` in CLI for autocomplete file picker popup
-- `@path` (read), `@path:w` (write), `@dir/` (directory)
-- Context accumulation across turns
-- Deferred agent creation - Docker launches once with all paths
 
 **Claude Code Integration** - Native hooks support for Claude Code workflows
 

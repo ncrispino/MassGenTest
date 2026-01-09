@@ -157,9 +157,9 @@ Key Features
 Recent Releases
 ---------------
 
-**v0.1.36 (January 9, 2026)** - Hook Framework & @path Context Handling
+**v0.1.36 (January 9, 2026)** - @path Context Handling & Hook Framework
 
-New hook framework with PreToolUse/PostToolUse events for intercepting tool execution. Hooks support pattern-based matching, global and per-agent registration via YAML, and Python callable handlers with timeout enforcement. Built-in ``MidStreamInjectionHook`` and ``HighPriorityTaskReminderHook``. Unified @path context handling with inline file picker and autocomplete syntax. Claude Code hooks integration for native compatibility.
+Reference files inline with ``@path`` syntax - just type ``@`` to trigger an autocomplete file picker (like Claude Code). Extend agent behavior with PreToolUse/PostToolUse hooks for permission validation, content injection, and custom processing. Built-in ``MidStreamInjectionHook`` and ``HighPriorityTaskReminderHook``. Plus: Claude Code native hooks integration and improved Docker resource management.
 
 **v0.1.35 (January 7, 2026)** - Log Analysis & Workflow Observability
 

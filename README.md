@@ -160,9 +160,9 @@ This project started with the "threads of thought" and "iterative refinement" id
 **🎉 Released: January 9, 2026** | **Next Update: January 12, 2026**
 
 **What's New in v0.1.36:**
-- **🪝 Hook Framework** - PreToolUse/PostToolUse hooks for intercepting tool execution with pattern matching, global and per-agent registration via YAML
-- **📁 Unified @path Context Handling** - Inline file picker with autocomplete syntax for context injection
-- **🔗 Claude Code Hooks Integration** - Native Claude Code hooks compatibility within MassGen's hook framework
+- **📁 @path Context Handling** - Reference files inline with `@path` syntax - just type `@` to trigger an autocomplete file picker (like Claude Code)
+- **🪝 Hook Framework** - Extend agent behavior with PreToolUse/PostToolUse hooks for permission validation, content injection, and custom processing
+- **🔗 Claude Code Integration** - Native Claude Code hooks compatibility and improved Docker resource management
 
 **Try v0.1.36 Features:**
 ```bash
@@ -172,14 +172,14 @@ pip install --upgrade massgen
 # Or with uv (faster)
 uv pip install massgen
 
+# Reference files with @path syntax - autocomplete file picker
+uv run massgen
+# Then type: Analyze @src/main.py and suggest improvements
+
 # Use hook framework with global and per-agent hooks
 # See massgen/configs/hooks/example_hooks.yaml for full configuration
 uv run massgen --config massgen/configs/hooks/example_hooks.yaml \
   "Create a document and save it to a file"
-
-# Hooks can intercept tool calls:
-# - PreToolUse: Audit, block, or modify tool arguments
-# - PostToolUse: Log outputs or inject content into results
 ```
 
 → [See full release history and examples](massgen/configs/README.md#release-history--examples)
@@ -1218,19 +1218,18 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 **🎉 Released: January 9, 2026**
 
+#### @path Context Handling
+- **Inline File Picker**: Reference files with `@path` syntax - type `@` to trigger autocomplete file picker (like Claude Code)
+- **Path Validation**: Automatic validation ensures context paths exist before injection
+
 #### Hook Framework
-- **PreToolUse/PostToolUse Events**: Intercept tool execution with pattern-based matching on tool names
+- **PreToolUse/PostToolUse Events**: Extend agent behavior with hooks for permission validation, content injection, and custom processing
 - **Global and Per-Agent Hooks**: Register hooks at top-level (all agents) or per-agent with override capability
-- **Python Callable Hooks**: Define hooks as Python functions with timeout enforcement and fail-open/closed behavior
 - **Built-in Hooks**: `MidStreamInjectionHook` for cross-agent updates and `HighPriorityTaskReminderHook` for system reminders
 
-#### Unified @path Context Handling
-- **Inline File Picker**: Autocomplete syntax for injecting file context into conversations
-- **Path Validation**: Automatic validation ensures context paths exist and are directories
-
-#### Claude Code Hooks Integration
-- **Native Compatibility**: Claude Code hooks work seamlessly within MassGen's hook framework
-- **Hook Result Aggregation**: Multiple hooks combine results (any deny blocks, injections combine)
+#### Claude Code Integration
+- **Native Hooks Compatibility**: Claude Code hooks work seamlessly within MassGen's hook framework
+- **Improved Docker Resource Management**: Better container lifecycle and resource handling
 
 ### Previous Achievements (v0.0.3 - v0.1.35)
 
