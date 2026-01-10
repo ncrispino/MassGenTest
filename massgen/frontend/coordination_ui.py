@@ -48,6 +48,8 @@ class CoordinationUI:
         logger: Optional[Any] = None,
         display_type: str = "terminal",
         enable_final_presentation: bool = False,
+        preserve_display: bool = False,
+        interactive_mode: bool = False,
         **kwargs,
     ):
         """Initialize coordination UI.
@@ -57,6 +59,8 @@ class CoordinationUI:
             logger: Custom logger instance
             display_type: Type of display ("terminal", "simple", "rich_terminal", "textual_terminal", "web")
             enable_final_presentation: Whether to ask winning agent to present final answer
+            preserve_display: If True, don't cleanup/recreate display between turns (for multi-turn TUI)
+            interactive_mode: If True, external driver owns the TUI loop (don't call display.run_async())
             **kwargs: Additional configuration passed to display/logger
         """
         self.enable_final_presentation = enable_final_presentation
@@ -64,6 +68,10 @@ class CoordinationUI:
         self.logger = logger
         self.display_type = display_type
         self.config = kwargs
+
+        # Multi-turn display preservation mode
+        self.preserve_display = preserve_display
+        self.interactive_mode = interactive_mode
 
         # Will be set during coordination
         self.agent_ids = []
@@ -402,9 +410,9 @@ class CoordinationUI:
             # Determine if coordination completed successfully
             is_finished = hasattr(orchestrator, "workflow_phase") and orchestrator.workflow_phase == "presenting"
 
-            # ALWAYS cleanup display resources (stop live, restore terminal) regardless of completion status
-            # This is critical for proper terminal restoration after cancellation
-            if self.display:
+            # Cleanup display resources (stop live, restore terminal) unless in preserve_display mode
+            # In preserve_display mode (multi-turn TUI), the external driver owns the display lifecycle
+            if self.display and not self.preserve_display:
                 try:
                     self.display.cleanup()
                 except Exception:
@@ -469,7 +477,8 @@ class CoordinationUI:
 
         # Reset display to ensure clean state for each coordination
         # But preserve web displays - they have their own lifecycle managed by the web server
-        if self.display is not None and self.display_type != "web":
+        # Also preserve display in preserve_display mode (for multi-turn TUI)
+        if self.display is not None and self.display_type != "web" and not self.preserve_display:
             self.display.cleanup()
             self.display = None
 
@@ -550,7 +559,8 @@ class CoordinationUI:
         user_quit = False  # Track if user quit
 
         # For Textual: Run in main thread, orchestration in background thread
-        if self.display_type == "textual_terminal" and is_textual_available():
+        # Unless interactive_mode is True - then external driver owns the TUI loop
+        if self.display_type == "textual_terminal" and is_textual_available() and not self.interactive_mode:
             # Use queue for exception propagation
             result_queue = queue.Queue()
 
@@ -897,9 +907,9 @@ class CoordinationUI:
             # Check workflow_phase to see if we're in "presenting" state (finished) vs still coordinating (restarting)
             is_finished = hasattr(orchestrator, "workflow_phase") and orchestrator.workflow_phase == "presenting"
 
-            # ALWAYS cleanup display resources (stop live, restore terminal) regardless of completion status
-            # This is critical for proper terminal restoration after cancellation
-            if self.display:
+            # Cleanup display resources (stop live, restore terminal) unless in preserve_display mode
+            # In preserve_display mode (multi-turn TUI), the external driver owns the display lifecycle
+            if self.display and not self.preserve_display:
                 try:
                     self.display.cleanup()
                 except Exception:
@@ -956,7 +966,8 @@ class CoordinationUI:
 
         # Reset display to ensure clean state for each coordination
         # But preserve web displays - they have their own lifecycle managed by the web server
-        if self.display is not None and self.display_type != "web":
+        # Also preserve display in preserve_display mode (for multi-turn TUI)
+        if self.display is not None and self.display_type != "web" and not self.preserve_display:
             self.display.cleanup()
             self.display = None
 
@@ -1328,9 +1339,9 @@ class CoordinationUI:
             # Determine if coordination completed successfully
             is_finished = hasattr(orchestrator, "workflow_phase") and orchestrator.workflow_phase == "presenting"
 
-            # ALWAYS cleanup display resources (stop live, restore terminal) regardless of completion status
-            # This is critical for proper terminal restoration after cancellation
-            if self.display:
+            # Cleanup display resources (stop live, restore terminal) unless in preserve_display mode
+            # In preserve_display mode (multi-turn TUI), the external driver owns the display lifecycle
+            if self.display and not self.preserve_display:
                 try:
                     self.display.cleanup()
                 except Exception:

@@ -4,13 +4,14 @@ Textual Terminal Display for MassGen Coordination
 
 """
 
+import functools
 import os
 import re
 import threading
 from collections import deque
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Deque, Dict, List, Optional
+from typing import Any, Callable, Deque, Dict, List, Optional
 
 from massgen.logger_config import get_log_session_dir, logger
 
@@ -22,11 +23,36 @@ try:
     from textual.app import App, ComposeResult
     from textual.containers import Container, ScrollableContainer, Vertical
     from textual.screen import ModalScreen
-    from textual.widgets import Footer, Label, RichLog, Static, TextArea
+    from textual.widgets import Footer, Input, Label, RichLog, Static, TextArea
 
     TEXTUAL_AVAILABLE = True
 except ImportError:
     TEXTUAL_AVAILABLE = False
+
+
+def _process_line_buffer(
+    buffer: str,
+    content: str,
+    log_writer: Callable[[str], None],
+) -> str:
+    """Process content with line buffering, return updated buffer.
+
+    Args:
+        buffer: Current line buffer content.
+        content: New content to append.
+        log_writer: Callable to write complete lines.
+
+    Returns:
+        Updated buffer containing incomplete line.
+    """
+    buffer += content
+    if "\n" in buffer:
+        lines = buffer.split("\n")
+        for line in lines[:-1]:
+            if line.strip():
+                log_writer(line)
+        return lines[-1]
+    return buffer
 
 
 # Emoji fallback mapping for terminals without Unicode support
@@ -62,11 +88,9 @@ class TextualTerminalDisplay(TerminalDisplay):
 
     def __init__(self, agent_ids: List[str], **kwargs: Any):
         super().__init__(agent_ids, **kwargs)
-        # Validate agent IDs
         self._validate_agent_ids()
         self._dom_id_mapping: Dict[str, str] = {}
 
-        # Configuration (same pattern as RichTerminalDisplay)
         self.theme = kwargs.get("theme", "dark")
         self.refresh_rate = kwargs.get("refresh_rate")
         self.enable_syntax_highlighting = kwargs.get("enable_syntax_highlighting", True)
@@ -78,7 +102,6 @@ class TextualTerminalDisplay(TerminalDisplay):
         # Runtime toggle to ignore hotkeys/key handling when enabled
         self.safe_keyboard_mode = kwargs.get("safe_keyboard_mode", False)
         self.max_buffer_batch = kwargs.get("max_buffer_batch", 50)
-        # Startup flag to disable all keyboard bindings at app init
         self._keyboard_interactive_mode = kwargs.get("keyboard_interactive_mode", True)
 
         # File output
@@ -109,7 +132,13 @@ class TextualTerminalDisplay(TerminalDisplay):
         self._final_stream_buffer: str = ""
         self._final_presentation_agent: Optional[str] = None
 
-        # Emoji support detection
+        self._app_ready = threading.Event()
+        self._input_handler: Optional[Callable[[str], None]] = None
+        self.orchestrator = None
+        self._user_quit_requested = False
+        self.session_id = None
+        self.current_turn = 1
+
         self.emoji_support = self._detect_emoji_support()
         self._terminal_type = self._detect_terminal_type()
 
@@ -121,19 +150,16 @@ class TextualTerminalDisplay(TerminalDisplay):
         if self.enable_syntax_highlighting is None:
             self.enable_syntax_highlighting = True
 
-        # Buffering - derive default from refresh rate unless explicitly set
         default_buffer_flush = kwargs.get("buffer_flush_interval")
         if default_buffer_flush is None:
             if self._terminal_type in ("vscode", "windows_terminal"):
-                default_buffer_flush = 0.3  # 300ms for smoother Windows/VSCode rendering
+                default_buffer_flush = 0.3
             else:
                 adaptive_flush = max(0.1, 1 / max(self.refresh_rate, 1))
                 default_buffer_flush = min(adaptive_flush, 0.15)
         self.buffer_flush_interval = default_buffer_flush
         self._buffers = {agent_id: [] for agent_id in self.agent_ids}
         self._buffer_lock = threading.Lock()
-
-        # Web-search filtering helpers
         self._recent_web_chunks: Dict[str, Deque[str]] = {agent_id: deque(maxlen=self.max_web_search_lines) for agent_id in self.agent_ids}
 
     def _validate_agent_ids(self):
@@ -144,16 +170,13 @@ class TextualTerminalDisplay(TerminalDisplay):
         MAX_AGENT_ID_LENGTH = 100
 
         for agent_id in self.agent_ids:
-            # Check length
             if len(agent_id) > MAX_AGENT_ID_LENGTH:
                 truncated_preview = agent_id[:50] + "..."
                 raise ValueError(f"Agent ID exceeds maximum length of {MAX_AGENT_ID_LENGTH} characters: {truncated_preview}")
 
-            # Check if empty or whitespace-only
             if not agent_id or not agent_id.strip():
                 raise ValueError("Agent ID cannot be empty or whitespace-only")
 
-        # Check for duplicates
         if len(self.agent_ids) != len(set(self.agent_ids)):
             raise ValueError("Duplicate agent IDs detected")
 
@@ -191,7 +214,7 @@ class TextualTerminalDisplay(TerminalDisplay):
         return EMOJI_FALLBACKS.get(emoji, emoji)
 
     def _is_critical_content(self, content: str, content_type: str) -> bool:
-        """Identify content that should flush immediately (prefer type, keep legacy patterns)."""
+        """Identify content that should flush immediately."""
         if content_type in CRITICAL_CONTENT_TYPES:
             return True
 
@@ -280,34 +303,39 @@ class TextualTerminalDisplay(TerminalDisplay):
         else:
             self._app.call_from_thread(callback, *args, **kwargs)
 
+    def set_input_handler(self, handler: Callable[[str], None]) -> None:
+        """Set the callback for user-submitted input (questions or commands)"""
+        self._input_handler = handler
+        if self._app:
+            try:
+                self._app.set_input_handler(handler)
+            except Exception:
+                pass
+
     def initialize(self, question: str, log_filename: Optional[str] = None):
         """Initialize display with file output."""
         self.question = question
         self.log_filename = log_filename
 
-        # Create output directory
+        if self._app is not None:
+            return
         self.output_dir = Path(self.output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Create agent output files
         for agent_id in self.agent_ids:
             file_path = self.output_dir / f"{agent_id}.txt"
             self.agent_files[agent_id] = file_path
-            # Initialize file with header
             with open(file_path, "w", encoding="utf-8") as f:
                 f.write(f"=== {agent_id.upper()} OUTPUT LOG ===\n\n")
 
-        # Create system status file
         self.system_status_file = self.output_dir / "system_status.txt"
         with open(self.system_status_file, "w", encoding="utf-8") as f:
             f.write("=== SYSTEM STATUS LOG ===\n")
             f.write(f"Question: {question}\n\n")
 
-        # Final presentation paths (agent-specific path will be set when persisting)
         self.final_presentation_file = None
         self.final_presentation_latest = None
 
-        # Create Textual app
         if TEXTUAL_AVAILABLE:
             self._app = TextualApp(
                 self,
@@ -332,10 +360,7 @@ class TextualTerminalDisplay(TerminalDisplay):
 
         prepared = self._prepare_agent_content(agent_id, content, display_type)
 
-        # Store in memory for retrieval
         self.agent_outputs[agent_id].append(content)
-
-        # Write to file immediately
         self._write_to_agent_file(agent_id, content)
 
         if not prepared:
@@ -362,7 +387,6 @@ class TextualTerminalDisplay(TerminalDisplay):
         self.agent_status[agent_id] = status
         self._reset_web_cache(agent_id, truncate_history=self.truncate_web_on_status_change)
 
-        # Clear buffered noisy content and jump to latest status for this agent
         if self._app:
             self._app.request_flush()
         with self._buffer_lock:
@@ -383,31 +407,23 @@ class TextualTerminalDisplay(TerminalDisplay):
                 },
             )
 
-        # Update status in app if running
         if self._app:
             self._call_app_method("update_agent_status", agent_id, status)
 
-        # Write to agent file
         status_msg = f"\n[Status Changed: {status.upper()}]\n"
         self._write_to_agent_file(agent_id, status_msg)
 
     def add_orchestrator_event(self, event: str):
         """Add an orchestrator coordination event."""
         self.orchestrator_events.append(event)
-
-        # Write to system file
         self._write_to_system_file(event)
 
         if self._app:
             self._app.request_flush()
-
-        # Update app if running
-        if self._app:
             self._call_app_method("add_orchestrator_event", event)
 
     def show_final_answer(self, answer: str, vote_results=None, selected_agent=None):
         """Show final answer with flush effect."""
-        # Don't create files if no valid agent is selected
         if not selected_agent:
             return
 
@@ -416,7 +432,6 @@ class TextualTerminalDisplay(TerminalDisplay):
         if self._final_stream_active:
             self._end_final_answer_stream()
         elif not stream_buffer and self._app:
-            # Fallback: show the final content in the streaming panel even if chunks never arrived
             self._final_stream_active = True
             self._final_stream_buffer = display_answer
             self._call_app_method(
@@ -439,7 +454,6 @@ class TextualTerminalDisplay(TerminalDisplay):
 
         self._write_to_system_file("Final presentation ready.")
 
-        # Trigger modal
         if self._app:
             self._call_app_method(
                 "show_final_presentation",
@@ -450,7 +464,6 @@ class TextualTerminalDisplay(TerminalDisplay):
 
     def show_post_evaluation_content(self, content: str, agent_id: str):
         """Display post-evaluation streaming content."""
-        # Write to agent file
         eval_msg = f"\n[POST-EVALUATION]\n{content}"
         self._write_to_agent_file(agent_id, eval_msg)
         for line in content.splitlines() or [content]:
@@ -458,7 +471,6 @@ class TextualTerminalDisplay(TerminalDisplay):
             if clean:
                 self._post_evaluation_lines.append(clean)
 
-        # Update app if running
         if self._app:
             self._app.call_from_thread(
                 self._app.show_post_evaluation,
@@ -470,10 +482,8 @@ class TextualTerminalDisplay(TerminalDisplay):
         """Display restart decision banner."""
         banner_msg = f"\n{'=' * 60}\n" f"RESTART TRIGGERED (Attempt {attempt}/{max_attempts})\n" f"Reason: {reason}\n" f"Instructions: {instructions}\n" f"{'=' * 60}\n"
 
-        # Write to system file
         self._write_to_system_file(banner_msg)
 
-        # Update app if running
         if self._app:
             self._app.call_from_thread(
                 self._app.show_restart_banner,
@@ -488,7 +498,6 @@ class TextualTerminalDisplay(TerminalDisplay):
         self.restart_reason = reason
         self.restart_instructions = instructions
 
-        # Update app if running
         if self._app:
             self._app.call_from_thread(
                 self._app.show_restart_context,
@@ -508,6 +517,86 @@ class TextualTerminalDisplay(TerminalDisplay):
         self._final_answer_metadata = {}
         self._final_presentation_agent = None
 
+    def reset_quit_request(self) -> None:
+        """Reset the quit request flag at the start of each turn."""
+        self._user_quit_requested = False
+
+    def request_cancellation(self) -> None:
+        """Request cancellation of the current turn."""
+        self._user_quit_requested = True
+        if self._app and hasattr(self._app, "notify"):
+            self._call_app_method("notify", "Cancelling turn...", severity="warning")
+
+    # =========================================================================
+    # Multi-turn Lifecycle Methods
+    # =========================================================================
+
+    def start_session(
+        self,
+        initial_question: str,
+        log_filename: Optional[str] = None,
+        session_id: Optional[str] = None,
+    ) -> None:
+        """Start a new interactive session - creates the app ONCE."""
+        self.session_id = session_id
+        self.current_turn = 1
+
+        # Only initialize if app doesn't exist
+        if self._app is None:
+            self.initialize(initial_question, log_filename)
+
+    def begin_turn(self, turn: int, question: str) -> None:
+        """Begin a new turn within an existing session.
+
+        Updates the header and optionally resets buffers/panels.
+        Does NOT recreate the app.
+
+        Args:
+            turn: The turn number (1-indexed).
+            question: The user's question for this turn.
+        """
+        self.current_turn = turn
+        self.question = question
+
+        self.reset_quit_request()
+
+        self._final_answer_cache = None
+        self._final_answer_metadata = {}
+        self._final_stream_active = False
+        self._final_stream_buffer = ""
+        self._final_presentation_agent = None
+
+        if self._app:
+            self._call_app_method("update_turn_header", turn, question)
+
+        for agent_id in self.agent_ids:
+            separator = f"\n{'='*60}\n=== TURN {turn} ===\n{'='*60}\n"
+            self._write_to_agent_file(agent_id, separator)
+
+        self._write_to_system_file(f"\n=== TURN {turn} ===\nQuestion: {question}\n")
+
+    def end_turn(
+        self,
+        turn: int,
+        answer: Optional[str] = None,
+        error: Optional[Exception] = None,
+        was_cancelled: bool = False,
+    ) -> None:
+        """End the current turn"""
+        if self._app:
+            self._call_app_method("set_input_enabled", True)
+
+        if was_cancelled:
+            self._write_to_system_file(f"Turn {turn} cancelled by user.")
+        elif error:
+            self._write_to_system_file(f"Turn {turn} failed: {error}")
+        else:
+            self._write_to_system_file(f"Turn {turn} completed successfully.")
+
+    def is_session_active(self) -> bool:
+        """Check if a session is currently active (app is running)"""
+        return self._app is not None
+
     def run(self):
         """Run Textual app in main thread."""
         if self._app and TEXTUAL_AVAILABLE:
@@ -523,14 +612,19 @@ class TextualTerminalDisplay(TerminalDisplay):
         """Display vote results in formatted table."""
         formatted = self._format_vote_results(vote_results)
         self._call_app_method("display_vote_results", formatted)
-
-        # Write to system file
         self._write_to_system_file(f"Vote Results: {vote_results}")
 
     def display_coordination_table(self):
         """Display coordination table using existing builder."""
         table_text = self._format_coordination_table_from_orchestrator()
         self._call_app_method("display_coordination_table", table_text)
+
+    def update_system_status(self, status: str) -> None:
+        """Display system-level status updates (initialization, cancellation, etc.)"""
+        self._write_to_system_file(f"System status: {status}")
+
+        if self._app:
+            self._call_app_method("add_orchestrator_event", status)
 
     def _format_coordination_table_from_orchestrator(self) -> str:
         """Build coordination table text with best effort."""
@@ -574,12 +668,8 @@ class TextualTerminalDisplay(TerminalDisplay):
             return
 
         if not self._final_stream_active:
-            # Speed up flushing during final presentation
-            try:
-                if self._app:
-                    self._app.buffer_flush_interval = min(self._app.buffer_flush_interval, 0.05)
-            except Exception:
-                pass
+            if self._app:
+                self._app.buffer_flush_interval = min(self._app.buffer_flush_interval, 0.05)
             self._final_stream_active = True
             self._final_stream_buffer = ""
             self._final_answer_metadata = {
@@ -613,7 +703,6 @@ class TextualTerminalDisplay(TerminalDisplay):
         self._final_stream_active = False
         if self._app:
             self._call_app_method("end_final_stream")
-        # Persist any buffered stream even if show_final_answer wasn't called immediately
         if self._final_stream_buffer and not self._final_answer_cache:
             final_content = self._final_stream_buffer.strip()
             self._persist_final_presentation(
@@ -623,7 +712,6 @@ class TextualTerminalDisplay(TerminalDisplay):
             )
             self._final_answer_cache = final_content
 
-    # Formatting helpers --------------------------------------------------
     def _prepare_agent_content(self, agent_id: str, content: str, content_type: str) -> Optional[str]:
         """Normalize agent content, apply filters, and truncate noisy sections."""
         if not content:
@@ -645,7 +733,6 @@ class TextualTerminalDisplay(TerminalDisplay):
                 history.append(truncated)
             return truncated
 
-        # Don't wrap here - let AgentPanel handle it with RichLog
         return content
 
     def _truncate_web_content(self, content: str) -> str:
@@ -694,7 +781,6 @@ class TextualTerminalDisplay(TerminalDisplay):
             self._recent_web_chunks[agent_id].clear()
 
         if truncate_history:
-            # Trim buffered web content to reduce noise after status transitions
             with self._buffer_lock:
                 buf = self._buffers.get(agent_id, [])
                 if buf:
@@ -783,7 +869,7 @@ class TextualTerminalDisplay(TerminalDisplay):
         targets: List[Path] = []
         if selected_agent:
             agent_file = self.output_dir / f"final_presentation_{selected_agent}.txt"
-            self.final_presentation_file = agent_file  # Keep selector/modals pointing at the agent-scoped file
+            self.final_presentation_file = agent_file
             self.final_presentation_latest = self.output_dir / f"final_presentation_{selected_agent}_latest.txt"
             targets.append(agent_file)
         else:
@@ -801,7 +887,6 @@ class TextualTerminalDisplay(TerminalDisplay):
             except OSError as exc:
                 logger.error(f"Failed to persist final presentation to {path}: {exc}")
 
-        # Maintain a "latest" pointer for quick reopen
         if self.final_presentation_latest:
             try:
                 if self.final_presentation_latest.exists() or self.final_presentation_latest.is_symlink():
@@ -816,6 +901,29 @@ if TEXTUAL_AVAILABLE:
     from textual.binding import Binding
     from textual.css.query import NoMatches
     from textual.widgets import Button, ListItem, ListView
+
+    def keyboard_action(func):
+        """Decorator to skip action when keyboard is locked."""
+
+        @functools.wraps(func)
+        def wrapper(self, *args, **kwargs):
+            if self._keyboard_locked():
+                return
+            return func(self, *args, **kwargs)
+
+        return wrapper
+
+    class BaseModal(ModalScreen):
+        """Base modal with common dismiss behavior for ESC and close buttons."""
+
+        def on_button_pressed(self, event: Button.Pressed):
+            if event.button.id and (event.button.id.startswith("close") or event.button.id == "cancel_button"):
+                self.dismiss()
+
+        def on_key(self, event: events.Key):
+            if event.key == "escape":
+                self.dismiss()
+                event.stop()
 
     class TextualApp(App):
         """Main Textual application for MassGen coordination."""
@@ -832,7 +940,7 @@ if TEXTUAL_AVAILABLE:
             Binding("c", "coordination_table", "Coordination Table"),
             Binding("v", "open_vote_results", "Vote Results"),
             Binding("ctrl+k", "toggle_safe_keyboard", "Safe Keys"),
-            Binding("q", "quit", "Quit"),
+            Binding("ctrl+q", "quit", "Quit"),
         ]
 
         def __init__(
@@ -852,7 +960,6 @@ if TEXTUAL_AVAILABLE:
             self.buffer_flush_interval = buffer_flush_interval
             self._keyboard_interactive_mode = display._keyboard_interactive_mode
 
-            # Widget references
             self.agent_widgets = {}
             self.header_widget = None
             self.footer_widget = None
@@ -860,51 +967,70 @@ if TEXTUAL_AVAILABLE:
             self.final_stream_panel = None
             self.safe_indicator = None
 
-            # State
             self.current_agent_index = 0
             self._pending_flush = False
             self._resize_debounce_handle = None
             self._thread_id: Optional[int] = None
-            # Orchestrator event tracking
             self._orchestrator_events: List[str] = []
+            self._input_handler: Optional[Callable[[str], None]] = None
 
             if not self._keyboard_interactive_mode:
                 self.BINDINGS = []
 
         def _keyboard_locked(self) -> bool:
-            """Return True when keyboard input should be ignored (startup flag or runtime safe mode)."""
+            """Return True when keyboard input should be ignored."""
             return self.coordination_display.safe_keyboard_mode or not self._keyboard_interactive_mode
 
         def compose(self) -> ComposeResult:
             """Compose the UI layout with adaptive agent arrangement."""
             num_agents = len(self.coordination_display.agent_ids)
-            # Header
-            self.header_widget = HeaderWidget(self.question)
+            agents_info_list = []
+            orchestrator = getattr(self.coordination_display, "orchestrator", None)
+            for agent_id in self.coordination_display.agent_ids:
+                agent_info = agent_id
+                if orchestrator and hasattr(orchestrator, "agents"):
+                    agent = orchestrator.agents.get(agent_id)
+                    if agent and hasattr(agent, "backend") and hasattr(agent.backend, "model"):
+                        model = agent.backend.model
+                        role = getattr(agent, "role", "Response")
+                        agent_info = f"{agent_id}: {model} ({role})"
+                agents_info_list.append(agent_info)
+
+            session_id = getattr(self.coordination_display, "session_id", None)
+            turn = getattr(self.coordination_display, "current_turn", 1)
+            mode = "Single Agent" if num_agents == 1 else "Multi-Agent"
+            self.header_widget = HeaderWidget(
+                question=self.question,
+                session_id=session_id,
+                turn=turn,
+                agents_info=agents_info_list,
+                mode=mode,
+            )
             yield self.header_widget
 
-            # Main container with adaptive agent layout
             layout_class = self._get_layout_class(num_agents)
-            with Container(id="main_container", classes=layout_class):
-                # Agent columns with adaptive layout
+            with Container(id="main_container", classes=f"{layout_class} hidden"):
                 with Container(id="agents_container", classes=layout_class):
                     for idx, agent_id in enumerate(self.coordination_display.agent_ids):
                         agent_widget = AgentPanel(agent_id, self.coordination_display, idx + 1)
                         self.agent_widgets[agent_id] = agent_widget
                         yield agent_widget
 
-            # Post-evaluation panel (hidden until content arrives)
             self.post_eval_panel = PostEvaluationPanel()
             yield self.post_eval_panel
 
-            # Final presentation streaming panel
             self.final_stream_panel = FinalStreamPanel()
             yield self.final_stream_panel
 
-            # Safe mode indicator
             self.safe_indicator = Label("", id="safe_indicator")
             yield self.safe_indicator
 
-            # Footer
+            self.question_input = Input(
+                placeholder="Type your question or /help for commands...",
+                id="question_input",
+            )
+            yield self.question_input
+
             self.footer_widget = Footer()
             yield self.footer_widget
 
@@ -921,17 +1047,14 @@ if TEXTUAL_AVAILABLE:
 
         async def on_mount(self):
             """Set up periodic buffer flushing when app starts."""
-            # Record the app's thread id so synchronous calls can short-circuit call_from_thread
             self._thread_id = threading.get_ident()
-            # Set up periodic buffer flushing
+            self.coordination_display._app_ready.set()
             self.set_interval(self.buffer_flush_interval, self._flush_buffers)
-            # Render restart context if present
             if self.coordination_display.restart_reason and self.header_widget:
                 self.header_widget.show_restart_context(
                     self.coordination_display.restart_reason,
                     self.coordination_display.restart_instructions or "",
                 )
-            # Render safe indicator if starting in safe mode or bindings disabled
             self._update_safe_indicator()
 
         def _update_safe_indicator(self):
@@ -948,10 +1071,147 @@ if TEXTUAL_AVAILABLE:
                 self.safe_indicator.update("")
                 self.safe_indicator.styles.display = "none"
 
+        def set_input_handler(self, handler: Callable[[str], None]) -> None:
+            """Set the input handler callback for controller integration."""
+            self._input_handler = handler
+
+        def on_input_submitted(self, event: Input.Submitted) -> None:
+            """Handle user input submission - delegate to controller."""
+            text = event.value.strip()
+            if not text:
+                return
+
+            self.question_input.clear()
+
+            if self._input_handler:
+                self._input_handler(text)
+                if not text.startswith("/"):
+                    try:
+                        main_container = self.query_one("#main_container", Container)
+                        main_container.remove_class("hidden")
+                        if self.header_widget:
+                            self.header_widget.update_question(text)
+                    except Exception:
+                        pass
+                return
+
+            if text.startswith("/"):
+                self._handle_slash_command(text)
+                return
+
+            main_container = self.query_one("#main_container", Container)
+            main_container.remove_class("hidden")
+
+            if self.header_widget:
+                self.header_widget.update_question(text)
+
+        def _handle_slash_command(self, command: str) -> None:
+            """Handle slash commands within the TUI using unified SlashCommandDispatcher."""
+            try:
+                from massgen.frontend.interactive_controller import (
+                    SessionContext,
+                    SlashCommandDispatcher,
+                )
+
+                context = SessionContext(
+                    session_id=getattr(self.coordination_display, "session_id", None),
+                    current_turn=getattr(self.coordination_display, "current_turn", 0),
+                    agents={},
+                )
+
+                dispatcher = SlashCommandDispatcher(context=context, adapter=None)
+                result = dispatcher.dispatch(command)
+
+                if result.should_exit:
+                    self.exit()
+                    return
+
+                if result.reset_ui_view:
+                    self._reset_agent_panels()
+
+                if result.ui_action == "show_help":
+                    self._show_help_modal()
+                elif result.ui_action == "show_status":
+                    self._show_system_status_modal()
+                elif result.ui_action == "show_events":
+                    self._show_orchestrator_modal()
+                elif result.ui_action == "show_vote":
+                    self.action_open_vote_results()
+                elif result.ui_action == "show_turn_inspection":
+                    self.action_agent_selector()
+                elif result.ui_action == "list_all_turns":
+                    self.action_agent_selector()
+                elif result.ui_action == "cancel_turn":
+                    self.coordination_display.request_cancellation()
+                elif result.ui_action == "prompt_context_paths":
+                    self.notify("Context path modification not available in Textual mode.", severity="warning")
+                elif result.message and not result.ui_action:
+                    self.notify(result.message, severity="information" if result.handled else "warning")
+
+                if not result.handled:
+                    self.notify(result.message or f"Unknown command: {command}", severity="warning")
+
+            except ImportError:
+                cmd = command.lower().strip()
+                if cmd in ("/help", "/h", "/?"):
+                    self._show_help_modal()
+                elif cmd in ("/quit", "/q", "/exit"):
+                    self.exit()
+                elif cmd in ("/reset", "/clear"):
+                    self._reset_agent_panels()
+                elif cmd.startswith("/inspect"):
+                    self.action_agent_selector()
+                elif cmd in ("/status", "/s"):
+                    self._show_system_status_modal()
+                elif cmd in ("/events", "/o"):
+                    self._show_orchestrator_modal()
+                elif cmd in ("/vote", "/v"):
+                    self.action_open_vote_results()
+                else:
+                    self.notify(f"Unknown command: {command}", severity="warning")
+
+        def _show_help_modal(self) -> None:
+            """Show help information in a modal."""
+            try:
+                from massgen.frontend.interactive_controller import (
+                    SlashCommandDispatcher,
+                )
+
+                command_help = SlashCommandDispatcher.build_help_text()
+            except ImportError:
+                command_help = "Help unavailable."
+
+            help_text = f"""MassGen Textual UI Commands
+
+SLASH COMMANDS:
+{command_help}
+
+KEYBOARD SHORTCUTS:
+  Tab/Shift+Tab   - Navigate agents
+  s               - System status log
+  o               - Orchestrator events
+  i               - Agent selector
+  c               - Coordination table
+  v               - Vote results
+  Ctrl+Q          - Quit
+  Ctrl+K          - Toggle safe keyboard mode
+
+Type your question and press Enter to ask the agents.
+"""
+            self._show_modal_async(TextContentModal("MassGen Help", help_text))
+
+        def _reset_agent_panels(self) -> None:
+            """Reset agent panels for new question."""
+            for agent_id, widget in self.agent_widgets.items():
+                widget.content_log.clear()
+                widget.update_status("waiting")
+                widget._line_buffer = ""
+                widget.current_line_label.update("")
+            self.notify("Agent panels reset", severity="information")
+
         async def _flush_buffers(self):
-            """Flush buffered content to widgets (runs in asyncio event loop)."""
+            """Flush buffered content to widgets."""
             self._pending_flush = False
-            # Collect all updates first, then apply in batch to reduce redraws
             all_updates = []
             for agent_id in self.coordination_display.agent_ids:
                 with self._buffer_lock:
@@ -963,7 +1223,6 @@ if TEXTUAL_AVAILABLE:
                 if buffer_copy and agent_id in self.agent_widgets:
                     all_updates.append((agent_id, buffer_copy))
 
-            # Apply all updates with refresh suppressed until done
             if all_updates:
                 with self.batch_update():
                     for agent_id, buffer_copy in all_updates:
@@ -973,7 +1232,6 @@ if TEXTUAL_AVAILABLE:
                                 item["content"],
                                 item.get("type", "thinking"),
                             )
-                            # Scroll to latest if status jump requested
                             if item.get("force_jump"):
                                 widget = self.agent_widgets.get(agent_id)
                                 if widget:
@@ -991,6 +1249,14 @@ if TEXTUAL_AVAILABLE:
                     self.call_from_thread(self._flush_buffers)
             except Exception:
                 self._pending_flush = False
+
+        def _show_modal_async(self, modal: ModalScreen) -> None:
+            """Display a modal screen asynchronously."""
+
+            async def _show():
+                await self.push_screen(modal)
+
+            self.call_later(lambda: self.run_worker(_show()))
 
         async def update_agent_widget(self, agent_id: str, content: str, content_type: str):
             """Update agent widget with content."""
@@ -1015,7 +1281,6 @@ if TEXTUAL_AVAILABLE:
             selected_agent=None,
         ):
             """Display final answer modal with flush effect."""
-            # Don't show if no valid agent is selected
             if not selected_agent:
                 return
             if self.final_stream_panel:
@@ -1050,6 +1315,42 @@ if TEXTUAL_AVAILABLE:
             if self.post_eval_panel and not self.coordination_display._post_evaluation_lines:
                 self.post_eval_panel.hide()
 
+        # =====================================================================
+        # Multi-turn Lifecycle Methods
+        # =====================================================================
+
+        def update_turn_header(self, turn: int, question: str):
+            """Update the header with new turn number and question.
+
+            Args:
+                turn: The turn number (1-indexed).
+                question: The user's question for this turn.
+            """
+            try:
+                main_container = self.query_one("#main_container", Container)
+                main_container.remove_class("hidden")
+            except Exception:
+                pass
+            if self.header_widget:
+                self.header_widget.update_question(question)
+                self.header_widget.update_turn(turn)
+            if turn > 1:
+                separator = f"\n{'='*50}\n   TURN {turn}\n{'='*50}\n"
+                for agent_id, widget in self.agent_widgets.items():
+                    if hasattr(widget, "content_log"):
+                        widget.content_log.write(separator)
+
+        def set_input_enabled(self, enabled: bool):
+            """Enable or disable the input widget.
+
+            Args:
+                enabled: True to enable input, False to disable.
+            """
+            if hasattr(self, "question_input") and self.question_input:
+                self.question_input.disabled = not enabled
+                if enabled:
+                    self.question_input.focus()
+
         def show_restart_banner(
             self,
             reason: str,
@@ -1075,21 +1376,11 @@ if TEXTUAL_AVAILABLE:
             """Display vote results."""
             self.add_orchestrator_event("🗳️ Voting complete. Press 'v' to inspect details.")
             self._latest_vote_results_text = formatted_results
-
-            async def _show_modal():
-                modal = VoteResultsModal(formatted_results)
-                await self.push_screen(modal)
-
-            self.call_later(lambda: self.run_worker(_show_modal()))
+            self._show_modal_async(VoteResultsModal(formatted_results))
 
         def display_coordination_table(self, table_text: str):
             """Display coordination table."""
-
-            async def _show_modal():
-                modal = CoordinationTableModal(table_text)
-                await self.push_screen(modal)
-
-            self.call_later(lambda: self.run_worker(_show_modal()))
+            self._show_modal_async(CoordinationTableModal(table_text))
 
         def show_agent_selector(self):
             """Show agent selector modal."""
@@ -1100,19 +1391,17 @@ if TEXTUAL_AVAILABLE:
             )
             self.push_screen(modal)
 
+        @keyboard_action
         def action_next_agent(self):
             """Move focus to next agent."""
-            if self._keyboard_locked():
-                return
             self.current_agent_index = (self.current_agent_index + 1) % len(self.coordination_display.agent_ids)
             agent_id = self.coordination_display.agent_ids[self.current_agent_index]
             if agent_id in self.agent_widgets:
                 self.agent_widgets[agent_id].focus()
 
+        @keyboard_action
         def action_prev_agent(self):
             """Move focus to previous agent."""
-            if self._keyboard_locked():
-                return
             self.current_agent_index = (self.current_agent_index - 1) % len(self.coordination_display.agent_ids)
             agent_id = self.coordination_display.agent_ids[self.current_agent_index]
             if agent_id in self.agent_widgets:
@@ -1125,63 +1414,46 @@ if TEXTUAL_AVAILABLE:
             self.add_orchestrator_event(f"Keyboard safe mode {status}")
             self._update_safe_indicator()
 
+        @keyboard_action
         def action_agent_selector(self):
             """Show agent selector."""
-            if self._keyboard_locked():
-                return
             self.show_agent_selector()
 
+        @keyboard_action
         def action_coordination_table(self):
             """Show coordination table."""
-            if self._keyboard_locked():
-                return
             self._show_coordination_table_modal()
 
+        @keyboard_action
         def action_quit(self):
             """Quit the application."""
-            if self._keyboard_locked():
-                return
             self.exit()
 
+        @keyboard_action
         def action_open_vote_results(self):
             """Open vote results modal."""
-            if self._keyboard_locked():
-                return
-            # If we already have a formatted vote panel, reuse it; otherwise fall back
             text = getattr(self, "_latest_vote_results_text", "")
             if not text:
                 status = getattr(self.coordination_display, "_final_answer_metadata", {}) or {}
                 text = self.coordination_display._format_vote_results(status.get("vote_results", {})) if hasattr(self.coordination_display, "_format_vote_results") else ""
             if not text.strip():
                 text = "Vote results unavailable."
+            self._show_modal_async(VoteResultsModal(text))
 
-            async def _show_modal():
-                modal = VoteResultsModal(text)
-                await self.push_screen(modal)
-
-            self.call_later(lambda: self.run_worker(_show_modal()))
-
+        @keyboard_action
         def action_open_system_status(self):
             """Open system status log."""
-            if self._keyboard_locked():
-                return
             self._show_system_status_modal()
 
+        @keyboard_action
         def action_open_orchestrator(self):
             """Open orchestrator events modal."""
-            if self._keyboard_locked():
-                return
             self._show_orchestrator_modal()
 
         def _show_orchestrator_modal(self):
             """Display orchestrator events in a modal."""
             events_text = "\n".join(self._orchestrator_events) if self._orchestrator_events else "No events yet."
-
-            async def _show_modal():
-                modal = OrchestratorEventsModal(events_text)
-                await self.push_screen(modal)
-
-            self.call_later(lambda: self.run_worker(_show_modal()))
+            self._show_modal_async(OrchestratorEventsModal(events_text))
 
         def on_key(self, event: events.Key):
             """Map number keys directly to agent inspection, mirroring Rich UI."""
@@ -1215,12 +1487,7 @@ if TEXTUAL_AVAILABLE:
         def _show_coordination_table_modal(self):
             """Display coordination table in a modal."""
             table_text = self.coordination_display._format_coordination_table_from_orchestrator()
-
-            async def _show_modal():
-                modal = CoordinationTableModal(table_text)
-                await self.push_screen(modal)
-
-            self.call_later(lambda: self.run_worker(_show_modal()))
+            self._show_modal_async(CoordinationTableModal(table_text))
 
         def _show_text_modal(self, path: Path, title: str):
             """Display file content in a modal."""
@@ -1229,33 +1496,23 @@ if TEXTUAL_AVAILABLE:
                 if path.exists():
                     content = path.read_text(encoding="utf-8")
             except Exception:
-                content = ""
+                pass
             if not content:
                 content = "Content unavailable."
-
-            async def _show_modal():
-                modal = TextContentModal(title, content)
-                await self.push_screen(modal)
-
-            self.call_later(lambda: self.run_worker(_show_modal()))
+            self._show_modal_async(TextContentModal(title, content))
 
         def _show_system_status_modal(self):
-            """Display system status log in a modal instead of opening editor."""
+            """Display system status log in a modal."""
             content = ""
             status_path = self.coordination_display.system_status_file
             if status_path and Path(status_path).exists():
                 try:
                     content = Path(status_path).read_text(encoding="utf-8")
                 except Exception:
-                    content = ""
+                    pass
             if not content:
                 content = "System status log is empty or unavailable."
-
-            async def _show_modal():
-                modal = SystemStatusModal(content)
-                await self.push_screen(modal)
-
-            self.call_later(lambda: self.run_worker(_show_modal()))
+            self._show_modal_async(SystemStatusModal(content))
 
         def on_resize(self, event: events.Resize) -> None:
             """Refresh widgets when the terminal window is resized with debounce."""
@@ -1265,7 +1522,6 @@ if TEXTUAL_AVAILABLE:
                 except Exception:
                     pass
 
-            # Use longer debounce on Windows/VSCode to reduce flicker on resize
             debounce_time = 0.15 if self.coordination_display._terminal_type in ("vscode", "windows_terminal") else 0.05
             try:
                 self._resize_debounce_handle = self.set_timer(debounce_time, lambda: self.refresh(layout=True))
@@ -1273,16 +1529,82 @@ if TEXTUAL_AVAILABLE:
                 self.call_later(lambda: self.refresh(layout=True))
 
     # Widget implementations
-    class HeaderWidget(Static):
-        """Header widget showing question and restart context."""
+    class HeaderWidget(ScrollableContainer):
+        """Header widget showing MassGen banner, session config, and help."""
 
-        def __init__(self, question: str):
+        MASSGEN_ASCII_BANNER = """   ███╗   ███╗  █████╗  ███████╗ ███████╗  ██████╗  ███████╗ ███╗   ██╗
+   ████╗ ████║ ██╔══██╗ ██╔════╝ ██╔════╝ ██╔════╝  ██╔════╝ ████╗  ██║
+   ██╔████╔██║ ███████║ ███████╗ ███████╗ ██║  ███╗ █████╗   ██╔██╗ ██║
+   ██║╚██╔╝██║ ██╔══██║ ╚════██║ ╚════██║ ██║   ██║ ██╔══╝   ██║╚██╗██║
+   ██║ ╚═╝ ██║ ██║  ██║ ███████║ ███████║ ╚██████╔╝ ███████╗ ██║ ╚████║
+   ╚═╝     ╚═╝ ╚═╝  ╚═╝ ╚══════╝ ╚══════╝  ╚═════╝  ╚══════╝ ╚═╝  ╚═══╝
+   🤖 🤖 🤖  →  💬 collaborate  →  🎯 winner  →  📢 final"""
+
+        SESSION_CONFIG_TEMPLATE = """⚙️  Session Configuration
+🤖 Mode: {mode}
+  ├─ {agent_info}
+📋 Session: {session_id} | Turn: {turn}"""
+
+        HELP_BOX = """💬  Type your questions below
+💡  Type /help for all commands, or try: /status, /inspect, /events, /vote
+📝  For multi-line input: start with \"\"\" or '''
+⌨️   Press Ctrl+Q or /quit to exit"""
+
+        def __init__(
+            self,
+            question: str,
+            session_id: str = None,
+            turn: int = 1,
+            agents_info: list = None,
+            mode: str = "Multi-Agent",
+        ):
             super().__init__()
             self.question = question
+            self.session_id = session_id
+            self.turn = turn
+            self.agents_info = agents_info or []
+            self.mode = mode
             self.restart_banner = None
 
+        def _build_config_text(self) -> str:
+            """Build session config display text."""
+            session_id_display = self.session_id or "new"
+            agent_info = "\n  ├─ ".join(self.agents_info) if self.agents_info else "Loading agents..."
+            return self.SESSION_CONFIG_TEMPLATE.format(
+                mode=self.mode,
+                agent_info=agent_info,
+                session_id=session_id_display,
+                turn=self.turn,
+            )
+
         def compose(self) -> ComposeResult:
+            yield Label(self.MASSGEN_ASCII_BANNER, id="ascii_banner_label")
+
+            with Container(id="session_config_container", classes="header-box"):
+                yield Label(self._build_config_text(), id="session_config_label")
+
+            with Container(id="help_box_container", classes="header-box"):
+                yield Label(self.HELP_BOX, id="help_box_label")
+
             yield Label(f"💡 Question: {self.question}", id="question_label")
+
+        def update_question(self, question: str) -> None:
+            """Update the displayed question."""
+            self.question = question
+            try:
+                question_label = self.query_one("#question_label", Label)
+                question_label.update(f"💡 Question: {question}")
+            except Exception:
+                pass  # Label might not exist yet
+
+        def update_turn(self, turn: int) -> None:
+            """Update the displayed turn number."""
+            self.turn = turn
+            try:
+                config_label = self.query_one("#session_config_label", Label)
+                config_label.update(self._build_config_text())
+            except Exception:
+                pass
 
         def show_restart_banner(
             self,
@@ -1297,7 +1619,6 @@ if TEXTUAL_AVAILABLE:
                 banner_label = self.query_one("#restart_banner")
                 banner_label.update(banner_text)
             except NoMatches:
-                # Create banner if it doesn't exist
                 banner = Label(banner_text, id="restart_banner")
                 self.mount(banner, before=0)
 
@@ -1308,7 +1629,6 @@ if TEXTUAL_AVAILABLE:
                 context_label = self.query_one("#restart_context")
                 context_label.update(context_text)
             except NoMatches:
-                # Create context if it doesn't exist
                 context = Label(context_text, id="restart_context")
                 self.mount(context)
 
@@ -1335,19 +1655,15 @@ if TEXTUAL_AVAILABLE:
 
         def compose(self) -> ComposeResult:
             with Vertical():
-                # Agent header with status
                 yield Label(
                     self._header_text(),
                     id=self._header_dom_id,
                 )
-                # Content area
                 yield self.content_log
-                # Streaming line indicator
                 yield self.current_line_label
 
         def add_content(self, content: str, content_type: str):
             """Add content to agent panel."""
-            # Apply formatting based on content type using Text to avoid markup parsing
             if content_type == "tool":
                 self.content_log.write(Text(f"🔧 {content}", style="cyan"))
                 self._line_buffer = ""
@@ -1361,23 +1677,15 @@ if TEXTUAL_AVAILABLE:
                 self._line_buffer = ""
                 self.current_line_label.update(Text(""))
             else:
-                # Handle thinking content with buffering
-                self._line_buffer += content
-                if "\n" in self._line_buffer:
-                    lines = self._line_buffer.split("\n")
-                    # Write all complete lines
-                    for line in lines[:-1]:
-                        if line.strip():
-                            self.content_log.write(Text(line))
-                    # Keep the last partial line in buffer
-                    self._line_buffer = lines[-1]
-
-                # Update the streaming label with current partial line
+                self._line_buffer = _process_line_buffer(
+                    self._line_buffer,
+                    content,
+                    lambda line: self.content_log.write(Text(line)),
+                )
                 self.current_line_label.update(Text(self._line_buffer))
 
         def update_status(self, status: str):
             """Update agent status."""
-            # Flush any remaining buffer when status changes
             if self._line_buffer.strip():
                 self.content_log.write(Text(self._line_buffer))
                 self._line_buffer = ""
@@ -1451,44 +1759,35 @@ if TEXTUAL_AVAILABLE:
             """Convert arbitrary agent IDs into Textual-safe DOM identifiers."""
             MAX_DOM_ID_LENGTH = 80
 
-            # Truncate if too long
             truncated = raw_id[:MAX_DOM_ID_LENGTH] if len(raw_id) > MAX_DOM_ID_LENGTH else raw_id
-
-            # Apply regex substitution
             safe = re.sub(r"[^0-9a-zA-Z_-]", "_", truncated)
 
-            # Handle empty result
             if not safe:
                 safe = "agent_default"
 
-            # Handle digit-first
             if safe[0].isdigit():
                 safe = f"agent_{safe}"
 
-            # Collision-safe: append __N suffix if needed
             base_safe = safe
             counter = 1
             used_ids = set(self.coordination_display._dom_id_mapping.values())
 
             while safe in used_ids:
                 suffix = f"__{counter}"
-                # Ensure total length doesn't exceed MAX_DOM_ID_LENGTH
                 max_base_len = MAX_DOM_ID_LENGTH - len(suffix)
                 safe = base_safe[:max_base_len] + suffix
                 counter += 1
 
-            # Log collision resolution for debugging
             if safe != base_safe:
                 logger.debug(
                     f"DOM ID collision resolved for agent '{raw_id}': " f"'{base_safe}' -> '{safe}' (suffix added to avoid duplicate)",
                 )
 
-            # Store mapping for debugging and future collision checks
             self.coordination_display._dom_id_mapping[raw_id] = safe
 
             return safe
 
-    class OrchestratorEventsModal(ModalScreen):
+    class OrchestratorEventsModal(BaseModal):
         """Modal to display orchestrator events."""
 
         def __init__(self, events_text: str):
@@ -1502,16 +1801,7 @@ if TEXTUAL_AVAILABLE:
                 yield TextArea(self.events_text, id="orchestrator_events_content", read_only=True)
                 yield Button("Close (ESC)", id="close_orchestrator_button")
 
-        def on_button_pressed(self, event: Button.Pressed):
-            if event.button.id == "close_orchestrator_button":
-                self.dismiss()
-
-        def on_key(self, event: events.Key):
-            if event.key == "escape":
-                self.dismiss()
-                event.stop()
-
-    class AgentSelectorModal(ModalScreen):
+    class AgentSelectorModal(BaseModal):
         """Interactive agent selection menu."""
 
         def __init__(self, agent_ids: List[str], display: TextualTerminalDisplay, app: "TextualApp"):
@@ -1541,25 +1831,17 @@ if TEXTUAL_AVAILABLE:
                 if path:
                     self.app_ref._show_text_modal(Path(path), f"{agent_id} Output")
             elif index == len(self.agent_ids):
-                # Final presentation
                 path = self.coordination_display.final_presentation_file
                 if path:
                     self.app_ref._show_text_modal(Path(path), "Final Presentation")
             elif index == len(self.agent_ids) + 1:
-                # View system status
                 self.app_ref._show_system_status_modal()
             elif index == len(self.agent_ids) + 2:
-                # View coordination table
                 self.app_ref._show_coordination_table_modal()
 
             self.dismiss()
 
-        def on_button_pressed(self, event: Button.Pressed):
-            """Handle button press."""
-            if event.button.id == "cancel_button":
-                self.dismiss()
-
-    class CoordinationTableModal(ModalScreen):
+    class CoordinationTableModal(BaseModal):
         """Modal to display coordination table."""
 
         def __init__(self, table_content: str):
@@ -1577,12 +1859,7 @@ if TEXTUAL_AVAILABLE:
                 )
                 yield Button("Close (ESC)", id="close_button")
 
-        def on_button_pressed(self, event: Button.Pressed):
-            """Handle button press."""
-            if event.button.id == "close_button":
-                self.dismiss()
-
-    class VoteResultsModal(ModalScreen):
+    class VoteResultsModal(BaseModal):
         """Modal for detailed vote results."""
 
         def __init__(self, results_text: str):
@@ -1595,11 +1872,7 @@ if TEXTUAL_AVAILABLE:
                 yield TextArea(self.results_text, id="vote_results", read_only=True)
                 yield Button("Close (ESC)", id="close_vote_button")
 
-        def on_button_pressed(self, event: Button.Pressed):
-            if event.button.id == "close_vote_button":
-                self.dismiss()
-
-    class SystemStatusModal(ModalScreen):
+    class SystemStatusModal(BaseModal):
         """Modal to display system status log."""
 
         def __init__(self, content: str):
@@ -1612,11 +1885,7 @@ if TEXTUAL_AVAILABLE:
                 yield TextArea(self.content, id="system_status_content", read_only=True)
                 yield Button("Close (ESC)", id="close_system_status_button")
 
-        def on_button_pressed(self, event: Button.Pressed):
-            if event.button.id == "close_system_status_button":
-                self.dismiss()
-
-    class TextContentModal(ModalScreen):
+    class TextContentModal(BaseModal):
         """Generic modal to display text content from a file or buffer."""
 
         def __init__(self, title: str, content: str):
@@ -1629,10 +1898,6 @@ if TEXTUAL_AVAILABLE:
                 yield Label(self.title, id="text_content_header")
                 yield TextArea(self.content, id="text_content_body", read_only=True)
                 yield Button("Close (ESC)", id="close_text_content_button")
-
-        def on_button_pressed(self, event: Button.Pressed):
-            if event.button.id == "close_text_content_button":
-                self.dismiss()
 
     class PostEvaluationPanel(Static):
         """Displays the most recent post-evaluation snippets."""
@@ -1703,24 +1968,15 @@ if TEXTUAL_AVAILABLE:
             if not chunk:
                 return
 
-            # Buffer content
-            self._line_buffer += chunk
-
-            if "\n" in self._line_buffer:
-                lines = self._line_buffer.split("\n")
-                # Write complete lines
-                for line in lines[:-1]:
-                    if line.strip():
-                        self.log_view.write(line)
-                # Keep partial line
-                self._line_buffer = lines[-1]
-
-            # Update streaming label
+            self._line_buffer = _process_line_buffer(
+                self._line_buffer,
+                chunk,
+                lambda line: self.log_view.write(line),
+            )
             self.current_line_label.update(self._line_buffer)
 
         def end(self):
             """Mark presentation as complete but keep visible."""
-            # Flush remaining buffer
             if self._line_buffer.strip():
                 self.log_view.write(self._line_buffer)
             self._line_buffer = ""
@@ -1728,7 +1984,6 @@ if TEXTUAL_AVAILABLE:
             self._is_streaming = False
             self.remove_class("streaming-active")
 
-            # Keep visible so user can read it with a strong completion marker
             header = self._header_base or str(self.agent_label.renderable)
             if self._vote_summary:
                 header = f"{header} | {self._vote_summary}"
@@ -1741,7 +1996,6 @@ if TEXTUAL_AVAILABLE:
             mapping = vote_results.get("vote_counts") or {}
             if not mapping:
                 return ""
-            # Prefer winner info if available
             winner = vote_results.get("winner")
             is_tie = vote_results.get("is_tie", False)
             summary_pairs = ", ".join(f"{aid}:{count}" for aid, count in mapping.items())
