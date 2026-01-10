@@ -1661,6 +1661,7 @@ async def handle_session_persistence(
     config_path: Optional[str] = None,
     model: Optional[str] = None,
     log_directory: Optional[str] = None,
+    models_dict: Optional[Dict[str, str]] = None,
 ) -> tuple[Optional[str], int, Optional[str]]:
     """
     Handle session persistence after orchestrator completes.
@@ -1719,6 +1720,15 @@ async def handle_session_persistence(
         "task": question,
         "session_id": session_id,
     }
+
+    # Add model information if available
+    if models_dict:
+        metadata["models"] = models_dict
+        # Also add winning agent's model for quick reference
+        winning_agent_id = final_result["winning_agent_id"]
+        if winning_agent_id in models_dict:
+            metadata["winning_model"] = models_dict[winning_agent_id]
+
     metadata_file = turn_dir / "metadata.json"
     metadata_file.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
 
@@ -4533,6 +4543,498 @@ def print_help_messages():
     rich_console.print(help_panel)
 
 
+async def run_textual_interactive_mode(
+    agents: Dict[str, SingleAgent],
+    ui_config: Dict[str, Any],
+    original_config: Dict[str, Any] = None,
+    orchestrator_cfg: Dict[str, Any] = None,
+    config_path: Optional[str] = None,
+    memory_session_id: Optional[str] = None,
+    initial_question: Optional[str] = None,
+    restore_session_if_exists: bool = False,
+    debug: bool = False,
+    **kwargs,
+):
+    """Run MassGen in Textual TUI interactive mode.
+
+    This launches the Textual TUI immediately, displaying the ASCII art,
+    session configuration, and input box within the TUI itself.
+    All interaction happens inside the TUI without Rich terminal output.
+
+    Uses the unified InteractiveSessionController for multi-turn orchestration.
+    """
+    import asyncio
+    import threading
+
+    from massgen.agent_config import AgentConfig
+    from massgen.cancellation import CancellationRequested
+    from massgen.frontend.coordination_ui import CoordinationUI
+    from massgen.frontend.displays.textual_terminal_display import (
+        TEXTUAL_AVAILABLE,
+        TextualTerminalDisplay,
+    )
+    from massgen.frontend.interactive_controller import (
+        InteractiveSessionController,
+        SessionContext,
+        TextualInteractiveAdapter,
+        TextualThreadQueueQuestionSource,
+        TurnResult,
+    )
+    from massgen.orchestrator import Orchestrator
+
+    if not TEXTUAL_AVAILABLE:
+        print("⚠️ Textual library not available. Install with: pip install textual")
+        print("   Falling back to Rich terminal mode...")
+        ui_config["display_type"] = "rich_terminal"
+        return await run_interactive_mode(
+            agents=agents,
+            ui_config=ui_config,
+            original_config=original_config,
+            orchestrator_cfg=orchestrator_cfg,
+            config_path=config_path,
+            memory_session_id=memory_session_id,
+            initial_question=initial_question,
+            restore_session_if_exists=restore_session_if_exists,
+            debug=debug,
+            **kwargs,
+        )
+
+    # Build agent info for display
+    agent_ids = list(agents.keys())
+
+    # Session state
+    session_id = memory_session_id or f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+    # Restore session state if requested (same as Rich mode)
+    current_turn = 0
+    conversation_history = []
+    previous_turns = []
+    winning_agents_history = []
+    incomplete_turn_workspaces = {}
+    restore_notification = None  # Message to show in TUI after startup
+
+    if memory_session_id and restore_session_if_exists:
+        from massgen.logger_config import set_log_turn
+        from massgen.session import restore_session
+
+        try:
+            session_state = restore_session(memory_session_id, SESSION_STORAGE)
+            conversation_history = session_state.conversation_history
+            current_turn = session_state.current_turn
+            previous_turns = session_state.previous_turns
+            winning_agents_history = session_state.winning_agents_history
+
+            # Set turn number for logger (next turn after last completed)
+            next_turn = current_turn + 1
+            set_log_turn(next_turn)
+
+            restore_notification = f"Restored session with {current_turn} previous turn(s) " f"({len(conversation_history)} messages). Starting turn {next_turn}"
+
+            # Check for incomplete turn
+            if session_state.incomplete_turn:
+                incomplete = session_state.incomplete_turn
+                restore_notification += f"\n⚠️ Previous turn was incomplete (cancelled during {incomplete.get('phase', 'unknown')} phase)"
+                if incomplete.get("agents_with_answers"):
+                    restore_notification += f"\nPartial answers from: {', '.join(incomplete['agents_with_answers'])}"
+
+            # Store incomplete turn workspaces for context path injection
+            incomplete_turn_workspaces = session_state.incomplete_turn_workspaces
+        except ValueError as e:
+            # restore_session failed - no turns found
+            logger.error(f"Session restore error: {e}")
+            restore_notification = f"Session error: {e}. Starting fresh session."
+            # Reset to fresh session instead of exiting (TUI is more forgiving)
+            current_turn = 0
+            conversation_history = []
+
+    # Create the Textual display
+    display = TextualTerminalDisplay(agent_ids, **ui_config.get("display_kwargs", {}))
+
+    # Create question source (thread-safe queue)
+    question_source = TextualThreadQueueQuestionSource()
+
+    # Create session context with restored values
+    context = SessionContext(
+        session_id=session_id,
+        current_turn=current_turn,
+        conversation_history=conversation_history,
+        previous_turns=previous_turns,
+        winning_agents_history=winning_agents_history,
+        agents=agents,
+        config_path=config_path,
+        original_config=original_config,
+        orchestrator_cfg=orchestrator_cfg,
+    )
+
+    # Store incomplete workspaces in context for workspace injection
+    context.incomplete_turn_workspaces = incomplete_turn_workspaces
+
+    # Create adapter for Textual UI updates
+    adapter = TextualInteractiveAdapter(display)
+
+    # Define turn runner that uses CoordinationUI
+    async def run_turn(
+        question: str,
+        agents: Dict[str, Any],
+        ui_config: Dict[str, Any],
+        conversation_history: list,
+        session_info: dict,
+        **turn_kwargs,
+    ) -> TurnResult:
+        """Run a single turn through the orchestration engine."""
+        nonlocal context  # Allow updating context.agents if we recreate them
+
+        try:
+            current_turn_num = session_info.get("current_turn", 0)
+            sess_id = session_info.get("session_id")
+
+            # Inject previous turn workspace as read-only context (same as Rich mode)
+            if current_turn_num > 0 and original_config and orchestrator_cfg:
+                session_dir = Path(SESSION_STORAGE) / sess_id
+                latest_turn_dir = session_dir / f"turn_{current_turn_num}"
+                latest_turn_workspace = latest_turn_dir / "workspace"
+
+                # Determine which workspaces to add as context paths
+                context_workspaces_to_add = []
+                incomplete_ws = getattr(context, "incomplete_turn_workspaces", {})
+
+                if incomplete_ws:
+                    # Incomplete turn - add all agent workspaces
+                    for ws_agent_id, ws_path in incomplete_ws.items():
+                        if ws_path and Path(ws_path).exists():
+                            context_workspaces_to_add.append(
+                                {
+                                    "path": str(Path(ws_path).resolve()),
+                                    "permission": "read",
+                                    "description": f"Incomplete turn {current_turn_num} - {ws_agent_id}'s workspace",
+                                },
+                            )
+                    logger.info(
+                        f"[Textual] Adding {len(context_workspaces_to_add)} workspace(s) from incomplete turn",
+                    )
+                    # Clear after first use
+                    context.incomplete_turn_workspaces = {}
+                elif latest_turn_workspace.exists():
+                    # Complete turn - single winning agent workspace
+                    context_workspaces_to_add.append(
+                        {
+                            "path": str(latest_turn_workspace.resolve()),
+                            "permission": "read",
+                        },
+                    )
+
+                if context_workspaces_to_add:
+                    # Check for session pre-mount (no container restart needed)
+                    agents_with_session_mount = [
+                        (aid, ag)
+                        for aid, ag in agents.items()
+                        if hasattr(ag, "backend") and hasattr(ag.backend, "filesystem_manager") and ag.backend.filesystem_manager and ag.backend.filesystem_manager.has_session_mount()
+                    ]
+
+                    persist_containers = orchestrator_cfg.get("docker", {}).get(
+                        "persist_containers_between_turns",
+                        True,
+                    )
+
+                    if agents_with_session_mount and persist_containers:
+                        # Just update permission manager - no container restart
+                        logger.info(
+                            "[Textual] Session pre-mounted: adding turn path(s) without container restart",
+                        )
+                        for aid, ag in agents.items():
+                            if hasattr(ag, "backend") and hasattr(ag.backend, "filesystem_manager") and ag.backend.filesystem_manager:
+                                for ctx_ws in context_workspaces_to_add:
+                                    ag.backend.filesystem_manager.add_turn_context_path(
+                                        Path(ctx_ws["path"]),
+                                    )
+                    else:
+                        # Fall back: cleanup and recreate agents
+                        logger.info(
+                            f"[Textual] Recreating agents with turn {current_turn_num} workspace(s) as context",
+                        )
+
+                        # Cleanup existing agents
+                        for aid, ag in agents.items():
+                            if hasattr(ag, "backend") and hasattr(ag.backend, "filesystem_manager") and ag.backend.filesystem_manager:
+                                try:
+                                    ag.backend.filesystem_manager.cleanup()
+                                except Exception as e:
+                                    logger.warning(
+                                        f"[Textual] Cleanup failed for {aid}: {e}",
+                                    )
+                            if hasattr(ag.backend, "__aexit__"):
+                                await ag.backend.__aexit__(None, None, None)
+
+                        # Inject context paths into config
+                        modified_config = original_config.copy()
+                        agent_entries = [modified_config["agent"]] if "agent" in modified_config else modified_config.get("agents", [])
+                        for agent_data in agent_entries:
+                            backend_config = agent_data.get("backend", {})
+                            if "cwd" in backend_config:
+                                existing_context_paths = backend_config.get(
+                                    "context_paths",
+                                    [],
+                                )
+                                backend_config["context_paths"] = existing_context_paths + context_workspaces_to_add
+
+                        # Recreate agents
+                        enable_rate_limit = kwargs.get("enable_rate_limit", False)
+                        new_agents = create_agents_from_config(
+                            modified_config,
+                            orchestrator_cfg,
+                            debug=debug,
+                            enable_rate_limit=enable_rate_limit,
+                            config_path=config_path,
+                            memory_session_id=sess_id,
+                            filesystem_session_id=sess_id,
+                            session_storage_base=SESSION_STORAGE,
+                        )
+                        # Update context and local reference
+                        context.agents = new_agents
+                        agents = new_agents
+                        logger.info(
+                            f"[Textual] Recreated {len(agents)} agents with context paths",
+                        )
+
+            # Reload previous_turns and winning_agents_history from session storage
+            # This ensures multi-turn memory sharing works correctly (same as Rich mode)
+            previous_turns = session_info.get("previous_turns", [])
+            winning_agents_history = session_info.get("winning_agents_history", [])
+
+            if not previous_turns and not winning_agents_history and sess_id:
+                from massgen.session import restore_session
+
+                try:
+                    session_state = restore_session(sess_id, SESSION_STORAGE)
+                    if session_state:
+                        previous_turns = session_state.previous_turns
+                        winning_agents_history = session_state.winning_agents_history
+                        logger.debug(
+                            f"[Textual] Reloaded {len(previous_turns)} previous turn(s) " f"and {len(winning_agents_history)} winning agent(s) from session storage",
+                        )
+                except (ValueError, Exception) as e:
+                    logger.debug(
+                        f"[Textual] Could not restore session for previous turns: {e}",
+                    )
+
+            # Build orchestrator config
+            orchestrator_config = AgentConfig()
+            if orchestrator_cfg:
+                if "voting_sensitivity" in orchestrator_cfg:
+                    orchestrator_config.voting_sensitivity = orchestrator_cfg["voting_sensitivity"]
+
+            # Create orchestrator with multi-turn state
+            orchestrator = Orchestrator(
+                agents=agents,
+                config=orchestrator_config,
+                session_id=sess_id,
+                previous_turns=previous_turns,
+                winning_agents_history=winning_agents_history,
+            )
+
+            # Create coordination UI with preserve_display and interactive_mode
+            coord_ui = CoordinationUI(
+                display_type="textual_terminal",
+                preserve_display=True,  # Don't cleanup display between turns
+                interactive_mode=True,  # External driver owns the TUI loop
+                **ui_config.get("display_kwargs", {}),
+            )
+            coord_ui.display = display
+            coord_ui.agent_ids = agent_ids
+
+            # Use begin_turn to update display state
+            turn_num = session_info.get("current_turn", 0) + 1
+            display.begin_turn(turn_num, question)
+
+            # Run orchestration (won't call display.run_async due to interactive_mode)
+            # Use coordinate_with_context if we have conversation history for multi-turn
+            if conversation_history:
+                # Build messages list with history + current question
+                messages = conversation_history + [
+                    {"role": "user", "content": question},
+                ]
+                answer = await coord_ui.coordinate_with_context(
+                    orchestrator=orchestrator,
+                    question=question,
+                    messages=messages,
+                    agent_ids=agent_ids,
+                )
+            else:
+                answer = await coord_ui.coordinate(
+                    orchestrator=orchestrator,
+                    question=question,
+                    agent_ids=agent_ids,
+                )
+
+            # Handle session persistence (same as Rich mode)
+            session_id_to_use = session_info.get("session_id")
+            updated_turn = turn_num
+            normalized_answer = answer
+            # Extract models from all agents for session metadata
+            models_dict = {}
+            model_name_for_registry = None
+            for agent_id, agent in agents.items():
+                if hasattr(agent, "config") and hasattr(agent.config, "backend_params"):
+                    model = agent.config.backend_params.get("model")
+                    if model:
+                        models_dict[agent_id] = model
+            # Create comma-separated string for session registry
+            if models_dict:
+                unique_models = list(dict.fromkeys(models_dict.values()))
+                model_name_for_registry = ", ".join(unique_models)
+            try:
+                from massgen.logger_config import get_log_session_root
+
+                log_dir = get_log_session_root()
+                log_dir_name = log_dir.name if log_dir else None
+                (
+                    session_id_to_use,
+                    updated_turn,
+                    normalized_answer,
+                ) = await handle_session_persistence(
+                    orchestrator,
+                    question,
+                    session_info,
+                    config_path=config_path,
+                    model=model_name_for_registry,
+                    log_directory=log_dir_name,
+                    models_dict=models_dict,
+                )
+                if normalized_answer:
+                    answer = normalized_answer
+                logger.info(
+                    f"[Textual] Persisted turn {updated_turn} to session {session_id_to_use}",
+                )
+            except Exception as persist_err:
+                logger.warning(f"[Textual] Failed to persist session: {persist_err}")
+
+            # End turn
+            display.end_turn(turn_num, answer=answer)
+
+            return TurnResult(
+                answer_text=answer,
+                was_cancelled=False,
+                updated_session_id=session_id_to_use,
+                updated_turn=updated_turn,
+            )
+
+        except CancellationRequested as cancel_exc:
+            # User cancelled the turn - save partial progress if available
+            logger.info("[Textual] Turn cancelled by user")
+            partial_saved = getattr(cancel_exc, "partial_saved", False)
+
+            # Try to save partial result if orchestrator has one
+            if not partial_saved and orchestrator:
+                try:
+                    from massgen.session import save_partial_turn
+
+                    partial_result = orchestrator.get_partial_result()
+                    if partial_result:
+                        save_partial_turn(
+                            session_id=session_info.get("session_id"),
+                            turn_number=turn_num,
+                            question=question,
+                            partial_result=partial_result,
+                            session_storage=SESSION_STORAGE,
+                        )
+                        partial_saved = True
+                        logger.info(f"[Textual] Saved partial turn {turn_num}")
+                except Exception as save_err:
+                    logger.warning(f"[Textual] Failed to save partial turn: {save_err}")
+
+            display.end_turn(turn_num, was_cancelled=True)
+
+            return TurnResult(
+                was_cancelled=True,
+                partial_saved=partial_saved,
+                updated_session_id=session_info.get("session_id"),
+                updated_turn=session_info.get(
+                    "current_turn",
+                    0,
+                ),  # Don't increment on cancel
+            )
+
+        except Exception as e:
+            logger.exception(f"Error in turn: {e}")
+            return TurnResult(
+                error=e,
+                was_cancelled=False,
+                updated_session_id=session_info.get("session_id"),
+                updated_turn=session_info.get("current_turn", 0),
+            )
+
+    # Create the controller
+    controller = InteractiveSessionController(
+        question_source=question_source,
+        adapter=adapter,
+        context=context,
+        turn_runner=run_turn,
+        ui_config=ui_config,
+        debug=debug,
+    )
+
+    # Wire up the TUI input to the question source using set_input_handler
+    # This delegates all input (questions and slash commands) to the controller
+    display.set_input_handler(question_source.submit)
+
+    # Start session (creates app once)
+    display.start_session(
+        initial_question=initial_question or "Welcome! Type your question below...",
+        log_filename=None,
+        session_id=session_id,
+    )
+
+    # Ensure the app also has the input handler set (in case app was created before set_input_handler)
+    if display._app:
+        display._app.set_input_handler(question_source.submit)
+
+    # Run orchestration in background thread
+    def orchestration_thread_fn():
+        """Background thread that runs the controller."""
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            loop.run_until_complete(controller.run())
+        except Exception as e:
+            logger.exception(f"Controller error: {e}")
+        finally:
+            loop.close()
+
+    orch_thread = threading.Thread(target=orchestration_thread_fn, daemon=True)
+    orch_thread.start()
+
+    # If initial question provided, submit it only after app is mounted
+    async def submit_initial_question_when_ready():
+        """Wait for app to be mounted before submitting initial question or showing restore notification."""
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, display._app_ready.wait)
+
+        # Show restore notification if we restored a session
+        if restore_notification:
+            await asyncio.sleep(0.3)  # Brief delay for UI to settle
+            adapter.notify(restore_notification, "info")
+
+        # Submit initial question if provided
+        if initial_question:
+            question_source.submit(initial_question)
+
+    # Schedule the initial question submission task
+    initial_question_task = asyncio.create_task(submit_initial_question_when_ready())
+
+    # Run the Textual TUI (blocks until user quits)
+    try:
+        await display.run_async()
+    finally:
+        # Cancel initial question task if still pending
+        if not initial_question_task.done():
+            initial_question_task.cancel()
+        # Signal shutdown
+        controller.stop()
+        orch_thread.join(timeout=5)
+
+    print("✅ Textual session ended")
+
+
 async def run_interactive_mode(
     agents: Optional[Dict[str, SingleAgent]],
     ui_config: Dict[str, Any],
@@ -4559,6 +5061,23 @@ async def run_interactive_mode(
         enable_rate_limit: Whether to enable rate limiting for agent creation
         session_storage_base: Base directory for session storage (for Docker mounts)
     """
+
+    # Textual-first mode: Launch TUI immediately without Rich terminal output
+    # The TUI will handle ASCII art, session config, input, and multi-turn loop
+    display_type = ui_config.get("display_type", "rich_terminal")
+    if display_type == "textual_terminal":
+        return await run_textual_interactive_mode(
+            agents=agents,
+            ui_config=ui_config,
+            original_config=original_config,
+            orchestrator_cfg=orchestrator_cfg,
+            config_path=config_path,
+            memory_session_id=memory_session_id,
+            initial_question=initial_question,
+            restore_session_if_exists=restore_session_if_exists,
+            debug=debug,
+            **kwargs,
+        )
 
     # Use Rich console for better display
     rich_console = Console()
@@ -5588,6 +6107,13 @@ async def main(args):
             ui_config["skip_agent_selector"] = True
         if args.no_display:
             ui_config["display_type"] = "simple"
+        # --display flag overrides --no-display if both specified
+        if args.display:
+            display_type_map = {"rich": "rich_terminal", "textual": "textual_terminal"}
+            ui_config["display_type"] = display_type_map.get(
+                args.display,
+                "rich_terminal",
+            )
         if args.no_logs:
             ui_config["logging_enabled"] = False
         if args.debug:
@@ -6328,6 +6854,13 @@ Environment Variables:
         "--no-display",
         action="store_true",
         help="Disable visual coordination display",
+    )
+    parser.add_argument(
+        "--display",
+        type=str,
+        choices=["rich", "textual"],
+        default=None,
+        help="Display type: rich (default), textual (TUI)",
     )
     parser.add_argument("--no-logs", action="store_true", help="Disable logging")
     parser.add_argument(
