@@ -25,6 +25,8 @@ try:
     from textual.screen import ModalScreen
     from textual.widgets import Footer, Input, Label, RichLog, Static, TextArea
 
+    from .textual_widgets import AgentTabBar, AgentTabChanged
+
     TEXTUAL_AVAILABLE = True
 except ImportError:
     TEXTUAL_AVAILABLE = False
@@ -90,6 +92,9 @@ class TextualTerminalDisplay(TerminalDisplay):
         super().__init__(agent_ids, **kwargs)
         self._validate_agent_ids()
         self._dom_id_mapping: Dict[str, str] = {}
+
+        # Agent models mapping (agent_id -> model name) for display
+        self.agent_models: Dict[str, str] = kwargs.get("agent_models", {})
 
         self.theme = kwargs.get("theme", "dark")
         self.refresh_rate = kwargs.get("refresh_rate")
@@ -899,7 +904,6 @@ class TextualTerminalDisplay(TerminalDisplay):
 # Textual App Implementation
 if TEXTUAL_AVAILABLE:
     from textual.binding import Binding
-    from textual.css.query import NoMatches
     from textual.widgets import Button, ListItem, ListView
 
     def keyboard_action(func):
@@ -932,15 +936,14 @@ if TEXTUAL_AVAILABLE:
         CSS_PATH = str(THEMES_DIR / "dark.tcss")
 
         BINDINGS = [
-            Binding("tab", "next_agent", "Next Agent"),
-            Binding("shift+tab", "prev_agent", "Prev Agent"),
-            Binding("s", "open_system_status", "System Log"),
+            Binding("tab", "next_agent", "Next"),
+            Binding("shift+tab", "prev_agent", "Prev"),
+            Binding("s", "open_system_status", "Status"),
             Binding("o", "open_orchestrator", "Events"),
-            Binding("i", "agent_selector", "Agent Selector"),
-            Binding("c", "coordination_table", "Coordination Table"),
-            Binding("v", "open_vote_results", "Vote Results"),
-            Binding("ctrl+k", "toggle_safe_keyboard", "Safe Keys"),
-            Binding("ctrl+q", "quit", "Quit"),
+            Binding("v", "open_vote_results", "Votes"),
+            Binding("q", "quit", "Quit"),
+            Binding("ctrl+q", "quit", "Quit", show=False),
+            Binding("escape", "quit", "Quit", show=False),
         ]
 
         def __init__(
@@ -966,6 +969,12 @@ if TEXTUAL_AVAILABLE:
             self.post_eval_panel = None
             self.final_stream_panel = None
             self.safe_indicator = None
+            self._tab_bar: Optional[AgentTabBar] = None
+            self._active_agent_id: Optional[str] = None
+            self._welcome_screen: Optional["WelcomeScreen"] = None
+            # Show welcome if no real question (detect placeholder strings)
+            is_placeholder = not question or question.lower().startswith("welcome")
+            self._showing_welcome = is_placeholder
 
             self.current_agent_index = 0
             self._pending_flush = False
@@ -985,20 +994,27 @@ if TEXTUAL_AVAILABLE:
             """Compose the UI layout with adaptive agent arrangement."""
             num_agents = len(self.coordination_display.agent_ids)
             agents_info_list = []
-            orchestrator = getattr(self.coordination_display, "orchestrator", None)
+            # Use agent_models dict passed at display creation time
+            agent_models = getattr(self.coordination_display, "agent_models", {})
             for agent_id in self.coordination_display.agent_ids:
                 agent_info = agent_id
-                if orchestrator and hasattr(orchestrator, "agents"):
-                    agent = orchestrator.agents.get(agent_id)
-                    if agent and hasattr(agent, "backend") and hasattr(agent.backend, "model"):
-                        model = agent.backend.model
-                        role = getattr(agent, "role", "Response")
-                        agent_info = f"{agent_id}: {model} ({role})"
+                # Get model from agent_models dict (populated at display creation)
+                if agent_id in agent_models and agent_models[agent_id]:
+                    model = agent_models[agent_id]
+                    agent_info = f"{agent_id} ({model})"
                 agents_info_list.append(agent_info)
 
             session_id = getattr(self.coordination_display, "session_id", None)
             turn = getattr(self.coordination_display, "current_turn", 1)
             mode = "Single Agent" if num_agents == 1 else "Multi-Agent"
+
+            # Welcome screen (shown initially, hidden when session starts)
+            self._welcome_screen = WelcomeScreen(agents_info_list)
+            if not self._showing_welcome:
+                self._welcome_screen.add_class("hidden")
+            yield self._welcome_screen
+
+            # Header (hidden during welcome)
             self.header_widget = HeaderWidget(
                 question=self.question,
                 session_id=session_id,
@@ -1006,13 +1022,29 @@ if TEXTUAL_AVAILABLE:
                 agents_info=agents_info_list,
                 mode=mode,
             )
+            if self._showing_welcome:
+                self.header_widget.add_class("hidden")
             yield self.header_widget
 
-            layout_class = self._get_layout_class(num_agents)
-            with Container(id="main_container", classes=f"{layout_class} hidden"):
-                with Container(id="agents_container", classes=layout_class):
-                    for idx, agent_id in enumerate(self.coordination_display.agent_ids):
+            # Create tab bar for agent switching (hidden during welcome)
+            agent_ids = self.coordination_display.agent_ids
+            self._tab_bar = AgentTabBar(agent_ids, id="agent_tab_bar")
+            if self._showing_welcome:
+                self._tab_bar.add_class("hidden")
+            yield self._tab_bar
+
+            # Set initial active agent
+            self._active_agent_id = agent_ids[0] if agent_ids else None
+
+            # Main container with agent panels (hidden during welcome)
+            with Container(id="main_container", classes="hidden" if self._showing_welcome else ""):
+                with Container(id="agents_container"):
+                    for idx, agent_id in enumerate(agent_ids):
+                        # Only first agent is visible, rest are hidden
+                        is_hidden = idx > 0
                         agent_widget = AgentPanel(agent_id, self.coordination_display, idx + 1)
+                        if is_hidden:
+                            agent_widget.add_class("hidden")
                         self.agent_widgets[agent_id] = agent_widget
                         yield agent_widget
 
@@ -1075,6 +1107,27 @@ if TEXTUAL_AVAILABLE:
             """Set the input handler callback for controller integration."""
             self._input_handler = handler
 
+        def _dismiss_welcome(self) -> None:
+            """Dismiss the welcome screen and show the main UI."""
+            if not self._showing_welcome:
+                return
+            self._showing_welcome = False
+
+            # Hide welcome screen
+            if self._welcome_screen:
+                self._welcome_screen.add_class("hidden")
+
+            # Show header, tab bar, and main container
+            if self.header_widget:
+                self.header_widget.remove_class("hidden")
+            if self._tab_bar:
+                self._tab_bar.remove_class("hidden")
+            try:
+                main_container = self.query_one("#main_container", Container)
+                main_container.remove_class("hidden")
+            except Exception:
+                pass
+
         def on_input_submitted(self, event: Input.Submitted) -> None:
             """Handle user input submission - delegate to controller."""
             text = event.value.strip()
@@ -1082,6 +1135,10 @@ if TEXTUAL_AVAILABLE:
                 return
 
             self.question_input.clear()
+
+            # Dismiss welcome screen on first real input
+            if self._showing_welcome and not text.startswith("/"):
+                self._dismiss_welcome()
 
             if self._input_handler:
                 self._input_handler(text)
@@ -1267,7 +1324,12 @@ Type your question and press Enter to ask the agents.
             """Update agent status."""
             if agent_id in self.agent_widgets:
                 self.agent_widgets[agent_id].update_status(status)
-                self.agent_widgets[agent_id].jump_to_latest()
+                # Only jump to latest if this is the active agent
+                if agent_id == self._active_agent_id:
+                    self.agent_widgets[agent_id].jump_to_latest()
+            # Also update the tab bar status badge
+            if self._tab_bar:
+                self._tab_bar.update_agent_status(agent_id, status)
 
         def add_orchestrator_event(self, event: str):
             """Add orchestrator event to internal tracking."""
@@ -1393,19 +1455,54 @@ Type your question and press Enter to ask the agents.
 
         @keyboard_action
         def action_next_agent(self):
-            """Move focus to next agent."""
-            self.current_agent_index = (self.current_agent_index + 1) % len(self.coordination_display.agent_ids)
-            agent_id = self.coordination_display.agent_ids[self.current_agent_index]
-            if agent_id in self.agent_widgets:
-                self.agent_widgets[agent_id].focus()
+            """Switch to next agent tab."""
+            if self._tab_bar:
+                next_agent = self._tab_bar.get_next_agent()
+                if next_agent:
+                    self._switch_to_agent(next_agent)
 
         @keyboard_action
         def action_prev_agent(self):
-            """Move focus to previous agent."""
-            self.current_agent_index = (self.current_agent_index - 1) % len(self.coordination_display.agent_ids)
-            agent_id = self.coordination_display.agent_ids[self.current_agent_index]
+            """Switch to previous agent tab."""
+            if self._tab_bar:
+                prev_agent = self._tab_bar.get_previous_agent()
+                if prev_agent:
+                    self._switch_to_agent(prev_agent)
+
+        def _switch_to_agent(self, agent_id: str) -> None:
+            """Switch the visible agent tab.
+
+            Args:
+                agent_id: The agent ID to switch to.
+            """
+            if agent_id == self._active_agent_id:
+                return
+
+            # Hide current panel
+            if self._active_agent_id and self._active_agent_id in self.agent_widgets:
+                self.agent_widgets[self._active_agent_id].add_class("hidden")
+
+            # Show new panel
             if agent_id in self.agent_widgets:
+                self.agent_widgets[agent_id].remove_class("hidden")
                 self.agent_widgets[agent_id].focus()
+
+            # Update tab bar
+            if self._tab_bar:
+                self._tab_bar.set_active(agent_id)
+
+            self._active_agent_id = agent_id
+
+            # Update current_agent_index for compatibility with existing methods
+            try:
+                self.current_agent_index = self.coordination_display.agent_ids.index(agent_id)
+            except ValueError:
+                pass
+
+        def on_agent_tab_changed(self, event: AgentTabChanged) -> None:
+            """Handle tab click from AgentTabBar."""
+            self._switch_to_agent(event.agent_id)
+            event.stop()
 
         def action_toggle_safe_keyboard(self):
             """Toggle safe keyboard mode to ignore hotkeys."""
@@ -1468,10 +1565,8 @@ Type your question and press Enter to ask the agents.
                 idx = int(key) - 1
                 if 0 <= idx < len(self.coordination_display.agent_ids):
                     agent_id = self.coordination_display.agent_ids[idx]
-                    self.current_agent_index = idx
-                    if agent_id in self.agent_widgets:
-                        self.agent_widgets[agent_id].focus()
-                        event.stop()
+                    self._switch_to_agent(agent_id)
+                    event.stop()
                     return
 
             if key.lower() == "s":
@@ -1529,26 +1624,34 @@ Type your question and press Enter to ask the agents.
                 self.call_later(lambda: self.refresh(layout=True))
 
     # Widget implementations
-    class HeaderWidget(ScrollableContainer):
-        """Header widget showing MassGen banner, session config, and help."""
+    class WelcomeScreen(Container):
+        """Welcome screen with ASCII logo shown on startup."""
 
-        MASSGEN_ASCII_BANNER = """   ███╗   ███╗  █████╗  ███████╗ ███████╗  ██████╗  ███████╗ ███╗   ██╗
+        MASSGEN_LOGO = """\
+   ███╗   ███╗  █████╗  ███████╗ ███████╗  ██████╗  ███████╗ ███╗   ██╗
    ████╗ ████║ ██╔══██╗ ██╔════╝ ██╔════╝ ██╔════╝  ██╔════╝ ████╗  ██║
    ██╔████╔██║ ███████║ ███████╗ ███████╗ ██║  ███╗ █████╗   ██╔██╗ ██║
    ██║╚██╔╝██║ ██╔══██║ ╚════██║ ╚════██║ ██║   ██║ ██╔══╝   ██║╚██╗██║
    ██║ ╚═╝ ██║ ██║  ██║ ███████║ ███████║ ╚██████╔╝ ███████╗ ██║ ╚████║
-   ╚═╝     ╚═╝ ╚═╝  ╚═╝ ╚══════╝ ╚══════╝  ╚═════╝  ╚══════╝ ╚═╝  ╚═══╝
-   🤖 🤖 🤖  →  💬 collaborate  →  🎯 winner  →  📢 final"""
+   ╚═╝     ╚═╝ ╚═╝  ╚═╝ ╚══════╝ ╚══════╝  ╚═════╝  ╚══════╝ ╚═╝  ╚═══╝"""
 
-        SESSION_CONFIG_TEMPLATE = """⚙️  Session Configuration
-🤖 Mode: {mode}
-  ├─ {agent_info}
-📋 Session: {session_id} | Turn: {turn}"""
+        def __init__(self, agents_info: list = None):
+            super().__init__(id="welcome_screen")
+            self.agents_info = agents_info or []
 
-        HELP_BOX = """💬  Type your questions below
-💡  Type /help for all commands, or try: /status, /inspect, /events, /vote
-📝  For multi-line input: start with \"\"\" or '''
-⌨️   Press Ctrl+Q or /quit to exit"""
+        def compose(self) -> ComposeResult:
+            yield Label(self.MASSGEN_LOGO, id="welcome_logo")
+            yield Label("🤖 Multi-Agent Collaboration System", id="welcome_tagline")
+            # Show agent list
+            if self.agents_info:
+                agents_list = "  •  ".join(self.agents_info)
+                yield Label(agents_list, id="welcome_agents")
+            else:
+                yield Label(f"Ready with {len(self.agents_info)} agents", id="welcome_agents")
+            yield Label("Type your question below to begin...", id="welcome_hint")
+
+    class HeaderWidget(Static):
+        """Compact header widget showing minimal branding and session info."""
 
         def __init__(
             self,
@@ -1558,51 +1661,33 @@ Type your question and press Enter to ask the agents.
             agents_info: list = None,
             mode: str = "Multi-Agent",
         ):
-            super().__init__()
+            super().__init__(id="header_widget")
             self.question = question
             self.session_id = session_id
             self.turn = turn
             self.agents_info = agents_info or []
             self.mode = mode
-            self.restart_banner = None
 
-        def _build_config_text(self) -> str:
-            """Build session config display text."""
+        def _build_status_line(self) -> str:
+            """Build compact status line."""
             session_id_display = self.session_id or "new"
-            agent_info = "\n  ├─ ".join(self.agents_info) if self.agents_info else "Loading agents..."
-            return self.SESSION_CONFIG_TEMPLATE.format(
-                mode=self.mode,
-                agent_info=agent_info,
-                session_id=session_id_display,
-                turn=self.turn,
-            )
+            num_agents = len(self.agents_info)
+            return f"🤖 MassGen | {num_agents} agents | Turn {self.turn} | {session_id_display}"
 
         def compose(self) -> ComposeResult:
-            yield Label(self.MASSGEN_ASCII_BANNER, id="ascii_banner_label")
-
-            with Container(id="session_config_container", classes="header-box"):
-                yield Label(self._build_config_text(), id="session_config_label")
-
-            with Container(id="help_box_container", classes="header-box"):
-                yield Label(self.HELP_BOX, id="help_box_label")
-
-            yield Label(f"💡 Question: {self.question}", id="question_label")
+            yield Label(self._build_status_line(), id="status_line_label")
 
         def update_question(self, question: str) -> None:
             """Update the displayed question."""
             self.question = question
-            try:
-                question_label = self.query_one("#question_label", Label)
-                question_label.update(f"💡 Question: {question}")
-            except Exception:
-                pass  # Label might not exist yet
+            # Question is no longer displayed in header
 
         def update_turn(self, turn: int) -> None:
             """Update the displayed turn number."""
             self.turn = turn
             try:
-                config_label = self.query_one("#session_config_label", Label)
-                config_label.update(self._build_config_text())
+                status_label = self.query_one("#status_line_label", Label)
+                status_label.update(self._build_status_line())
             except Exception:
                 pass
 
@@ -1614,23 +1699,16 @@ Type your question and press Enter to ask the agents.
             max_attempts: int,
         ):
             """Show restart banner."""
-            banner_text = f"⚠️ RESTART (Attempt {attempt}/{max_attempts}): {reason}"
+            banner_text = f"⚠️ RESTART ({attempt}/{max_attempts}): {reason}"
             try:
-                banner_label = self.query_one("#restart_banner")
-                banner_label.update(banner_text)
-            except NoMatches:
-                banner = Label(banner_text, id="restart_banner")
-                self.mount(banner, before=0)
+                status_label = self.query_one("#status_line_label", Label)
+                status_label.update(banner_text)
+            except Exception:
+                pass
 
         def show_restart_context(self, reason: str, instructions: str):
-            """Show restart context."""
-            context_text = f"📋 Previous attempt: {reason}"
-            try:
-                context_label = self.query_one("#restart_context")
-                context_label.update(context_text)
-            except NoMatches:
-                context = Label(context_text, id="restart_context")
-                self.mount(context)
+            """Show restart context - handled via status line."""
+            pass  # Restart info shown via show_restart_banner
 
     class AgentPanel(ScrollableContainer):
         """Panel for individual agent output."""

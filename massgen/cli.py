@@ -4599,8 +4599,32 @@ async def run_textual_interactive_mode(
             **kwargs,
         )
 
-    # Build agent info for display
-    agent_ids = list(agents.keys())
+    # Build agent info for display (handle deferred agent creation)
+    agent_models = {}
+    if agents is not None:
+        agent_ids = list(agents.keys())
+        # Extract model names from agent backends
+        for agent_id, agent in agents.items():
+            if hasattr(agent, "backend") and hasattr(agent.backend, "model"):
+                agent_models[agent_id] = agent.backend.model
+            elif hasattr(agent, "config") and hasattr(agent.config, "backend_params"):
+                agent_models[agent_id] = agent.config.backend_params.get("model", "")
+    else:
+        # Deferred agent creation - derive agent IDs and models from config
+        if original_config:
+            agent_configs = original_config.get("agents", [])
+            if not agent_configs and "agent" in original_config:
+                agent_configs = [original_config["agent"]]
+        else:
+            agent_configs = []
+        agent_ids = [ac.get("id", f"agent_{i}") for i, ac in enumerate(agent_configs)]
+        # Extract model names from config (model is nested in backend)
+        for i, ac in enumerate(agent_configs):
+            agent_id = ac.get("id", f"agent_{i}")
+            # Model can be at top level or nested in backend
+            model = ac.get("model") or ac.get("backend", {}).get("model", "")
+            if model:
+                agent_models[agent_id] = model
 
     # Session state
     session_id = memory_session_id or f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -4647,8 +4671,10 @@ async def run_textual_interactive_mode(
             current_turn = 0
             conversation_history = []
 
-    # Create the Textual display
-    display = TextualTerminalDisplay(agent_ids, **ui_config.get("display_kwargs", {}))
+    # Create the Textual display with agent model info for welcome screen
+    display_kwargs = ui_config.get("display_kwargs", {})
+    display_kwargs["agent_models"] = agent_models
+    display = TextualTerminalDisplay(agent_ids, **display_kwargs)
 
     # Create question source (thread-safe queue)
     question_source = TextualThreadQueueQuestionSource()
@@ -4687,6 +4713,50 @@ async def run_textual_interactive_mode(
         try:
             current_turn_num = session_info.get("current_turn", 0)
             sess_id = session_info.get("session_id")
+
+            # Handle deferred agent creation (agents may be None on first turn)
+            if agents is None:
+                logger.info("[Textual] Creating agents on first prompt...")
+                adapter.notify("🚀 Creating agents...")
+
+                # Parse @references from question and inject into config
+                from .path_handling import PromptParserError, parse_prompt_for_context
+
+                modified_config = original_config.copy()
+                try:
+                    parsed = parse_prompt_for_context(question)
+                    if parsed.context_paths:
+                        # Inject context paths into orchestrator config
+                        orch_cfg = modified_config.get("orchestrator", {})
+                        existing_paths = orch_cfg.get("context_paths", [])
+                        orch_cfg["context_paths"] = existing_paths + parsed.context_paths
+                        modified_config["orchestrator"] = orch_cfg
+                        # Update the question to remove @references
+                        question = parsed.cleaned_prompt
+                except PromptParserError as e:
+                    logger.warning(f"[Textual] Path parsing error: {e}")
+
+                enable_rate_limit = kwargs.get("enable_rate_limit", False)
+                new_agents = create_agents_from_config(
+                    modified_config,
+                    orchestrator_cfg,
+                    enable_rate_limit=enable_rate_limit,
+                    config_path=config_path,
+                    memory_session_id=sess_id,
+                    debug=debug,
+                    filesystem_session_id=sess_id,
+                    session_storage_base=SESSION_STORAGE,
+                )
+                if not new_agents:
+                    return TurnResult(
+                        error=Exception("Failed to create agents"),
+                        was_cancelled=False,
+                    )
+                # Update context and use new agents
+                context.agents = new_agents
+                agents = new_agents
+                logger.info(f"[Textual] Created {len(agents)} agent(s)")
+                adapter.notify("✅ Agents ready")
 
             # Inject previous turn workspace as read-only context (same as Rich mode)
             if current_turn_num > 0 and original_config and orchestrator_cfg:

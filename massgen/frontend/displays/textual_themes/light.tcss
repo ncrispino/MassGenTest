@@ -9,45 +9,124 @@ Screen {
     display: none;
 }
 
+/* === Welcome Screen === */
+#welcome_screen {
+    width: 100%;
+    height: 1fr;
+    align: center middle;
+    background: #ffffff;
+}
+
+#welcome_screen Label {
+    width: auto;
+    text-align: center;
+}
+
+#welcome_logo {
+    color: #0066cc;
+    text-style: bold;
+}
+
+#welcome_tagline {
+    color: #4caf50;
+    text-style: bold;
+    margin-top: 2;
+}
+
+#welcome_agents {
+    color: #666666;
+    margin-top: 1;
+}
+
+#welcome_hint {
+    color: #2196f3;
+    text-style: italic;
+    margin-top: 2;
+}
+
 #main_container {
-    layout: horizontal;
+    layout: vertical;
     background: #ffffff;
     height: 100%;
     padding: 0 1;
 }
 
 #agents_container {
-    layout: horizontal;
-    width: 100%;
-    height: 100%;
-}
-
-#main_container.single-agent #agents_container {
     layout: vertical;
-}
-
-.single-agent AgentPanel {
     width: 100%;
     height: 100%;
 }
 
-.two-agents AgentPanel {
-    width: 1fr;
+/* === Agent Tab Bar === */
+AgentTabBar {
+    height: 3;
+    dock: top;
+    layout: horizontal;
+    background: #f5f5f5;
+    border-bottom: solid #0066cc;
+    padding: 0 1;
 }
 
-.three-agents AgentPanel {
-    width: 1fr;
+AgentTab {
+    width: auto;
+    height: 3;
+    padding: 0 2;
+    margin: 0 1;
+    content-align: center middle;
+    border: solid #dddddd;
 }
 
-#main_container.many-agents #agents_container {
-    layout: grid;
-    grid-size: 2;
-    grid-gutter: 1;
+AgentTab:hover {
+    background: #e8e8e8;
 }
 
-.many-agents AgentPanel {
-    width: 100%;
-    height: 1fr;
+AgentTab.active {
+    background: #0066cc;
+    color: #ffffff;
+    border: solid #0066cc;
+}
+
+AgentTab.inactive {
+    background: transparent;
+    border: dashed #999999;
+}
+
+/* Tab status colors */
+AgentTab.status-waiting {
+    border: solid #999999;
+}
+
+AgentTab.status-working {
+    border: solid #2196f3;
+}
+
+AgentTab.status-streaming {
+    border: solid #4caf50;
+}
+
+AgentTab.status-completed {
+    border: solid #4caf50;
+}
+
+AgentTab.status-error {
+    border: solid #f44336;
+}
+
+/* Active tab with status */
+AgentTab.active.status-working {
+    background: #2196f3;
+}
+
+AgentTab.active.status-streaming {
+    background: #4caf50;
+}
+
+AgentTab.active.status-completed {
+    background: #4caf50;
+}
+
+AgentTab.active.status-error {
+    background: #f44336;
 }
 
 /* Orchestrator events modal */
@@ -76,13 +155,18 @@ Screen {
     color: #333333;
 }
 
-/* Agent panels */
+/* Agent panels - now full width, one at a time */
 AgentPanel {
     background: #f9f9f9;
     border: solid #dddddd;
-    margin: 1;
+    margin: 0;
     padding: 1;
-    width: 1fr;
+    width: 100%;
+    height: 100%;
+}
+
+AgentPanel.hidden {
+    display: none;
 }
 
 AgentPanel:hover {
@@ -120,43 +204,18 @@ AgentPanel.status-error {
     background: #fff5f5;
 }
 
-/* Headers */
+/* Compact Header */
 HeaderWidget {
-    background: #ffffff;
-    color: #333333;
-    padding: 0;
-    height: auto;
-    max-height: 25;
+    height: 1;
     dock: top;
-    overflow-y: auto;
+    background: #0066cc;
+    color: #ffffff;
+    padding: 0 1;
 }
 
-#ascii_banner_label {
-    color: #0066cc;
+#status_line_label {
+    color: #ffffff;
     text-style: bold;
-}
-
-#session_config_label {
-    color: #4caf50;
-    margin-top: 1;
-}
-
-#help_box_label {
-    color: #666666;
-    margin-top: 1;
-}
-
-#question_label {
-    color: #e65100;
-    text-style: bold;
-    margin-top: 1;
-}
-
-.header-box {
-    border: round #2196f3;
-    padding: 1;
-    margin: 1 0;
-    height: auto;
 }
 
 #question_input {

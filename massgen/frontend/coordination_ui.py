@@ -515,7 +515,15 @@ class CoordinationUI:
                     print("   Install with: pip install textual")
                     self.display = TerminalDisplay(self.agent_ids, **self.config)
                 else:
-                    self.display = TextualTerminalDisplay(self.agent_ids, **self.config)
+                    # Build agent_models dict for welcome screen
+                    agent_models = {}
+                    for agent_id, agent in orchestrator.agents.items():
+                        if hasattr(agent, "backend") and hasattr(agent.backend, "model"):
+                            agent_models[agent_id] = agent.backend.model
+                        elif hasattr(agent, "config") and hasattr(agent.config, "backend_params"):
+                            agent_models[agent_id] = agent.config.backend_params.get("model", "")
+                    config_with_models = {**self.config, "agent_models": agent_models}
+                    self.display = TextualTerminalDisplay(self.agent_ids, **config_with_models)
             elif self.display_type == "web":
                 # WebDisplay must be passed in from the web server with broadcast configured
                 if self.display is None:
@@ -1004,7 +1012,15 @@ class CoordinationUI:
                     print("   Install with: pip install textual")
                     self.display = TerminalDisplay(self.agent_ids, **self.config)
                 else:
-                    self.display = TextualTerminalDisplay(self.agent_ids, **self.config)
+                    # Build agent_models dict for welcome screen
+                    agent_models = {}
+                    for agent_id, agent in orchestrator.agents.items():
+                        if hasattr(agent, "backend") and hasattr(agent.backend, "model"):
+                            agent_models[agent_id] = agent.backend.model
+                        elif hasattr(agent, "config") and hasattr(agent.config, "backend_params"):
+                            agent_models[agent_id] = agent.config.backend_params.get("model", "")
+                    config_with_models = {**self.config, "agent_models": agent_models}
+                    self.display = TextualTerminalDisplay(self.agent_ids, **config_with_models)
             elif self.display_type == "web":
                 # WebDisplay must be passed in from the web server with broadcast configured
                 if self.display is None:
