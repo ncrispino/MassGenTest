@@ -204,13 +204,32 @@ AgentPanel.status-error {
     background: #fff5f5;
 }
 
+/* Loading indicator - centered in panel */
+.loading-container {
+    width: 100%;
+    height: 100%;
+    align: center middle;
+    background: transparent;
+}
+
+.loading-container.hidden {
+    display: none;
+}
+
+.loading-text {
+    text-align: center;
+    color: #666666;
+    text-style: italic;
+}
+
 /* Compact Header */
 HeaderWidget {
-    height: 1;
+    height: 2;
     dock: top;
     background: #0066cc;
     color: #ffffff;
     padding: 0 1;
+    text-style: bold;
 }
 
 #status_line_label {
@@ -519,4 +538,66 @@ Footer {
     background: #f3f3f3;
     color: #e65100;
     padding: 0 1;
+}
+
+/* === Tool Call Cards === */
+ToolCallCard {
+    width: 100%;
+    height: auto;
+    min-height: 1;
+    max-height: 20;
+    padding: 0 1;
+    margin: 0;
+    background: #f5f5f5;
+}
+
+ToolCallCard:hover {
+    background: #ebebeb;
+}
+
+ToolCallCard.status-running {
+    border-left: tall #2196f3;
+}
+
+ToolCallCard.status-success {
+    border-left: tall #4caf50;
+    background: #e8f5e9;
+}
+
+ToolCallCard.status-error {
+    border-left: tall #f44336;
+    background: #ffebee;
+}
+
+/* Tool type category colors */
+ToolCallCard.type-filesystem {
+    border-left: tall #4caf50;
+}
+
+ToolCallCard.type-web {
+    border-left: tall #2196f3;
+}
+
+ToolCallCard.type-code {
+    border-left: tall #ff9800;
+}
+
+ToolCallCard.type-database {
+    border-left: tall #9c27b0;
+}
+
+ToolCallCard.type-git {
+    border-left: tall #f44336;
+}
+
+ToolCallCard.type-api {
+    border-left: tall #795548;
+}
+
+ToolCallCard.type-ai {
+    border-left: tall #00bcd4;
+}
+
+ToolCallCard.type-memory {
+    border-left: tall #8bc34a;
 }

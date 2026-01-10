@@ -23,13 +23,496 @@ try:
     from textual.app import App, ComposeResult
     from textual.containers import Container, ScrollableContainer, Vertical
     from textual.screen import ModalScreen
-    from textual.widgets import Footer, Input, Label, RichLog, Static, TextArea
+    from textual.widgets import Button, Footer, Input, Label, RichLog, Static, TextArea
 
     from .textual_widgets import AgentTabBar, AgentTabChanged
 
     TEXTUAL_AVAILABLE = True
 except ImportError:
     TEXTUAL_AVAILABLE = False
+
+
+# Tool message patterns for parsing
+TOOL_PATTERNS = {
+    # MCP tool patterns (Response API format)
+    "mcp_start": re.compile(r"🔧 \[MCP\] Calling tool '([^']+)'"),
+    "mcp_complete": re.compile(r"✅ \[MCP\] Tool '([^']+)' completed"),
+    "mcp_failed": re.compile(r"❌ \[MCP\] Tool '([^']+)' failed: (.+)"),
+    # MCP tool patterns (older format)
+    "mcp_tool_start": re.compile(r"🔧 \[MCP Tool\] Calling ([^\.]+)\.\.\."),
+    "mcp_tool_complete": re.compile(r"✅ \[MCP Tool\] ([^ ]+) completed"),
+    # Custom tool patterns
+    "custom_start": re.compile(r"🔧 \[Custom Tool\] Calling ([^\.]+)\.\.\."),
+    "custom_complete": re.compile(r"✅ \[Custom Tool\] ([^ ]+) completed"),
+    "custom_failed": re.compile(r"❌ \[Custom Tool Error\] (.+)"),
+    # Arguments pattern
+    "arguments": re.compile(r"^Arguments:(.+)", re.DOTALL),
+    # Progress/status patterns
+    "progress": re.compile(r"⏳.*progress|⏳.*in progress", re.IGNORECASE),
+    "connected": re.compile(r"✅ \[MCP\] Connected to (\d+) servers?"),
+    "unavailable": re.compile(r"⚠️ \[MCP\].*Setup failed"),
+    # Injection patterns (cross-agent context sharing)
+    "injection": re.compile(r"📥 \[INJECTION\] (.+)", re.DOTALL),
+    # Reminder patterns (high priority task reminders)
+    "reminder": re.compile(r"💡 \[REMINDER\] (.+)", re.DOTALL),
+    # Session completed pattern
+    "session_complete": re.compile(r"✅ \[MCP\] Session completed"),
+}
+
+# Tool category detection - maps tool names to semantic categories
+TOOL_CATEGORIES = {
+    "filesystem": {
+        "icon": "📁",
+        "color": "green",
+        "patterns": [
+            "read_file",
+            "write_file",
+            "list_directory",
+            "create_directory",
+            "delete_file",
+            "move_file",
+            "copy_file",
+            "file_exists",
+            "mcp__filesystem",
+            "read_text_file",
+            "write_text_file",
+            "get_file_info",
+            "search_files",
+            "list_allowed_directories",
+        ],
+    },
+    "web": {
+        "icon": "🌐",
+        "color": "blue",
+        "patterns": [
+            "web_search",
+            "search_web",
+            "google_search",
+            "fetch_url",
+            "browse",
+            "http_get",
+            "http_post",
+            "scrape",
+            "crawl",
+            "mcp__brave",
+            "mcp__web",
+            "mcp__fetch",
+        ],
+    },
+    "code": {
+        "icon": "💻",
+        "color": "yellow",
+        "patterns": [
+            "execute_command",
+            "run_code",
+            "bash",
+            "python",
+            "shell",
+            "exec",
+            "terminal",
+            "command",
+            "run_script",
+            "execute_python",
+            "mcp__code",
+            "mcp__shell",
+            "mcp__terminal",
+        ],
+    },
+    "database": {
+        "icon": "🗄️",
+        "color": "magenta",
+        "patterns": [
+            "query",
+            "sql",
+            "database",
+            "db_",
+            "select",
+            "insert",
+            "mcp__postgres",
+            "mcp__sqlite",
+            "mcp__mysql",
+            "mcp__mongo",
+            "arbitrary_query",
+            "schema_reference",
+        ],
+    },
+    "git": {
+        "icon": "🔀",
+        "color": "red",
+        "patterns": [
+            "git_",
+            "commit",
+            "push",
+            "pull",
+            "branch",
+            "merge",
+            "mcp__git",
+            "clone",
+            "checkout",
+            "diff",
+            "log",
+        ],
+    },
+    "api": {
+        "icon": "🔌",
+        "color": "cyan",
+        "patterns": [
+            "api_",
+            "rest_",
+            "graphql",
+            "request",
+            "endpoint",
+            "mcp__slack",
+            "mcp__discord",
+            "mcp__twitter",
+            "mcp__notion",
+        ],
+    },
+    "ai": {
+        "icon": "🤖",
+        "color": "bright_magenta",
+        "patterns": [
+            "llm_",
+            "ai_",
+            "generate",
+            "embed",
+            "chat_completion",
+            "mcp__openai",
+            "mcp__anthropic",
+            "mcp__gemini",
+        ],
+    },
+    "weather": {
+        "icon": "🌤️",
+        "color": "bright_cyan",
+        "patterns": [
+            "weather",
+            "forecast",
+            "temperature",
+            "get-forecast",
+            "mcp__weather",
+        ],
+    },
+    "memory": {
+        "icon": "🧠",
+        "color": "bright_yellow",
+        "patterns": [
+            "memory",
+            "remember",
+            "recall",
+            "store",
+            "retrieve",
+            "mcp__memory",
+            "knowledge",
+            "context",
+        ],
+    },
+}
+
+
+def _get_tool_category(tool_name: str) -> dict:
+    """Determine the semantic category of a tool based on its name.
+
+    Args:
+        tool_name: The tool name (e.g., "mcp__filesystem__read_file")
+
+    Returns:
+        Dict with icon, color, and category name
+    """
+    tool_lower = tool_name.lower()
+
+    for category, info in TOOL_CATEGORIES.items():
+        for pattern in info["patterns"]:
+            if pattern in tool_lower:
+                return {
+                    "category": category,
+                    "icon": info["icon"],
+                    "color": info["color"],
+                }
+
+    # Default for unknown tools
+    return {
+        "category": "tool",
+        "icon": "🔧",
+        "color": "cyan",
+    }
+
+
+def _format_tool_name(tool_name: str) -> str:
+    """Format tool name for display - strip prefixes and clean up.
+
+    Args:
+        tool_name: Raw tool name (e.g., "mcp__filesystem__read_file")
+
+    Returns:
+        Cleaned display name (e.g., "read_file")
+    """
+    # Strip common prefixes
+    if tool_name.startswith("mcp__"):
+        parts = tool_name.split("__")
+        if len(parts) >= 3:
+            # mcp__server__tool -> tool (server)
+            return f"{parts[-1]} ({parts[1]})"
+        elif len(parts) == 2:
+            return parts[1]
+
+    return tool_name
+
+
+def _clean_tool_arguments(args_str: str) -> str:
+    """Clean up tool arguments for display - extract key info from dicts/JSON.
+
+    Args:
+        args_str: Raw arguments string (may be dict repr or JSON)
+
+    Returns:
+        Clean, readable summary of the arguments
+    """
+    import json
+
+    args_str = args_str.strip()
+
+    # Try to parse as JSON/dict
+    try:
+        # Handle dict-like strings
+        if args_str.startswith("{") or args_str.startswith("Arguments:"):
+            clean = args_str.replace("Arguments:", "").strip()
+            # Try JSON parse
+            try:
+                data = json.loads(clean)
+            except json.JSONDecodeError:
+                # Try eval for dict repr (safely)
+                import ast
+
+                try:
+                    data = ast.literal_eval(clean)
+                except (ValueError, SyntaxError):
+                    data = None
+
+            if isinstance(data, dict):
+                # Extract key fields for nice display
+                parts = []
+                for key, value in data.items():
+                    # Skip long content fields
+                    if key in ("content", "body", "text", "data") and isinstance(value, str) and len(value) > 50:
+                        parts.append(f"{key}: [{len(value)} chars]")
+                    # Shorten paths
+                    elif key in ("path", "file", "directory", "work_dir") and isinstance(value, str):
+                        # Show just filename or last part of path
+                        short_path = value.split("/")[-1] if "/" in value else value
+                        if len(value) > 40:
+                            parts.append(f"{key}: .../{short_path}")
+                        else:
+                            parts.append(f"{key}: {value}")
+                    # Truncate command
+                    elif key == "command" and isinstance(value, str):
+                        if len(value) > 60:
+                            parts.append(f"{key}: {value[:60]}...")
+                        else:
+                            parts.append(f"{key}: {value}")
+                    # Skip internal fields
+                    elif key.startswith("_"):
+                        continue
+                    # Show other fields truncated
+                    elif isinstance(value, str) and len(value) > 50:
+                        parts.append(f"{key}: {value[:50]}...")
+                    elif isinstance(value, (list, dict)):
+                        parts.append(f"{key}: [{type(value).__name__}]")
+                    else:
+                        parts.append(f"{key}: {value}")
+
+                if parts:
+                    return " | ".join(parts[:3])  # Max 3 fields
+                return "[no args]"
+    except Exception:
+        pass
+
+    # Fallback: just truncate
+    if len(args_str) > 80:
+        return args_str[:80] + "..."
+    return args_str
+
+
+def _clean_tool_result(result_str: str, tool_name: str = "") -> str:
+    """Clean up tool result for display - summarize long output.
+
+    Args:
+        result_str: Raw result string
+        tool_name: Tool name for context-aware formatting
+
+    Returns:
+        Clean, readable summary of the result
+    """
+    import json
+
+    result_str = result_str.strip()
+
+    # Handle common MCP result formats
+    if result_str.startswith("{"):
+        try:
+            data = json.loads(result_str)
+            if isinstance(data, dict):
+                # Check for success/error status
+                if "success" in data:
+                    status = "✓" if data["success"] else "✗"
+                    if "message" in data:
+                        return f"{status} {data['message'][:60]}"
+                    return f"{status} completed"
+
+                # Check for content result
+                if "content" in data:
+                    content = data["content"]
+                    if isinstance(content, str):
+                        lines = content.count("\n") + 1
+                        return f"[{lines} lines]"
+                    return "[content]"
+
+                # Check for exit code (command execution)
+                if "exit_code" in data:
+                    code = data["exit_code"]
+                    status = "✓" if code == 0 else f"exit {code}"
+                    return status
+
+                # Generic dict - show key count
+                return f"[{len(data)} fields]"
+        except json.JSONDecodeError:
+            pass
+
+    # Handle path-related results
+    if "Parent directory does not exist" in result_str:
+        return "✗ directory not found"
+    if "does not exist" in result_str:
+        return "✗ not found"
+    if "Permission denied" in result_str:
+        return "✗ permission denied"
+
+    # Handle file content (multiple lines)
+    lines = result_str.split("\n")
+    if len(lines) > 5:
+        return f"[{len(lines)} lines]"
+
+    # Short result - show truncated
+    if len(result_str) > 60:
+        return result_str[:60] + "..."
+    return result_str
+
+
+def _parse_tool_message(content: str) -> dict:
+    """Parse tool message to extract structured info.
+
+    Args:
+        content: Tool message text from backend
+
+    Returns:
+        Dict with keys:
+        - event: "start", "complete", "failed", "arguments", "progress", "status", "unknown"
+        - tool_name: Name of the tool (if applicable)
+        - tool_type: "mcp" or "custom"
+        - category: Tool category info (icon, color, category name)
+        - display_name: Formatted display name
+        - error: Error message (if failed)
+        - arguments: Arguments string (if arguments event)
+        - raw: Original content (always present)
+    """
+    result = {"event": "unknown", "raw": content}
+
+    def enrich_with_category(parsed: dict) -> dict:
+        """Add category info to parsed result."""
+        if "tool_name" in parsed:
+            parsed["category"] = _get_tool_category(parsed["tool_name"])
+            parsed["display_name"] = _format_tool_name(parsed["tool_name"])
+        return parsed
+
+    # Check MCP start patterns
+    match = TOOL_PATTERNS["mcp_start"].search(content)
+    if match:
+        return enrich_with_category(
+            {"event": "start", "tool_name": match.group(1), "tool_type": "mcp", "raw": content},
+        )
+
+    match = TOOL_PATTERNS["mcp_tool_start"].search(content)
+    if match:
+        return enrich_with_category(
+            {"event": "start", "tool_name": match.group(1), "tool_type": "mcp", "raw": content},
+        )
+
+    # Check Custom tool start
+    match = TOOL_PATTERNS["custom_start"].search(content)
+    if match:
+        return enrich_with_category(
+            {"event": "start", "tool_name": match.group(1), "tool_type": "custom", "raw": content},
+        )
+
+    # Check MCP complete patterns
+    match = TOOL_PATTERNS["mcp_complete"].search(content)
+    if match:
+        return enrich_with_category(
+            {"event": "complete", "tool_name": match.group(1), "tool_type": "mcp", "raw": content},
+        )
+
+    match = TOOL_PATTERNS["mcp_tool_complete"].search(content)
+    if match:
+        return enrich_with_category(
+            {"event": "complete", "tool_name": match.group(1), "tool_type": "mcp", "raw": content},
+        )
+
+    # Check Custom complete
+    match = TOOL_PATTERNS["custom_complete"].search(content)
+    if match:
+        return enrich_with_category(
+            {"event": "complete", "tool_name": match.group(1), "tool_type": "custom", "raw": content},
+        )
+
+    # Check MCP failed pattern
+    match = TOOL_PATTERNS["mcp_failed"].search(content)
+    if match:
+        return enrich_with_category(
+            {
+                "event": "failed",
+                "tool_name": match.group(1),
+                "tool_type": "mcp",
+                "error": match.group(2),
+                "raw": content,
+            },
+        )
+
+    # Check Custom failed pattern
+    match = TOOL_PATTERNS["custom_failed"].search(content)
+    if match:
+        return {"event": "failed", "tool_type": "custom", "error": match.group(1), "raw": content}
+
+    # Check arguments pattern
+    match = TOOL_PATTERNS["arguments"].search(content)
+    if match or content.strip().startswith("Arguments:"):
+        return {"event": "arguments", "arguments": content, "raw": content}
+
+    # Check progress pattern
+    if TOOL_PATTERNS["progress"].search(content):
+        return {"event": "progress", "raw": content}
+
+    # Check status patterns (connected, unavailable)
+    match = TOOL_PATTERNS["connected"].search(content)
+    if match:
+        return {"event": "status", "status_type": "connected", "server_count": match.group(1), "raw": content}
+
+    if TOOL_PATTERNS["unavailable"].search(content):
+        return {"event": "status", "status_type": "unavailable", "raw": content}
+
+    # Check injection pattern (cross-agent context sharing)
+    match = TOOL_PATTERNS["injection"].search(content)
+    if match:
+        return {"event": "injection", "content": match.group(1), "raw": content}
+
+    # Check reminder pattern (high priority task reminders)
+    match = TOOL_PATTERNS["reminder"].search(content)
+    if match:
+        return {"event": "reminder", "content": match.group(1), "raw": content}
+
+    # Check session complete pattern
+    if TOOL_PATTERNS["session_complete"].search(content):
+        return {"event": "session_complete", "raw": content}
+
+    return result
 
 
 def _process_line_buffer(
@@ -904,7 +1387,7 @@ class TextualTerminalDisplay(TerminalDisplay):
 # Textual App Implementation
 if TEXTUAL_AVAILABLE:
     from textual.binding import Binding
-    from textual.widgets import Button, ListItem, ListView
+    from textual.widgets import ListItem, ListView
 
     def keyboard_action(func):
         """Decorator to skip action when keyboard is locked."""
@@ -1420,7 +1903,7 @@ Type your question and press Enter to ask the agents.
             attempt: int,
             max_attempts: int,
         ):
-            """Show restart banner."""
+            """Show restart banner in header and all agent panels."""
             if self.header_widget:
                 self.header_widget.show_restart_banner(
                     reason,
@@ -1428,6 +1911,10 @@ Type your question and press Enter to ask the agents.
                     attempt,
                     max_attempts,
                 )
+
+            # Also show prominent restart separator in ALL agent panels
+            for agent_id, panel in self.agent_widgets.items():
+                panel.show_restart_separator(attempt, reason)
 
         def show_restart_context(self, reason: str, instructions: str):
             """Show restart context."""
@@ -1669,18 +2156,29 @@ Type your question and press Enter to ask the agents.
             self.mode = mode
 
         def _build_status_line(self) -> str:
-            """Build compact status line."""
+            """Build compact status line with optional question preview."""
             session_id_display = self.session_id or "new"
             num_agents = len(self.agents_info)
-            return f"🤖 MassGen | {num_agents} agents | Turn {self.turn} | {session_id_display}"
+            base = f"🤖 MassGen | {num_agents} agents | Turn {self.turn}"
+
+            # Add truncated question if available
+            if self.question and self.question != "Welcome! Type your question below...":
+                # Truncate question to fit in header (max ~40 chars)
+                q = self.question[:40] + "..." if len(self.question) > 40 else self.question
+                return f"{base} | 💬 {q}"
+            return f"{base} | {session_id_display}"
 
         def compose(self) -> ComposeResult:
             yield Label(self._build_status_line(), id="status_line_label")
 
         def update_question(self, question: str) -> None:
-            """Update the displayed question."""
+            """Update the displayed question and refresh header."""
             self.question = question
-            # Question is no longer displayed in header
+            try:
+                status_label = self.query_one("#status_line_label", Label)
+                status_label.update(self._build_status_line())
+            except Exception:
+                pass
 
         def update_turn(self, turn: int) -> None:
             """Update the displayed turn number."""
@@ -1721,6 +2219,7 @@ Type your question and press Enter to ask the agents.
             super().__init__(id=f"agent_{self._dom_safe_id}")
             self.status = "waiting"
             self._start_time: Optional[datetime] = None
+            self._has_content = False  # Track if we've received any content
             self.content_log = RichLog(
                 id=f"log_{self._dom_safe_id}",
                 highlight=self.coordination_display.enable_syntax_highlighting,
@@ -1730,6 +2229,19 @@ Type your question and press Enter to ask the agents.
             self._line_buffer = ""
             self.current_line_label = Label("", classes="streaming_label")
             self._header_dom_id = f"header_{self._dom_safe_id}"
+            self._loading_id = f"loading_{self._dom_safe_id}"
+
+            # Tool tracking for timing and row alternation
+            self._pending_tool: Optional[dict] = None  # Track current tool for timing
+            self._tool_row_count = 0  # For alternating row colors
+            self._reasoning_header_shown = False  # Track if reasoning header was shown
+
+            # Session/restart tracking
+            self._session_completed = False  # Track if session completed
+            self._session_count = 1  # Current session/attempt number
+            self._presentation_shown = (
+                False  # Track if presentation was shown (for restart detection)  # Current session/attempt number  # Track if reasoning header was shown  # For alternating row colors
+            )
 
         def compose(self) -> ComposeResult:
             with Vertical():
@@ -1737,24 +2249,385 @@ Type your question and press Enter to ask the agents.
                     self._header_text(),
                     id=self._header_dom_id,
                 )
+                # Loading indicator - centered, shown when waiting with no content
+                with Container(id=self._loading_id, classes="loading-container"):
+                    yield Label("⏳ Waiting for agent...", classes="loading-text")
                 yield self.content_log
                 yield self.current_line_label
 
+        def _hide_loading(self):
+            """Hide the loading indicator when content arrives."""
+            if not self._has_content:
+                self._has_content = True
+                try:
+                    loading = self.query_one(f"#{self._loading_id}")
+                    loading.add_class("hidden")
+                except Exception:
+                    pass
+
+        def _update_loading_text(self, text: str):
+            """Update the loading indicator text."""
+            try:
+                loading = self.query_one(f"#{self._loading_id} .loading-text")
+                loading.update(text)
+            except Exception:
+                pass
+
+        def _make_full_width_bar(self, content: str, style: str) -> Text:
+            """Create a full-width bar with background color spanning the entire display.
+
+            Args:
+                content: The text content
+                style: Rich style string (including 'on #color' for background)
+
+            Returns:
+                Text object padded to full width with single line spacing
+            """
+            # Get terminal width dynamically - add extra padding to ensure full coverage
+            try:
+                width = self.app.size.width
+                if width < 80:
+                    width = 200
+                else:
+                    # Add extra width to account for any padding/margins and ensure full coverage
+                    width = width + 50
+            except Exception:
+                width = 300  # Large fallback to ensure full coverage
+
+            # Pad content to fill entire width and beyond
+            padded = content.ljust(width)
+            text = Text()
+            # Always add a single blank line before for consistent spacing
+            text.append("\n")
+            text.append(padded, style=style)
+            return text
+
+        def _format_tool_line(self, parsed: dict, event: str) -> Text:
+            """Format a tool event as a full-width bar with alternating colors.
+
+            Design: Full-width bars with clear visual separation
+            - Each tool line spans the full width
+            - Alternating background colors for row separation
+            - Special colors for success/error states
+
+            Args:
+                parsed: Parsed tool message dict
+                event: Event type (start, complete, failed, etc.)
+
+            Returns:
+                Styled Rich Text object
+            """
+            category = parsed.get("category", {"icon": "🔧", "color": "cyan", "category": "tool"})
+            display_name = parsed.get("display_name", parsed.get("tool_name", "unknown"))
+            icon = category["icon"]
+
+            # Alternating row backgrounds for clear separation
+            self._tool_row_count += 1
+            is_odd_row = self._tool_row_count % 2 == 1
+            bg_row_odd = "on #2d333b"  # Slightly lighter
+            bg_row_even = "on #22272e"  # Slightly darker
+
+            # Special backgrounds for status
+            bg_success = "on #1c4532"  # Dark green
+            bg_error = "on #4a1c1c"  # Dark red
+            bg_warning = "on #4a4520"  # Dark yellow
+            bg_injection = "on #2d2d4a"  # Dark purple/blue for injections
+            bg_reminder = "on #4a3d2d"  # Dark orange for reminders
+
+            # Get alternating background
+            bg_alt = bg_row_odd if is_odd_row else bg_row_even
+
+            if event == "start":
+                # Track start time for this tool
+                self._pending_tool = {
+                    "name": parsed.get("tool_name"),
+                    "start_time": datetime.now(),
+                    "display_name": display_name,
+                    "category": category,
+                }
+                # Reset reasoning header on new tool
+                self._reasoning_header_shown = False
+                # Format: full-width bar with icon + name (bold)
+                content = f"  {icon}  {display_name}"
+                return self._make_full_width_bar(content, f"bold white {bg_alt}")
+
+            elif event == "complete":
+                # Calculate elapsed time
+                elapsed_str = ""
+                if self._pending_tool and self._pending_tool.get("name") == parsed.get("tool_name"):
+                    elapsed = (datetime.now() - self._pending_tool["start_time"]).total_seconds()
+                    if elapsed < 60:
+                        elapsed_str = f" ({elapsed:.1f}s)"
+                    else:
+                        mins = int(elapsed // 60)
+                        secs = int(elapsed % 60)
+                        elapsed_str = f" ({mins}m{secs}s)"
+                    self._pending_tool = None
+
+                # Format: success bar - always green background (bold)
+                content = f"  ✓  {display_name} completed{elapsed_str}"
+                return self._make_full_width_bar(content, f"bold white {bg_success}")
+
+            elif event == "failed":
+                error = parsed.get("error", "Unknown error")
+                if len(error) > 50:
+                    error = error[:50] + "..."
+                elapsed_str = ""
+                if self._pending_tool:
+                    elapsed = (datetime.now() - self._pending_tool["start_time"]).total_seconds()
+                    elapsed_str = f" ({elapsed:.1f}s)"
+                    self._pending_tool = None
+
+                # Format: error bar - always red background (bold)
+                content = f"  ✗  {display_name} failed: {error}{elapsed_str}"
+                return self._make_full_width_bar(content, f"bold white {bg_error}")
+
+            elif event == "injection":
+                # Cross-agent context sharing - prominent purple bar
+                injection_content = parsed.get("content", "")
+                preview = injection_content[:80] + "..." if len(injection_content) > 80 else injection_content
+                content = f"  📥  Context Update: {preview}"
+                return self._make_full_width_bar(content, f"bold white {bg_injection}")
+
+            elif event == "reminder":
+                # High priority task reminder - orange bar
+                reminder_content = parsed.get("content", "")
+                preview = reminder_content[:80] + "..." if len(reminder_content) > 80 else reminder_content
+                content = f"  💡  Reminder: {preview}"
+                return self._make_full_width_bar(content, f"bold white {bg_reminder}")
+
+            elif event == "session_complete":
+                # Session completed - green bar
+                content = "  ✓  Session completed"
+                return self._make_full_width_bar(content, f"bold white {bg_success}")
+
+            elif event == "arguments":
+                args = parsed.get("arguments", parsed.get("raw", ""))
+                args_clean = _clean_tool_arguments(args)
+                content = f"      └ {args_clean}"
+                return self._make_full_width_bar(content, f"{bg_alt}")
+
+            elif event == "status":
+                status_type = parsed.get("status_type", "")
+                raw = parsed.get("raw", "")
+                if status_type == "connected":
+                    clean = raw.replace("[MCP]", "").replace("✅", "").strip()
+                    content = f"  ✓  {clean}"
+                    return self._make_full_width_bar(content, f"bold white {bg_success}")
+                elif status_type == "unavailable":
+                    clean = raw.replace("[MCP]", "").replace("⚠️", "").strip()
+                    content = f"  ⚠  {clean}"
+                    return self._make_full_width_bar(content, f"bold yellow {bg_warning}")
+                else:
+                    content = f"  •  {raw}"
+                    return self._make_full_width_bar(content, f"{bg_alt}")
+
+            elif event == "progress":
+                raw = parsed.get("raw", "")
+                clean = raw.replace("⏳", "").strip()
+                content = f"      ⏳ {clean}"
+                return self._make_full_width_bar(content, f"italic {bg_alt}")
+
+            else:
+                # Unknown tool content
+                raw = parsed.get("raw", "")
+
+                # Check if it looks like results output
+                if "MCP: Results" in raw or "Results for" in raw:
+                    result_part = raw
+                    if ": {" in raw:
+                        result_part = raw[raw.index(": {") + 2 :]
+                    elif "Results" in raw and "{" in raw:
+                        result_part = raw[raw.index("{") :]
+                    clean_result = _clean_tool_result(result_part)
+                    content = f"      └ {clean_result}"
+                    return self._make_full_width_bar(content, f"{bg_alt}")
+
+                # Check if it's an arguments line
+                if "Arguments:" in raw or "MCP: Arguments" in raw:
+                    args_part = raw
+                    if "Arguments:" in raw:
+                        args_part = raw[raw.index("Arguments:") :]
+                    clean_args = _clean_tool_arguments(args_part)
+                    content = f"      └ {clean_args}"
+                    return self._make_full_width_bar(content, f"{bg_alt}")
+
+                # Check if it looks like raw dict/JSON output
+                if "{" in raw and "}" in raw:
+                    clean = _clean_tool_result(raw)
+                    content = f"      └ {clean}"
+                    return self._make_full_width_bar(content, f"{bg_alt}")
+
+                # Clean common prefixes and truncate
+                clean = raw.replace("🔧", "").replace("[MCP]", "").replace("[Custom Tool]", "").strip()
+                if len(clean) > 80:
+                    clean = clean[:80] + "..."
+                content = f"  •  {clean}"
+                return self._make_full_width_bar(content, f"{bg_alt}")
+
+        def _format_restart_banner(self) -> Text:
+            """Create a highly visible full-width restart banner."""
+            content = " ⚡⚡⚡  RESTART  ⚡⚡⚡ "
+            # Bright orange/red background, centered
+            banner = "═" * 50 + content + "═" * 50
+            return self._make_full_width_bar(banner, "bold white on #c53030")
+
+        def _handle_tool_content(self, content: str):
+            """Handle tool-related content by formatting as styled bars in RichLog.
+
+            Uses full-width styled bars with status colors for clear visual hierarchy.
+            """
+            self._hide_loading()  # Hide loading when tool content arrives
+            parsed = _parse_tool_message(content)
+            event = parsed.get("event", "unknown")
+
+            formatted = self._format_tool_line(parsed, event)
+            self.content_log.write(formatted)
+
+        def show_restart_separator(self, attempt: int = 1, reason: str = ""):
+            """Show a highly visible restart separator in the content log."""
+            # Reset tool row count for fresh alternation after restart
+            self._tool_row_count = 0
+            self._reasoning_header_shown = False
+
+            # Get full width for the separator
+            try:
+                width = self.app.size.width + 50
+            except Exception:
+                width = 300
+
+            # Build banner text
+            banner_text = f"  ⚡  RESTART — ATTEMPT {attempt}  ⚡"
+            if reason and reason != "New attempt":
+                short_reason = reason[:50] + "..." if len(reason) > 50 else reason
+                banner_text += f"  —  {short_reason}"
+
+            # Create the full-width restart banner
+            self.content_log.write(Text(""))  # Blank line before
+            self.content_log.write(Text(""))  # Extra blank line
+            self.content_log.write(Text("━" * width, style="bold #ff6b6b"))
+            self.content_log.write(Text(banner_text.ljust(width), style="bold white on #d63031"))
+            self.content_log.write(Text("━" * width, style="bold #ff6b6b"))
+            self.content_log.write(Text(""))  # Blank line after  # Extra blank line  # Blank line after
+
         def add_content(self, content: str, content_type: str):
-            """Add content to agent panel."""
+            """Add content to agent panel.
+
+            Content is routed based on type:
+            - tool: Formatted as full-width bars with alternating colors
+            - restart: Full-width restart separator banner
+            - status: Full-width status bar
+            - presentation: Final answer presentation
+            - thinking/default: Streaming text content (filtered for noise)
+            """
+            self._hide_loading()  # Hide loading when any content arrives
+
             if content_type == "tool":
-                self.content_log.write(Text(f"🔧 {content}", style="cyan"))
+                # Check if this is a session restart indicator
+                # "Registered X tools" or "Connected to X servers" after presentation = new session
+                is_session_start = ("Registered" in content and "tools" in content) or ("Connected to" in content and "server" in content)
+
+                if is_session_start and getattr(self, "_presentation_shown", False):
+                    # New session starting after a presentation
+                    self._session_count = getattr(self, "_session_count", 1) + 1
+                    self.show_restart_separator(self._session_count, "New attempt")
+                    self._presentation_shown = False
+                    self._session_completed = False
+
+                self._handle_tool_content(content)
+                self._line_buffer = ""
+                self.current_line_label.update(Text(""))
+            elif content_type == "restart":
+                # Show restart separator - content may contain "attempt:N reason:..."
+                attempt = 1
+                reason = content
+                if "attempt:" in content:
+                    try:
+                        parts = content.split("attempt:")
+                        if len(parts) > 1:
+                            attempt_part = parts[1].split()[0]
+                            attempt = int(attempt_part)
+                            reason = content.replace(f"attempt:{attempt}", "").strip()
+                    except (ValueError, IndexError):
+                        pass
+                self.show_restart_separator(attempt, reason)
                 self._line_buffer = ""
                 self.current_line_label.update(Text(""))
             elif content_type == "status":
-                self.content_log.write(Text(f"📊 {content}", style="yellow"))
+                # Detect session completion for restart tracking
+                if "completed" in content.lower():
+                    self._session_completed = True
+
+                # Make status messages full-width bars
+                status_bar = self._make_full_width_bar(f"  📊  {content}", "bold yellow on #2d333b")
+                self.content_log.write(status_bar)
                 self._line_buffer = ""
                 self.current_line_label.update(Text(""))
             elif content_type == "presentation":
+                # Clean up the presentation content
+                # Filter raw JSON blocks that shouldn't be shown
+                if '"action_type"' in content or '"new_answer"' in content or '"vote"' in content:
+                    return
+                if '"reason":' in content or '"agent_id":' in content:
+                    return
+                if "Providing answer:" in content:
+                    # Mark that we showed a presentation (for restart detection)
+                    self._presentation_shown = True
+                    # Just show a clean "providing answer" without the full content
+                    presentation_bar = self._make_full_width_bar(
+                        "  🎤  Presenting final answer...",
+                        "bold magenta on #3d2d4d",
+                    )
+                    self.content_log.write(presentation_bar)
+                    self._line_buffer = ""
+                    self.current_line_label.update(Text(""))
+                    return
                 self.content_log.write(Text(f"🎤 {content}", style="magenta"))
                 self._line_buffer = ""
                 self.current_line_label.update(Text(""))
             else:
+                # Default text content - filter and format
+
+                # Aggressive filtering for JSON/vote content
+                content_stripped = content.strip()
+
+                # Filter out raw JSON-like content
+                if '"action_type"' in content:
+                    return
+                if '"vote_data"' in content or '"vote":' in content:
+                    return
+                if '"reason":' in content or '"agent_id":' in content:
+                    return
+                if content_stripped.startswith("{") or content_stripped.startswith("}"):
+                    return
+                if content_stripped.startswith('"') and '":' in content:
+                    return
+
+                # Filter vote-related JSON fragments
+                if "action_type" in content or "new_answer" in content:
+                    return
+
+                # Handle thinking/reasoning content
+                if content_type == "thinking":
+                    # Show reasoning header once, then stream content below
+                    if not self._reasoning_header_shown:
+                        reasoning_bar = self._make_full_width_bar(
+                            "  🤔  Reasoning",
+                            "bold white on #2a2d35",
+                        )
+                        self.content_log.write(reasoning_bar)
+                        self._reasoning_header_shown = True
+
+                    # Stream reasoning content below the header (dimmed)
+                    self._line_buffer = _process_line_buffer(
+                        self._line_buffer,
+                        content,
+                        lambda line: self.content_log.write(Text(f"     {line}", style="dim")),
+                    )
+                    self.current_line_label.update(Text(self._line_buffer, style="dim"))
+                    return
+
+                # Regular streaming content
                 self._line_buffer = _process_line_buffer(
                     self._line_buffer,
                     content,
@@ -1771,6 +2644,10 @@ Type your question and press Enter to ask the agents.
 
             if status == "working" and self.status != "working":
                 self._start_time = datetime.now()
+                # Update loading text when working
+                self._update_loading_text("🔄 Agent thinking...")
+            elif status == "streaming":
+                self._update_loading_text("📝 Agent responding...")
             elif status in ("completed", "error", "waiting"):
                 self._start_time = None
 

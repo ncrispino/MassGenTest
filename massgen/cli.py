@@ -6932,6 +6932,17 @@ Environment Variables:
         default=None,
         help="Display type: rich (default), textual (TUI)",
     )
+    parser.add_argument(
+        "--textual-serve",
+        action="store_true",
+        help="Serve Textual TUI in browser via textual-serve (http://localhost:8000)",
+    )
+    parser.add_argument(
+        "--textual-serve-port",
+        type=int,
+        default=8000,
+        help="Port for textual-serve (default: 8000)",
+    )
     parser.add_argument("--no-logs", action="store_true", help="Disable logging")
     parser.add_argument(
         "--debug",
@@ -7323,6 +7334,36 @@ Environment Variables:
     # Setup Docker images if requested
     if args.setup_docker:
         setup_docker()
+        return
+
+    # Launch textual-serve to serve TUI in browser
+    if args.textual_serve:
+        try:
+            from textual_serve.server import Server
+        except ImportError:
+            print(f"{BRIGHT_RED}❌ textual-serve not installed.{RESET}")
+            print(f"{BRIGHT_CYAN}   Run: uv pip install textual-serve{RESET}")
+            sys.exit(1)
+
+        # Build the massgen command to run inside textual-serve
+        cmd_parts = ["massgen", "--display", "textual"]
+        if hasattr(args, "config") and args.config:
+            cmd_parts.extend(["--config", args.config])
+        if hasattr(args, "interactive") and args.interactive:
+            cmd_parts.append("--interactive")
+        if hasattr(args, "question") and args.question:
+            cmd_parts.append(f'"{args.question}"')
+
+        cmd = " ".join(cmd_parts)
+        port = args.textual_serve_port
+
+        print(f"{BRIGHT_CYAN}🌐 Starting MassGen Textual TUI Server...{RESET}")
+        print(f"{BRIGHT_GREEN}   URL: http://localhost:{port}{RESET}")
+        print(f"{BRIGHT_GREEN}   Command: {cmd}{RESET}")
+        print(f"{BRIGHT_YELLOW}   Press Ctrl+C to stop{RESET}\n")
+
+        server = Server(cmd, port=port)
+        server.serve()
         return
 
     # Launch web UI server if requested

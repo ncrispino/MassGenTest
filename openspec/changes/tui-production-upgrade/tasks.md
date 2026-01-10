@@ -74,56 +74,64 @@
 
 ---
 
-## Phase 2: Tool Call Cards
+## Phase 2: Tool Call Cards ⚠️ PARTIAL (Styled Bars Approach)
 **Goal**: Structured, collapsible tool call visualization
 **Estimated Effort**: Medium
 **Dependencies**: Phase 1
+**Status**: Completed with styled bars approach; collapsible widgets deferred
 
-### Tasks
+### What Was Implemented
 
-- [ ] **2.1** Define `ToolCallEvent` data model
-  - call_id, tool_name, tool_type, status
-  - params, result, error, timing
-  - expanded state
+- [x] **2.3** Implement tool call detection
+  - Parse tool calls from content stream via `_parse_tool_message()`
+  - Detect tool start/result/error patterns
+  - Track active tool calls per agent with `_pending_tool`
 
-- [ ] **2.2** Implement `ToolCallCard` widget
-  - Collapsed view: icon + name + status
-  - Expanded view: params + result + timing
-  - Click/Enter to toggle
+- [x] **2.5** Add tool type styling (via styled bars)
+  - Category icons: Filesystem (📁), Web (🌐), Code (💻), Database (🗄️), Git (📦), API (🔌), AI (🤖), Memory (🧠)
+  - Status colors: Green (success), Red (error), Alternating gray (in-progress)
+  - Full-width bars with timing display
 
-- [ ] **2.3** Implement tool call detection
-  - Parse tool calls from content stream
-  - Detect tool start/result patterns
-  - Track active tool calls per agent
+- [x] **2.6** Update TCSS themes
+  - Tool card CSS added (for future use)
+  - ToolCallCard styles in dark.tcss and light.tcss
 
-- [ ] **2.4** Integrate with content panel
-  - Replace inline `🔧` text with cards
-  - Insert cards at appropriate positions
-  - Handle tool result updates
+- [x] **Additional features**
+  - Reasoning display: "🤔 Reasoning" header with dimmed content below
+  - Injection display: Purple bars for cross-agent context
+  - Reminder display: Orange bars for high-priority tasks
+  - Restart detection: Red banner on session restart
+  - JSON filtering: Raw vote/action blocks hidden
 
-- [ ] **2.5** Add tool type styling
-  - MCP tools (purple)
-  - Custom tools (orange)
-  - Filesystem (cyan)
-  - Code execution (yellow)
-  - Web search (blue)
+### What Was Attempted But Deferred
 
-- [ ] **2.6** Update TCSS themes
-  - Tool card base styles
-  - Collapsed/expanded states
-  - Status-based colors
+- [ ] **2.1** Define `ToolCallEvent` data model - Not needed for styled bars
+- [ ] **2.2** Implement `ToolCallCard` widget - Created but reverted
+  - Widget exists at `textual_widgets/tool_card.py` but not used
+  - **Issue**: Mounting widgets with `.mount()` doesn't integrate with RichLog scroll
+  - Cards ended up stuck at bottom, click events didn't work
+  - Would require replacing RichLog entirely (major refactor)
+- [ ] **2.4** Integrate with content panel - Using styled bars in RichLog instead
+- [ ] **2.7** Write tests for tool cards - Deferred
 
-- [ ] **2.7** Write tests for tool cards
-  - Card rendering tests
-  - Expand/collapse tests
-  - Tool detection tests
+### Acceptance Criteria (Revised for Styled Bars)
+- [x] Tool calls display as styled full-width bars
+- [x] Bars show tool name, category icon, and status
+- [x] Status (running/success/error) visually indicated with colors
+- [x] Timing shown on completion
+- [x] Different tool types have distinct category icons
+- [ ] ~~Toggle works via click and Enter key~~ (Deferred - requires RichLog replacement)
 
-### Acceptance Criteria
-- [ ] Tool calls display as collapsible cards
-- [ ] Cards show tool name and status when collapsed
-- [ ] Cards show params/result when expanded
-- [ ] Different tool types have distinct styling
-- [ ] Toggle works via click and Enter key
+### Files Modified
+- `massgen/frontend/displays/textual_terminal_display.py` - `_format_tool_line()`, `_handle_tool_content()`, `_make_full_width_bar()`
+- `massgen/frontend/displays/textual_widgets/tool_card.py` - Created (unused)
+- `massgen/frontend/displays/textual_themes/dark.tcss` - Tool card CSS
+- `massgen/frontend/displays/textual_themes/light.tcss` - Tool card CSS
+
+### Future Work (If Collapsible Cards Still Desired)
+1. Replace RichLog with custom ScrollableContainer holding individual widgets
+2. Or implement virtual collapsibility (re-render RichLog on keyboard shortcut)
+3. Or add separate tool panel sidebar
 
 ---
 
