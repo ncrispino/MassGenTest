@@ -94,7 +94,17 @@ When analyzing, the `--turn` flag specifies which turn to analyze. Without it, t
 | `coordination_table.txt` | Human-readable coordination flow |
 | `streaming_debug.log` | Raw streaming data including command strings |
 | `agent_*/*/vote.json` | Vote reasoning and context |
+| `agent_*/*/execution_trace.md` | **Full tool calls, arguments, results, and reasoning** - invaluable for debugging |
 | `execution_metadata.yaml` | Config and session metadata |
+
+**Execution Traces (`execution_trace.md`):**
+These are the most detailed debug artifacts. Each agent snapshot includes an execution trace with:
+- Complete tool calls with full arguments (not truncated)
+- Full tool results (not truncated)
+- Reasoning/thinking blocks from the model
+- Timestamps and round markers
+
+Use execution traces when you need to understand exactly what an agent did and why - they capture everything the agent saw and produced during that answer/vote iteration.
 
 ## Logfire Setup
 
