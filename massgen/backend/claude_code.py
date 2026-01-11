@@ -1006,15 +1006,17 @@ class ClaudeCodeBackend(StreamingBufferMixin, LLMBackend):
                 if paths:
                     execution_context["allowed_paths"] = paths
 
+        # Add multimodal_config for read_media/generate_media tools
+        if hasattr(self, "_multimodal_config") and self._multimodal_config:
+            execution_context["multimodal_config"] = self._multimodal_config
+
         tool_request = {
             "name": tool_name,
             "input": args,
         }
 
-        # Build execution context for observability (agent_id, round tracking)
-        execution_context = {
-            "agent_id": getattr(self, "_current_agent_id", None) or "unknown",
-        }
+        # Add observability context (agent_id, round tracking)
+        execution_context["agent_id"] = getattr(self, "_current_agent_id", None) or "unknown"
         # Add round tracking from context variable (set by orchestrator via set_current_round)
         round_number, round_type = get_current_round()
         if round_number is not None:

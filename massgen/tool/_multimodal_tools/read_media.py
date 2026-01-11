@@ -145,11 +145,12 @@ async def read_media(
 
         # Require CONTEXT.md for external API calls
         if not task_context:
+            context_search_path = agent_cwd or "None (no agent_cwd provided)"
             result = {
                 "success": False,
                 "operation": "read_media",
                 "error": (
-                    "CONTEXT.md not found in workspace. "
+                    f"CONTEXT.md not found in workspace: {context_search_path}. "
                     "Before using read_media, create a CONTEXT.md file with task context. "
                     "This helps external APIs understand what you're working on. "
                     "See system prompt for instructions and examples."
@@ -232,6 +233,7 @@ async def read_media(
             result = await understand_image(
                 str(media_path),
                 prompt=default_prompt,
+                model=override_model or "gpt-4.1",
                 agent_cwd=agent_cwd,
                 allowed_paths=allowed_paths,
                 task_context=task_context,

@@ -637,6 +637,45 @@ Every analysis report MUST answer these questions:
 - Any timeouts?
 - Any agent errors?
 
+#### 8. Agent Reasoning & Behavior Analysis (CRITICAL)
+
+**This is the most important section.** Analyzing how agents think and act reveals root causes of successes and failures.
+
+**Data Sources:**
+- `agent_outputs/agent_*.txt` - Full output including reasoning (if available)
+- `agent_*/*/execution_trace.md` - Complete tool calls with arguments and results
+- `streaming_debug.log` - Raw streaming chunks
+
+**Note:** Some models don't emit explicit reasoning traces. For these, analyze **tool call patterns and content** instead - the sequence of actions still reveals decision-making.
+
+**For EACH agent, analyze:**
+
+1. **Strategy** - What approach did they take? (from reasoning OR tool sequence)
+2. **Tool Responses** - How did they handle successes/failures/inconsistencies?
+3. **Error Recovery** - Did they detect problems? Implement workarounds?
+4. **Decision Quality** - Logical errors? Over/under-verification? Analysis paralysis?
+5. **Cross-Agent Comparison** - Which had best reasoning? What patterns led to success?
+
+**Key Patterns:**
+
+| Pattern | Good Sign | Bad Sign |
+|---------|-----------|----------|
+| Failure detection | Pivots after 2-3 failures | Repeats broken approach 6+ times |
+| Result validation | Cross-validates outputs | Accepts first result blindly |
+| Inconsistency handling | Investigates conflicts | Ignores contradictions |
+| Workarounds | Creative alternatives when stuck | Gives up or loops |
+| Time management | Commits when confident | Endless verification, no answer |
+
+**Extract Key Evidence:** For each agent, include 2-3 quotes (if reasoning available) OR describe key tool sequences that illustrate their decision quality.
+
+#### 9. Tool Reliability Analysis
+
+Analyze tool behavior patterns beyond simple error listing:
+
+1. **Consistency** - Same input, same output? Document variance.
+2. **False Positives/Negatives** - Tools reporting wrong success/failure status?
+3. **Root Cause Hypotheses** - For each failure pattern, propose likely causes (path issues, rate limits, model limitations, etc.)
+
 ### Data Sources for Each Question
 
 | Question | Primary Source | Secondary Source |
