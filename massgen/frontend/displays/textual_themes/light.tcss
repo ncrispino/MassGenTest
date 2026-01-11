@@ -135,6 +135,26 @@ AgentTab.active.status-error {
     background: #f44336;
 }
 
+/* Winner tab styling */
+AgentTab.winner {
+    background: #fff3cd;
+    border: solid #ffc107;
+    color: #856404;
+    text-style: bold;
+}
+
+AgentTab.winner.active {
+    background: #ffe699;
+    border: solid #ffc107;
+    border-bottom: tall #ffc107;
+}
+
+/* Consensus reached animation on StatusBar */
+StatusBar.consensus-reached {
+    background: #fff3cd;
+    border-top: solid #ffc107;
+}
+
 /* Orchestrator events modal */
 #orchestrator_modal_container {
     background: #ffffff;
@@ -243,28 +263,136 @@ HeaderWidget {
     text-style: bold;
 }
 
-#question_input {
+/* Input area container - docks to bottom */
+#input_area {
     dock: bottom;
-    margin: 1;
-    background: #f9f9f9;
-    border: solid #0066cc;
+    height: auto;
+    min-height: 4;
+    width: 100%;
     padding: 0 1;
+    margin-bottom: 3;
+    background: #f5f5f5;
+}
+
+/* === Path Autocomplete Dropdown === */
+#path_dropdown {
+    display: none;
+    width: 100%;
+    max-height: 12;
+    background: #ffffff;
+    border: solid #0066cc;
+    padding: 0;
+    margin-bottom: 1;
+}
+
+#path_dropdown.visible {
+    display: block;
+}
+
+#path_dropdown > Vertical {
+    height: auto;
+    max-height: 10;
+    overflow-y: auto;
+}
+
+#path_dropdown .hint-bar {
+    height: 1;
+    background: #f0f0f0;
+    color: #666666;
+    text-align: center;
+    padding: 0 1;
+    border-top: solid #e0e0e0;
+}
+
+/* Path suggestion rows */
+SuggestionRow {
+    height: 1;
+    padding: 0 1;
+    background: transparent;
+}
+
+SuggestionRow:hover {
+    background: #e8e8e8;
+}
+
+SuggestionRow.selected {
+    background: #0066cc;
+    color: #ffffff;
+}
+
+/* Question input - multi-line TextArea */
+#question_input {
+    background: #ffffff;
+    border: solid #0066cc;
+    height: auto;
+    min-height: 1;
+    max-height: 10;
 }
 
 #question_input:focus {
     border: double #0066cc;
-    background: #ffffff;
 }
 
-#question_input.-disabled {
-    background: #f0f0f0;
-    border: solid #cccccc;
-    color: #999999;
+/* Hide line numbers in the question input */
+#question_input .text-area--line-number-gutter {
+    display: none;
 }
 
-#question_input.-disabled:focus {
-    border: solid #cccccc;
-    background: #f0f0f0;
+/* Input header - contains hint and vim indicator (above input) */
+#input_header {
+    layout: horizontal;
+    height: 1;
+    width: 100%;
+    margin-bottom: 0;
+}
+
+/* Input hint text */
+#input_hint {
+    height: 1;
+    width: 1fr;
+    color: #6e7681;
+    text-style: italic;
+    padding: 0 1;
+}
+
+/* Vim mode indicator - hidden by default */
+#vim_indicator {
+    display: none;
+    height: 1;
+    width: auto;
+    min-width: 10;
+}
+
+/* Vim mode indicator - shown when active (use !important to override display: none) */
+#input_header #vim_indicator.vim-normal-indicator {
+    display: block !important;
+    height: 1;
+    width: 10;
+    padding: 0 1;
+    text-style: bold;
+    content-align: center middle;
+    background: #d29922;
+    color: #1a1a1a;
+}
+
+#input_header #vim_indicator.vim-insert-indicator {
+    display: block !important;
+    height: 1;
+    width: 10;
+    padding: 0 1;
+    text-style: bold;
+    content-align: center middle;
+    background: #238636;
+    color: #ffffff;
+}
+
+/* Vim normal mode - input border */
+#question_input.vim-normal {
+    border: solid #d29922;
+}
+
+#question_input.vim-normal:focus {
+    border: solid #d29922;
 }
 
 #restart_banner {
@@ -518,9 +646,13 @@ ToolDetailModal .close-button {
 }
 
 #vote_results,
+#vote_results_content,
 #table_content {
     background: #ffffff;
     color: #333333;
+    padding: 1;
+    height: 1fr;
+    overflow-y: auto;
 }
 
 #system_status_container {
@@ -1198,6 +1330,12 @@ StatusBar > Static {
     margin-right: 2;
 }
 
+#status_progress {
+    width: auto;
+    color: #0066cc;
+    margin-right: 2;
+}
+
 #status_votes {
     width: 1fr;
     color: #4caf50;
@@ -1521,4 +1659,35 @@ StatusBar.consensus-reached #status_votes {
 
 #close_workspace_browser_button {
     width: 100%;
+}
+
+/* === Unified Browser Modal (Tabs) === */
+#browser_tabs_container {
+    width: 90%;
+    max-width: 100;
+    height: 80%;
+    background: #ffffff;
+    border: solid #2196f3;
+    padding: 1 2;
+}
+
+#browser_tab_bar {
+    height: 1;
+    background: #f5f5f5;
+    padding: 0 1;
+    margin-bottom: 1;
+    text-align: center;
+    color: #0066cc;
+}
+
+#browser_content {
+    height: 1fr;
+    background: #ffffff;
+    padding: 1;
+    overflow-y: auto;
+}
+
+#close_browser_button {
+    width: 100%;
+    margin-top: 1;
 }

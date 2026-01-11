@@ -572,13 +572,13 @@ class SlashCommandDispatcher:
    /answers, /b         - Browse all answers submitted
    /timeline, /t        - Show coordination timeline
    /files, /w           - Browse workspace files from answers
+   /browser, /u         - Unified browser (Answers/Votes/Workspace/Timeline tabs)
+   /vim                 - Toggle vim mode (hjkl navigation, i to insert)
 
-💡 Multi-line Input:
-   Start with \"\"\" or ''' and end with the same delimiter
-   Example: \"\"\"
-            Your multi-line
-            input here
-            \"\"\""""
+💡 Input:
+   Enter            - Submit your question
+   Shift+Enter      - New line
+   Ctrl+C / Ctrl+D  - Quit"""
 
     @staticmethod
     def build_help_text() -> str:
@@ -649,6 +649,10 @@ class SlashCommandDispatcher:
             return self._handle_timeline()
         elif cmd == "/files":
             return self._handle_files()
+        elif cmd in ("/browser", "/u"):
+            return self._handle_browser()
+        elif cmd == "/vim":
+            return self._handle_vim()
         else:
             return CommandResult(
                 handled=False,
@@ -893,6 +897,20 @@ class SlashCommandDispatcher:
         return CommandResult(
             message="Opening workspace file browser...",
             ui_action="show_files",
+        )
+
+    def _handle_browser(self) -> CommandResult:
+        """Handle /browser command - open unified browser with all tabs."""
+        return CommandResult(
+            message="Opening unified browser...",
+            ui_action="show_browser",
+        )
+
+    def _handle_vim(self) -> CommandResult:
+        """Handle /vim command - toggle vim mode in input."""
+        return CommandResult(
+            handled=True,
+            ui_action="toggle_vim",
         )
 
 

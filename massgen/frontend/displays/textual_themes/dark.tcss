@@ -1,8 +1,26 @@
-/* Dark theme for Textual Terminal Display */
+/* Dark theme for Textual Terminal Display
+ * Professional, modern color palette with subtle accents
+ * Inspired by VSCode Dark+ with refined touches
+ */
+
+/* === Color Palette ===
+ * Background:   #0d1117 (deep blue-black)
+ * Surface:      #161b22 (elevated surface)
+ * Surface-2:    #21262d (cards, panels)
+ * Border:       #30363d (subtle borders)
+ * Border-hl:    #484f58 (highlighted borders)
+ * Text:         #e6edf3 (primary text)
+ * Text-muted:   #8b949e (secondary text)
+ * Accent-blue:  #58a6ff (primary accent)
+ * Accent-green: #3fb950 (success)
+ * Accent-amber: #d29922 (warning/highlight)
+ * Accent-red:   #f85149 (error)
+ * Accent-purple:#a371f7 (special)
+ */
 
 Screen {
-    background: #1e1e1e;
-    color: #d4d4d4;
+    background: #0d1117;
+    color: #e6edf3;
 }
 
 .hidden {
@@ -14,7 +32,7 @@ Screen {
     width: 100%;
     height: 1fr;
     align: center middle;
-    background: #1e1e1e;
+    background: #0d1117;
 }
 
 #welcome_screen Label {
@@ -23,36 +41,41 @@ Screen {
 }
 
 #welcome_logo {
-    color: #007ACC;
+    color: #58a6ff;
     text-style: bold;
 }
 
 #welcome_tagline {
-    color: #4ec9b0;
+    color: #3fb950;
     text-style: bold;
     margin-top: 2;
 }
 
+#welcome_workflow {
+    color: #8b949e;
+    margin-top: 1;
+}
+
 #welcome_agents {
-    color: #858585;
+    color: #8b949e;
     margin-top: 1;
 }
 
 #welcome_hint {
-    color: #569cd6;
+    color: #58a6ff;
     text-style: italic;
     margin-top: 2;
 }
 
 #welcome_shortcuts_hint {
-    color: #858585;
+    color: #8b949e;
     text-style: italic;
     margin-top: 1;
 }
 
 #main_container {
     layout: vertical;
-    background: #1e1e1e;
+    background: #0d1117;
     height: 100%;
     padding: 0 1;
 }
@@ -68,8 +91,8 @@ AgentTabBar {
     height: 3;
     dock: top;
     layout: horizontal;
-    background: #252526;
-    border-bottom: solid #007ACC;
+    background: #161b22;
+    border-bottom: solid #30363d;
     padding: 0 1;
 }
 
@@ -79,92 +102,120 @@ AgentTab {
     padding: 0 2;
     margin: 0 1;
     content-align: center middle;
-    border: solid #5a5a5a;
+    border: solid #30363d;
+    background: transparent;
 }
 
 AgentTab:hover {
-    background: #3c3c3c;
+    background: #21262d;
+    border: solid #484f58;
 }
 
 AgentTab.active {
-    background: #007ACC;
-    color: #ffffff;
-    border: solid #007ACC;
+    background: #21262d;
+    color: #e6edf3;
+    border: solid #58a6ff;
+    border-bottom: tall #58a6ff;
 }
 
 AgentTab.inactive {
     background: transparent;
-    border: dashed #858585;
+    border: dashed #484f58;
+    color: #8b949e;
 }
 
 /* Tab status colors */
 AgentTab.status-waiting {
-    border: solid #858585;
+    border-bottom: solid #8b949e;
 }
 
 AgentTab.status-working {
-    border: solid #569cd6;
+    border-bottom: solid #58a6ff;
 }
 
 AgentTab.status-streaming {
-    border: solid #4ec9b0;
+    border-bottom: solid #3fb950;
 }
 
 AgentTab.status-completed {
-    border: solid #4ec9b0;
+    border-bottom: solid #3fb950;
 }
 
 AgentTab.status-error {
-    border: solid #f44747;
+    border-bottom: solid #f85149;
 }
 
-/* Active tab with status */
+/* Active tab with status - subtle background tint */
 AgentTab.active.status-working {
-    background: #569cd6;
+    background: #161b22;
+    border: solid #58a6ff;
 }
 
 AgentTab.active.status-streaming {
-    background: #4ec9b0;
+    background: #0d1f14;
+    border: solid #3fb950;
 }
 
 AgentTab.active.status-completed {
-    background: #4ec9b0;
+    background: #0d1f14;
+    border: solid #3fb950;
 }
 
 AgentTab.active.status-error {
-    background: #f44747;
+    background: #1f0d0d;
+    border: solid #f85149;
+}
+
+/* Winner tab styling */
+AgentTab.winner {
+    background: #3d3510;
+    border: solid #dcdcaa;
+    color: #dcdcaa;
+    text-style: bold;
+}
+
+AgentTab.winner.active {
+    background: #4d4520;
+    border: solid #dcdcaa;
+    border-bottom: tall #dcdcaa;
+}
+
+/* Consensus reached animation on StatusBar */
+StatusBar.consensus-reached {
+    background: #3d3510;
+    border-top: solid #dcdcaa;
 }
 
 /* Orchestrator events modal */
 #orchestrator_modal_container {
-    background: #252526;
-    border: thick #007ACC;
+    background: #161b22;
+    border: solid #30363d;
     padding: 2;
     width: 80%;
     height: 80%;
 }
 
 #orchestrator_modal_header {
-    color: #ffffff;
+    color: #e6edf3;
     text-style: bold;
     margin-bottom: 1;
 }
 
 #orchestrator_hint {
-    color: #858585;
+    color: #8b949e;
     text-style: italic;
     margin-bottom: 1;
 }
 
 #orchestrator_events_content {
-    background: #1e1e1e;
-    color: #d4d4d4;
+    background: #0d1117;
+    color: #e6edf3;
 }
 
 /* Agent panels - now full width, one at a time */
 AgentPanel {
-    background: #252526;
-    border: solid #5a5a5a;
+    background: #161b22;
+    border: solid #30363d;
     margin: 0;
     padding: 1;
     width: 100%;
@@ -176,38 +227,38 @@ AgentPanel.hidden {
 }
 
 AgentPanel:hover {
-    border: solid #686868;
+    border: solid #484f58;
 }
 
 /* Override Textual's default purple focus outline */
 AgentPanel:focus,
 AgentPanel:focus-within {
-    border: solid #007acc;
-    background: #2a2d2e;
+    border: solid #58a6ff;
+    background: #161b22;
     outline: none;
 }
 
 AgentPanel.status-waiting {
-    border: solid #5a5a5a;
+    border: solid #30363d;
 }
 
 AgentPanel.status-working {
-    border: solid #569cd6;
-    background: #252535;
+    border-left: thick #58a6ff;
+    background: #161b22;
 }
 
 AgentPanel.status-streaming {
-    border: solid #4ec9b0;
-    background: #252530;
+    border-left: thick #3fb950;
+    background: #0d1117;
 }
 
 AgentPanel.status-completed {
-    border: solid #4ec9b0;
+    border-left: thick #3fb950;
 }
 
 AgentPanel.status-error {
-    border: solid #f44747;
-    background: #2d2525;
+    border-left: thick #f85149;
+    background: #1a0f0f;
 }
 
 /* Loading indicator - centered in panel */
@@ -224,7 +275,7 @@ AgentPanel.status-error {
 
 .loading-text {
     text-align: center;
-    color: #858585;
+    color: #8b949e;
     text-style: italic;
 }
 
@@ -232,52 +283,163 @@ AgentPanel.status-error {
 HeaderWidget {
     height: 2;
     dock: top;
-    background: #007ACC;
-    color: #ffffff;
+    background: #161b22;
+    color: #e6edf3;
     padding: 0 1;
     text-style: bold;
+    border-bottom: solid #30363d;
 }
 
 #status_line_label {
-    color: #ffffff;
+    color: #e6edf3;
     text-style: bold;
 }
 
-#question_input {
+/* Input area container - docks to bottom */
+#input_area {
     dock: bottom;
-    margin: 1;
-    background: #252526;
-    border: solid #007ACC;
+    height: auto;
+    min-height: 4;
+    width: 100%;
     padding: 0 1;
+    margin-bottom: 3;
+    background: #0d1117;
+}
+
+/* === Path Autocomplete Dropdown === */
+#path_dropdown {
+    display: none;
+    width: 100%;
+    max-height: 12;
+    background: #21262d;
+    border: solid #58a6ff;
+    padding: 0;
+    margin-bottom: 1;
+}
+
+#path_dropdown.visible {
+    display: block;
+}
+
+#path_dropdown > Vertical {
+    height: auto;
+    max-height: 10;
+    overflow-y: auto;
+}
+
+#path_dropdown .hint-bar {
+    height: 1;
+    background: #161b22;
+    color: #6e7681;
+    text-align: center;
+    padding: 0 1;
+    border-top: solid #30363d;
+}
+
+/* Path suggestion rows */
+SuggestionRow {
+    height: 1;
+    padding: 0 1;
+    background: transparent;
+}
+
+SuggestionRow:hover {
+    background: #30363d;
+}
+
+SuggestionRow.selected {
+    background: #58a6ff;
+    color: #0d1117;
+}
+
+/* Question input - multi-line TextArea */
+#question_input {
+    background: #161b22;
+    border: solid #30363d;
+    height: auto;
+    min-height: 1;
+    max-height: 10;
 }
 
 #question_input:focus {
-    border: double #007ACC;
-    background: #2a2d2e;
+    border: solid #58a6ff;
 }
 
-#question_input.-disabled {
-    background: #1e1e1e;
-    border: solid #5a5a5a;
-    color: #858585;
+/* Hide line numbers in the question input */
+#question_input .text-area--line-number-gutter {
+    display: none;
 }
 
-#question_input.-disabled:focus {
-    border: solid #5a5a5a;
-    background: #1e1e1e;
+/* Input header - contains hint and vim indicator (above input) */
+#input_header {
+    layout: horizontal;
+    height: 1;
+    width: 100%;
+    margin-bottom: 0;
+}
+
+/* Input hint text */
+#input_hint {
+    height: 1;
+    width: 1fr;
+    color: #6e7681;
+    text-style: italic;
+    padding: 0 1;
+}
+
+/* Vim mode indicator - hidden by default */
+#vim_indicator {
+    display: none;
+    height: 1;
+    width: auto;
+    min-width: 10;
+}
+
+/* Vim mode indicator - shown when active (use !important to override display: none) */
+#input_header #vim_indicator.vim-normal-indicator {
+    display: block !important;
+    height: 1;
+    width: 10;
+    padding: 0 1;
+    text-style: bold;
+    content-align: center middle;
+    background: #d29922;
+    color: #0d1117;
+}
+
+#input_header #vim_indicator.vim-insert-indicator {
+    display: block !important;
+    height: 1;
+    width: 10;
+    padding: 0 1;
+    text-style: bold;
+    content-align: center middle;
+    background: #238636;
+    color: #ffffff;
+}
+
+/* Vim normal mode - input border */
+#question_input.vim-normal {
+    border: solid #d29922;
+}
+
+#question_input.vim-normal:focus {
+    border: solid #d29922;
 }
 
 #restart_banner {
-    background: #ce9178;
-    color: #1e1e1e;
+    background: #21262d;
+    color: #d29922;
     padding: 1;
     margin-top: 1;
+    border: solid #484f58;
 }
 
 #restart_context {
-    background: #569cd6;
-    color: #ffffff;
+    background: #161b22;
+    color: #e6edf3;
     padding: 1;
+    border: solid #30363d;
 }
 
 Label {
@@ -286,57 +448,57 @@ Label {
 }
 
 RichLog {
-    background: #1e1e1e;
-    color: #d4d4d4;
+    background: #0d1117;
+    color: #e6edf3;
     scrollbar-size: 2 2;
 }
 
 /* Status colors */
 .waiting {
-    color: #858585;
+    color: #8b949e;
 }
 
 .working {
-    color: #569cd6;
+    color: #58a6ff;
 }
 
 .streaming {
-    color: #4ec9b0;
+    color: #3fb950;
 }
 
 .completed {
-    color: #4ec9b0;
+    color: #3fb950;
 }
 
 .error {
-    color: #f44747;
+    color: #f85149;
 }
 
 /* Content type colors */
 .tool {
-    color: #9cdcfe;
+    color: #79c0ff;
 }
 
 .status {
-    color: #ce9178;
+    color: #d29922;
 }
 
 .thinking {
-    color: #d4d4d4;
+    color: #e6edf3;
 }
 
 .presentation {
-    color: #c586c0;
+    color: #a371f7;
 }
 
 /* Streaming label */
 .streaming_label {
-    color: #4ec9b0;
+    color: #3fb950;
     text-style: italic bold;
     height: 1;
     width: 100%;
-    background: #1e2d2d;
-    border-left: tall #4ec9b0;
+    background: #0d1f14;
+    border-left: tall #3fb950;
     padding-left: 1;
 }
 
@@ -398,8 +560,8 @@ ToolDetailModal > Container {
     max-width: 100;
     height: auto;
     max-height: 80%;
-    background: #252526;
-    border: thick #007ACC;
+    background: #161b22;
+    border: solid #30363d;
     padding: 1 2;
 }
 
@@ -413,31 +575,33 @@ ToolDetailModal .modal-header {
 ToolDetailModal .modal-title {
     width: 1fr;
     text-style: bold;
-    color: #ffffff;
+    color: #e6edf3;
 }
 
 ToolDetailModal .modal-close {
     dock: right;
     width: auto;
     min-width: 5;
-    background: #5a5a5a;
+    background: #21262d;
+    border: solid #30363d;
 }
 
 ToolDetailModal .modal-close:hover {
-    background: #f44747;
+    background: #f85149;
+    border: solid #f85149;
 }
 
 ToolDetailModal .modal-divider {
     height: 1;
     width: 100%;
-    color: #3c3c3c;
+    color: #30363d;
 }
 
 ToolDetailModal .modal-section-title {
     height: 1;
     margin-top: 1;
     text-style: bold;
-    color: #9cdcfe;
+    color: #79c0ff;
 }
 
 ToolDetailModal .modal-content {
@@ -445,23 +609,23 @@ ToolDetailModal .modal-content {
     max-height: 15;
     padding: 0 1;
     margin-top: 1;
-    background: #1e1e1e;
-    border: solid #3c3c3c;
+    background: #0d1117;
+    border: solid #30363d;
     overflow-y: auto;
 }
 
 ToolDetailModal .args-content {
-    color: #b0b0b0;
+    color: #8b949e;
     padding: 1;
 }
 
 ToolDetailModal .result-content {
-    color: #d4d4d4;
+    color: #e6edf3;
     padding: 1;
 }
 
 ToolDetailModal .error-content {
-    color: #f44747;
+    color: #f85149;
     padding: 1;
 }
 
@@ -516,9 +680,13 @@ ToolDetailModal .close-button {
 }
 
 #vote_results,
+#vote_results_content,
 #table_content {
     background: #1e1e1e;
     color: #d4d4d4;
+    padding: 1;
+    height: 1fr;
+    overflow-y: auto;
 }
 
 #system_status_container {
@@ -865,25 +1033,37 @@ ToolDetailModal .close-button {
 
 /* Buttons */
 Button {
-    background: #007ACC;
-    color: #ffffff;
+    background: #21262d;
+    color: #e6edf3;
     margin-top: 1;
+    border: solid #30363d;
 }
 
 Button:hover {
-    background: #1e7fd1;
+    background: #30363d;
+    border: solid #484f58;
 }
 
 Button:focus {
     text-style: bold;
-    border: solid #1e7fd1;
+    border: solid #58a6ff;
     outline: none;
+}
+
+Button.-primary {
+    background: #238636;
+    border: solid #238636;
+}
+
+Button.-primary:hover {
+    background: #2ea043;
+    border: solid #2ea043;
 }
 
 /* Lists */
 ListView {
-    background: #1e1e1e;
-    color: #d4d4d4;
+    background: #0d1117;
+    color: #e6edf3;
     height: auto;
     max-height: 20;
     scrollbar-size: 2 2;
@@ -895,42 +1075,43 @@ ListItem {
 }
 
 ListItem:hover {
-    background: #2a2d2e;
+    background: #21262d;
 }
 
 ListItem:focus {
-    background: #2a2d2e;
-    border: solid #007acc;
+    background: #21262d;
+    border: solid #58a6ff;
 }
 
 /* TextArea */
 TextArea {
-    background: #1e1e1e;
-    color: #d4d4d4;
+    background: #0d1117;
+    color: #e6edf3;
 }
 
 TextArea:focus {
-    border: solid #007acc;
+    border: solid #58a6ff;
 }
 
 /* Scrollbars */
 Scrollbar {
-    background: #3c3c3c;
+    background: #21262d;
 }
 
 ScrollbarThumb {
-    background: #686868;
+    background: #484f58;
 }
 
 ScrollbarThumb:hover {
-    background: #9e9e9e;
+    background: #6e7681;
 }
 
 /* Footer */
 Footer {
-    background: #007ACC;
-    color: #ffffff;
+    background: #161b22;
+    color: #e6edf3;
     dock: bottom;
+    border-top: solid #30363d;
 }
 
 /* Safe mode indicator */
@@ -950,71 +1131,75 @@ ToolCallCard {
     max-height: 6;
     padding: 0 1;
     margin: 1 0;
-    background: #1e2530;
-    border: solid #3d4550;
+    background: #161b22;
+    border: solid #30363d;
+    border-left: thick #484f58;
 }
 
 ToolCallCard:hover {
-    background: #252d3a;
-    border: solid #4a5568;
+    background: #21262d;
+    border: solid #484f58;
 }
 
 ToolCallCard:focus {
-    background: #2d3748;
-    border: solid #569cd6;
+    background: #21262d;
+    border: solid #58a6ff;
     outline: none;
 }
 
 ToolCallCard.status-running {
-    border: solid #569cd6;
-    background: #1a2535;
+    border: solid #30363d;
+    border-left: thick #58a6ff;
+    background: #161b22;
 }
 
 ToolCallCard.status-success {
-    border: solid #4ec9b0;
-    background: #1a2d28;
+    border: solid #30363d;
+    border-left: thick #3fb950;
+    background: #0d1117;
 }
 
 ToolCallCard.status-error {
-    border: solid #f44747;
-    background: #2d1a1a;
+    border: solid #30363d;
+    border-left: thick #f85149;
+    background: #1a0f0f;
 }
 
-/* Tool type category colors */
+/* Tool type category colors - refined palette */
 ToolCallCard.type-filesystem {
-    border-left: tall #4ec9b0;
+    border-left: thick #3fb950;
 }
 
 ToolCallCard.type-web {
-    border-left: tall #569cd6;
+    border-left: thick #58a6ff;
 }
 
 ToolCallCard.type-code {
-    border-left: tall #dcdcaa;
+    border-left: thick #d29922;
 }
 
 ToolCallCard.type-database {
-    border-left: tall #c586c0;
+    border-left: thick #a371f7;
 }
 
 ToolCallCard.type-git {
-    border-left: tall #f14e32;
+    border-left: thick #f0883e;
 }
 
 ToolCallCard.type-api {
-    border-left: tall #ce9178;
+    border-left: thick #db6d28;
 }
 
 ToolCallCard.type-ai {
-    border-left: tall #9cdcfe;
+    border-left: thick #79c0ff;
 }
 
 ToolCallCard.type-memory {
-    border-left: tall #b5cea8;
+    border-left: thick #7ee787;
 }
 
 ToolCallCard.type-workspace {
-    border-left: tall #4fc1ff;
+    border-left: thick #39d353;
 }
 
 /* === Content Sections === */
@@ -1025,8 +1210,8 @@ ToolSection {
     max-height: 40%;
     margin: 0 0 1 0;
     padding: 0;
-    border: round #3c3c3c;
-    background: #252526;
+    border: solid #30363d;
+    background: #161b22;
 }
 
 ToolSection.collapsed {
@@ -1042,19 +1227,19 @@ ToolSection #tool_section_header {
     height: 1;
     width: 100%;
     padding: 0 1;
-    background: #2d333b;
-    color: #9cdcfe;
+    background: #21262d;
+    color: #79c0ff;
 }
 
 ToolSection #tool_section_header:hover {
-    background: #363d47;
+    background: #30363d;
 }
 
 ToolSection #tool_container {
     height: auto;
     max-height: 100%;
     padding: 0;
-    background: #1e1e1e;
+    background: #0d1117;
     overflow-y: auto;
 }
 
@@ -1068,7 +1253,7 @@ TimelineSection {
 TimelineSection #timeline_container {
     height: 1fr;
     padding: 0 1;
-    background: #1e1e1e;
+    background: #0d1117;
     overflow-y: auto;
 }
 
@@ -1087,18 +1272,18 @@ TimelineSection .timeline-text {
 }
 
 TimelineSection .timeline-text.status {
-    color: #569cd6;
+    color: #58a6ff;
 }
 
 TimelineSection .timeline-text.thinking {
-    color: #858585;
+    color: #8b949e;
 }
 
 TimelineSection .timeline-text.response {
-    color: #4ec9b0;
+    color: #3fb950;
 }
 
-/* Restart Banner - prominent separator for session restarts */
+/* Restart Banner - subtle, professional separator */
 RestartBanner {
     width: 100%;
     height: auto;
@@ -1118,8 +1303,8 @@ ThinkingSection #thinking_log {
     height: auto;
     max-height: 100%;
     padding: 0 1;
-    background: #1e1e1e;
-    color: #b0b0b0;
+    background: #0d1117;
+    color: #8b949e;
 }
 
 /* Status Badge - compact inline indicator */
@@ -1131,27 +1316,27 @@ StatusBadge {
 }
 
 StatusBadge.status-connected {
-    color: #4ec9b0;
+    color: #3fb950;
 }
 
 StatusBadge.status-working {
-    color: #dcdcaa;
+    color: #d29922;
 }
 
 StatusBadge.status-streaming {
-    color: #569cd6;
+    color: #58a6ff;
 }
 
 StatusBadge.status-completed {
-    color: #4ec9b0;
+    color: #3fb950;
 }
 
 StatusBadge.status-error {
-    color: #f44747;
+    color: #f85149;
 }
 
 StatusBadge.status-waiting {
-    color: #858585;
+    color: #8b949e;
 }
 
 /* Completion Footer - subtle completion line */
@@ -1168,22 +1353,22 @@ CompletionFooter.hidden {
 }
 
 CompletionFooter.status-completed {
-    color: #4ec9b0;
+    color: #3fb950;
 }
 
 CompletionFooter.status-error {
-    color: #f44747;
+    color: #f85149;
 }
 
 /* === Status Bar === */
 StatusBar {
     dock: bottom;
     height: 1;
-    background: #2d2d30;
-    color: #d4d4d4;
+    background: #161b22;
+    color: #e6edf3;
     padding: 0 1;
     layout: horizontal;
-    border-top: solid #007ACC;
+    border-top: solid #30363d;
 }
 
 StatusBar > Static {
@@ -1192,46 +1377,52 @@ StatusBar > Static {
 
 #status_phase {
     width: auto;
-    color: #569cd6;
+    color: #58a6ff;
+    margin-right: 2;
+}
+
+#status_progress {
+    width: auto;
+    color: #9cdcfe;
     margin-right: 2;
 }
 
 #status_votes {
     width: 1fr;
-    color: #4ec9b0;
+    color: #3fb950;
 }
 
 #status_events {
     width: auto;
-    color: #ce9178;
+    color: #d29922;
     margin-right: 2;
 }
 
 #status_events.clickable:hover {
-    color: #ffffff;
+    color: #e6edf3;
     text-style: underline;
 }
 
 #status_timer {
     width: auto;
-    color: #dcdcaa;
+    color: #d29922;
 }
 
 /* Phase-specific border colors */
 StatusBar.phase-idle {
-    border-top: solid #858585;
+    border-top: solid #484f58;
 }
 
 StatusBar.phase-initial {
-    border-top: solid #569cd6;
+    border-top: solid #58a6ff;
 }
 
 StatusBar.phase-enforcement {
-    border-top: solid #4ec9b0;
+    border-top: solid #3fb950;
 }
 
 StatusBar.phase-presentation {
-    border-top: solid #dcdcaa;
+    border-top: solid #d29922;
 }
 
 /* === Vote Visualization Animations === */
@@ -1239,23 +1430,23 @@ StatusBar.phase-presentation {
 /* Vote counter pulse animation when vote is cast */
 #status_votes.vote-updated {
     text-style: bold;
-    background: #4ec9b0 30%;
+    background: #3fb950 30%;
 }
 
 /* Highlight when vote leader changes */
 #status_votes.leader-changed {
-    background: #dcdcaa 30%;
+    background: #d29922 30%;
     text-style: bold;
 }
 
 /* StatusBar celebration when consensus is reached */
 StatusBar.consensus-reached {
-    background: #2d4a3d;
-    border-top: double #4ec9b0;
+    background: #0d1f14;
+    border-top: double #3fb950;
 }
 
 StatusBar.consensus-reached #status_votes {
-    color: #4ec9b0;
+    color: #3fb950;
     text-style: bold;
 }
 
@@ -1264,19 +1455,19 @@ StatusBar.consensus-reached #status_votes {
     width: 70;
     height: auto;
     max-height: 80%;
-    background: #252526;
-    border: solid #9cdcfe;
+    background: #161b22;
+    border: solid #79c0ff;
     padding: 1 2;
 }
 
 #mcp_status_header {
-    color: #9cdcfe;
+    color: #79c0ff;
     text-style: bold;
     margin-bottom: 1;
 }
 
 #mcp_status_summary {
-    color: #858585;
+    color: #8b949e;
     margin-bottom: 1;
 }
 
@@ -1303,6 +1494,23 @@ StatusBar.consensus-reached #status_votes {
     width: auto;
     color: #9cdcfe;
     margin-left: 2;
+}
+
+/* StatusBar Cancel button */
+#status_cancel {
+    width: auto;
+    color: #f85149;
+    margin-left: 2;
+    text-style: bold;
+}
+
+#status_cancel:hover {
+    background: #21262d;
+    color: #ff7b72;
+}
+
+#status_cancel.hidden {
+    display: none;
 }
 
 /* === Answer Browser Modal === */
@@ -1487,4 +1695,35 @@ StatusBar.consensus-reached #status_votes {
 
 #close_workspace_browser_button {
     width: 100%;
+}
+
+/* === Unified Browser Modal (Tabs) === */
+#browser_tabs_container {
+    width: 90%;
+    max-width: 100;
+    height: 80%;
+    background: #252526;
+    border: solid #58a6ff;
+    padding: 1 2;
+}
+
+#browser_tab_bar {
+    height: 1;
+    background: #1e1e1e;
+    padding: 0 1;
+    margin-bottom: 1;
+    text-align: center;
+    color: #9cdcfe;
+}
+
+#browser_content {
+    height: 1fr;
+    background: #1e1e1e;
+    padding: 1;
+    overflow-y: auto;
+}
+
+#close_browser_button {
+    width: 100%;
+    margin-top: 1;
 }

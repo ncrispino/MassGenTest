@@ -31,9 +31,13 @@ TextualTerminalDisplay (TerminalDisplay)
         ├── VoteResultsModal         # v - vote results
         ├── OrchestratorEventsModal  # o - events
         ├── SystemStatusModal        # s - system status
+        ├── MCPStatusModal           # p - MCP server status
+        ├── AnswerBrowserModal       # b - browse all answers
+        ├── TimelineModal            # t - coordination timeline
+        ├── WorkspaceBrowserModal    # w - workspace file browser
         ├── AgentSelectorModal       # Post-answer inspection
         ├── ContextModal             # /context command
-        ├── WorkspaceFilesModal      # /workspace command
+        ├── WorkspaceFilesModal      # /workspace command (list)
         ├── FileInspectionModal      # File tree + preview
         ├── BroadcastPromptModal     # Human input requests
         ├── PresentationModal
@@ -497,6 +501,53 @@ AgentPanel RichLog {
 }
 ```
 
+## Multi-Line Input
+
+The TUI supports multi-line input using the `MultiLineInput` widget, which extends Textual's `TextArea`.
+
+### Usage
+
+- **Submit**: Press Enter to submit your question (matches standard convention)
+- **New line**: Press Shift+Enter or Ctrl+J to insert a new line
+- **Visual hint**: A hint at the bottom shows "Enter to submit • Shift+Enter for new line"
+
+### Implementation
+
+```python
+class MultiLineInput(TextArea):
+    """Multi-line input with Enter submission."""
+
+    BINDINGS = [
+        Binding("enter", "submit", "Submit", priority=True),
+        Binding("shift+enter", "newline", "New Line", priority=True),
+        Binding("ctrl+j", "newline", "New Line", show=False),
+    ]
+
+    class Submitted(Message, bubble=True):
+        """Sent when Enter is pressed."""
+        def __init__(self, input: "MultiLineInput", value: str) -> None:
+            self.value = value
+            self.input = input
+
+    def action_submit(self) -> None:
+        text = self.text.strip()
+        if text:
+            self.post_message(self.Submitted(self, text))
+
+    def action_newline(self) -> None:
+        self.insert("\n")
+```
+
+### CSS Styling
+
+```css
+#question_input {
+    height: 5;           /* Default 5 lines */
+    min-height: 3;       /* Minimum 3 lines */
+    max-height: 10;      /* Maximum 10 lines */
+}
+```
+
 ## File Reference
 
 | File | Purpose |
@@ -504,6 +555,7 @@ AgentPanel RichLog {
 | `textual_terminal_display.py` | Main display class, TextualApp, AgentPanel |
 | `textual_widgets/__init__.py` | Widget exports |
 | `textual_widgets/tab_bar.py` | AgentTabBar, AgentTab, AgentTabChanged |
+| `textual_widgets/multi_line_input.py` | MultiLineInput for multi-line text entry |
 | `textual_widgets/content_sections.py` | TimelineSection, ReasoningSection, RestartBanner, etc. |
 | `content_normalizer.py` | ContentNormalizer, NormalizedContent |
 | `content_handlers.py` | ToolContentHandler, ThinkingContentHandler |
@@ -551,72 +603,67 @@ The Textual TUI aims to provide feature parity with the MassGen WebUI. This sect
 | MCP Status | ✅ Done | `p` | MCPStatusModal |
 | Keyboard Shortcuts | ✅ Done | `?`/`h` | KeyboardShortcutsModal |
 | Full Agent Output | ✅ Done | `f` | AgentOutputModal with copy/save |
-| Workspace Browser | ⚠️ Basic | `/workspace` | Tree view exists, needs enhancements |
-| File Preview | ⚠️ Basic | - | FileInspectionModal, needs improvements |
-| Answer Browser | ❌ TODO | `b` | List all answers with filtering |
-| Timeline View | ❌ TODO | `t` | ASCII swimlane visualization |
+| Workspace Browser | ✅ Done | `w` | WorkspaceBrowserModal - browse answer snapshots |
+| File Preview | ✅ Done | - | Split pane with text file preview |
+| Answer Browser | ✅ Done | `b` | AnswerBrowserModal - filter by agent, winner badges |
+| Timeline View | ✅ Done | `t` | TimelineModal - chronological event list |
+| Enhanced Toasts | ✅ Done | - | Model names, standings in vote/answer toasts |
 | Progress Summary | ⚠️ Partial | - | StatusBar shows phase, needs counts |
 | Follow-up Input | ⚠️ Basic | - | Input field exists, needs polish |
 | Winner Celebration | ⚠️ Partial | - | Vote leader highlight, needs final winner |
 
 ### WebUI-Inspired Enhancements (Phase 5.5+)
 
-#### Enhanced Toast Notifications
-WebUI shows rich toasts for answers/votes. TUI should:
-- Show agent model name in answer toasts
-- Show voter → target in vote toasts
-- Color-code by event type
-- Auto-dismiss with configurable timeout
+#### ✅ Enhanced Toast Notifications (COMPLETE)
+- Shows agent model name in answer toasts
+- Shows voter → target with current standings in vote toasts
+- Auto-dismiss after configurable timeout (5s answers, 3s votes)
+- Tracks all answers/votes for browser and timeline modals
 
-#### Answer Browser Modal
-WebUI has a comprehensive answer browser. TUI should:
-- List all answers with timestamps
-- Filter by agent
-- Show Final Answer / Winner badges
-- Expandable content preview
-- Navigate to agent panel on selection
+#### ✅ Answer Browser Modal (COMPLETE)
+- `b` key or `/answers` command opens browser
+- Lists all answers with timestamps and model names
+- Filter by agent via dropdown selector
+- Winner badges (🏆 gold), Final badges (✓ green)
+- Vote count per agent, content preview
 
-#### Vote Distribution Visualization
+#### ✅ Timeline Visualization (COMPLETE)
+- `t` key or `/timeline` command opens timeline
+- Chronological event list format:
+```
+Event Timeline
+──────────────────────────────────────────────────
+  12:34:56  ○ agent_a submitted answer agent1.1
+  12:34:58  ○ agent_b submitted answer agent2.1
+  12:35:02  ◇ agent_a voted for agent_b
+  12:35:10  ★ agent_b submitted answer agent2.2 (WINNER)
+──────────────────────────────────────────────────
+Total: 3 answers, 2 votes
+```
+
+#### ✅ Workspace Browser (COMPLETE)
+- `w` key or `/files` command opens workspace browser
+- Per-answer workspace selection via dropdown
+- Split pane: file list (left) + preview (right)
+- Filters hidden files, shows file sizes
+- Text file preview with syntax-aware extensions
+
+#### ⚠️ Vote Distribution Visualization (TODO)
 WebUI shows bar chart. TUI should:
 - ASCII bar chart (`████░░░░ 3/5`)
 - Winner highlighted with trophy
 - Sorted by vote count
 - Total votes summary
 
-#### Timeline Visualization
-WebUI shows SVG swimlane. TUI should:
-```
-┌─Agent_1─┬─Agent_2─┬─Agent_3─┐
-│    ○    │         │    ○    │  t=0 Initial answers
-│    │    │    ○    │    │    │  t=1
-│    └────┼────◇────┤    │    │  t=2 Vote
-│         │    │    │    ★    │  t=3 Final
-└─────────┴─────────┴─────────┘
-○ = answer, ◇ = vote, ★ = final
-```
+### Remaining Implementation Priority
 
-#### Workspace Browser Enhancements
-WebUI shows file operations. TUI should:
-- File operation badges: `[+]` create, `[~]` modify, `[-]` delete
-- Per-agent workspace selector
-- Version selector for historical snapshots
-- Filter hidden files by default
-
-### Implementation Priority
-
-1. **High Priority** (Core parity)
-   - Enhanced toast notifications
-   - Answer browser modal
+1. **Medium Priority** (Enhanced UX)
    - Vote distribution bar chart
-   - Workspace operation badges
-
-2. **Medium Priority** (Enhanced UX)
-   - Timeline visualization
    - Progress summary in StatusBar
    - Winner celebration effects
    - Multi-tab browser modal
 
-3. **Lower Priority** (Polish)
-   - File preview improvements
+2. **Lower Priority** (Polish)
    - Animated progress indicators
    - Compare workspaces view
+   - File operation badges ([+] create, [~] modify)

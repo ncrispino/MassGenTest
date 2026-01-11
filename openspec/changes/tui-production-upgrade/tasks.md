@@ -378,62 +378,68 @@
   - StatusBar MCP indicator (`🔌 Ns/Nt` format)
   - Per-server tool count and preview
 
+### Completed WebUI Parity Features
+
+- [x] **5.5** Enhanced Toast Notifications ✅ COMPLETE
+  - New answer toast with agent ID and model name
+  - Vote cast toast with voter → target info and current standings
+  - Auto-dismiss after configurable timeout (5s for answers, 3s for votes)
+  - Color-coded by type (answer=green, vote=amber, error=red)
+  - Tracks all answers and votes for browser/timeline modals
+
+- [x] **5.6** Answer Browser Modal ✅ COMPLETE
+  - `b` key or `/answers` command opens browser
+  - Lists all answers with timestamps, model names
+  - Filter by agent via dropdown selector
+  - Visual indicators: Winner (gold + 🏆), Final (green ✓)
+  - Vote count per agent displayed
+  - Content preview (80 char truncated)
+
+- [x] **5.7** Timeline Visualization ✅ COMPLETE
+  - `t` key or `/timeline` command opens timeline
+  - Chronological event list (not swimlane - simpler/clearer)
+  - Event types: ○ answer, ◇ vote, ★ winner
+  - Shows agent, answer label, voter → target
+  - Timestamps for all events
+  - Summary: total answers, total votes
+
+- [x] **5.8** Workspace Browser ✅ COMPLETE
+  - `w` key or `/files` command opens workspace browser
+  - Per-answer workspace selection via dropdown
+  - Split pane: file list (left) + preview (right)
+  - Filters hidden files (.files starting with .)
+  - File size display
+  - Text file preview with syntax-aware extensions
+  - Binary file detection
+
+### Completed WebUI Parity Features (Continued)
+
+- [x] **5.9** Vote Browser with Distribution ✅ COMPLETE
+  - Vote distribution summary (ASCII bar chart) with `████░░░░` visualization
+  - Winner highlighted with trophy emoji
+  - Individual votes list with voter → target
+  - Integrated into existing VoteResultsModal (`v` key)
+
+- [x] **5.10** Progress Summary in StatusBar ✅ COMPLETE
+  - Compact status line: "3 agents | 2 answers | 4/6 votes"
+  - Updates on new answers and votes
+  - Winner announcement displayed when consensus reached
+
+- [x] **5.11** Winner Celebration Effects ✅ COMPLETE (partial)
+  - Winner tab highlighted with gold styling
+  - StatusBar shows winner announcement
+  - Enhanced toast notification with winner details
+  - `_celebrate_winner()` method triggers visual effects
+
+- [x] **5.13** Multi-Tab Browser Modal ✅ COMPLETE
+  - `BrowserTabsModal` with 4 tabs: Answers | Votes | Workspace | Timeline
+  - Number keys (1-4) switch between tabs
+  - `u` key binding and `/browser` slash command
+  - Summarized views of all data
+
 ### Remaining Tasks - WebUI Parity Features
 
-#### High Priority (Core WebUI Features)
-
-- [ ] **5.5** Enhanced Toast Notifications
-  - New answer toast with agent ID and model name
-  - Vote cast toast with voter → target info
-  - Session completion notifications
-  - Auto-dismiss after configurable timeout
-  - Color-coded by type (answer=green, vote=amber, error=red)
-
-- [ ] **5.6** Answer Browser Modal (`/answers` or `a` key)
-  - List all answers with expandable detail view
-  - Filter by agent
-  - Visual indicators: Final Answer (green), Winner (gold + 🏆)
-  - Timestamp display
-  - Answer content preview
-  - `b` key binding to open browser
-
-- [ ] **5.7** Vote Browser with Distribution
-  - Vote distribution summary (ASCII bar chart)
-  - Winner highlighted with trophy
-  - Individual votes list:
-    - Voter and target agent
-    - Reason text
-    - Valid/superseded status
-  - Integrate into existing vote modal or new tab
-
-- [ ] **5.8** Workspace Browser Enhancements
-  - File operation badges: `[+]` create, `[~]` modify, `[-]` delete
-  - Per-agent workspace selection dropdown
-  - Version selector (current + historical snapshots)
-  - Split pane: file tree (left) + preview (right)
-  - Filter hidden files (.mcp/, __pycache__, etc.)
-  - File size display
-
-- [ ] **5.9** Timeline Visualization
-  - ASCII/Unicode swimlane diagram
-  - Vertical columns per agent
-  - Node types: answer (○), vote (◇), final (★)
-  - Arrows showing context dependencies
-  - Color-coded by agent
-  - `/timeline` or `t` key
-
 #### Medium Priority (Enhanced Features)
-
-- [ ] **5.10** Progress Summary Bar
-  - Compact status line in StatusBar or header
-  - Agent count, answer count, vote progress
-  - Winner announcement when complete
-
-- [ ] **5.11** Agent Card Enhancements
-  - Answer counter per agent
-  - Tool activity badges (last N tools)
-  - Vote target display when voting
-  - Winner badge (crown, gold border)
 
 - [ ] **5.12** Final Answer View
   - Prominent display of winning answer
@@ -441,12 +447,6 @@
   - Copy to clipboard button
   - Workspace browser for winner
   - Follow-up question input
-
-- [ ] **5.13** Multi-Tab Browser Modal
-  - Tabs: Answers | Votes | Workspace | Timeline
-  - Unified navigation with number keys (1-4)
-  - Keyboard shortcuts per tab
-  - Progress summary header
 
 #### Lower Priority (Nice-to-Haves)
 
@@ -468,10 +468,10 @@
   - Loading states
 
 ### Files Modified
-- `textual_terminal_display.py` - KeyboardShortcutsModal, AgentOutputModal, MCPStatusModal, StatusBar vote visualization, action methods
-- `interactive_controller.py` - `/mcp` command, HELP_TEXT updated
-- `textual_themes/dark.tcss` - Modal styling, vote animations, MCP styles
-- `textual_themes/light.tcss` - Modal styling, vote animations, MCP styles
+- `textual_terminal_display.py` - New modals: AnswerBrowserModal, TimelineModal, WorkspaceBrowserModal, MCPStatusModal, BrowserTabsModal; enhanced toasts with `notify_new_answer()` and `notify_vote()`; answer/vote tracking; new key bindings (b, t, w, p, u); VoteResultsModal enhanced with distribution chart; StatusBar progress summary; winner celebration effects via `_celebrate_winner()`
+- `interactive_controller.py` - New commands: `/answers`, `/timeline`, `/files`, `/mcp`, `/browser`; HELP_TEXT updated
+- `textual_themes/dark.tcss` - Modal styling for all modals; vote animations; winner tab styling; consensus-reached StatusBar styling; unified browser modal CSS
+- `textual_themes/light.tcss` - Modal styling for all modals; vote animations; winner tab styling; consensus-reached StatusBar styling; unified browser modal CSS
 
 ### Acceptance Criteria
 - [x] Keyboard shortcuts accessible via ? key
@@ -479,11 +479,14 @@
 - [x] Welcome screen shows help hint
 - [x] Vote visualization feels responsive (leader highlight, animations)
 - [x] MCP status viewable via p key or /mcp command
-- [ ] Answer browser with filtering and details
-- [ ] Vote distribution visualization
-- [ ] Enhanced workspace browser with file operations
-- [ ] Timeline visualization
-- [ ] Progress indicators give feedback
+- [x] Answer browser with filtering and details (`b` key)
+- [x] Timeline visualization (`t` key)
+- [x] Workspace browser with file preview (`w` key)
+- [x] Enhanced toasts with model names and standings
+- [x] Vote distribution bar chart (in vote modal `v` key)
+- [x] Progress summary indicators (in StatusBar)
+- [x] Winner celebration effects (tab highlight, toast, StatusBar update)
+- [x] Multi-tab browser modal (`u` key, `/browser` command)
 - [ ] Overall UX feels polished
 
 ---

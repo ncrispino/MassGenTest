@@ -155,12 +155,31 @@ COORDINATION_PATTERNS = [
 # These are internal messages that leak through from agent responses
 WORKSPACE_STATE_PATTERNS = [
     r'^Providing answer:\s*"',  # "Providing answer: "..." at start
+    r"Providing answer:\s*[\"']",  # "Providing answer: "..." anywhere in content
     r"^- CWD:\s*",  # "- CWD: /path/..." workspace path
     r"^- File created:\s*",  # "- File created: filename" workspace state
     r"^- File modified:\s*",  # "- File modified: filename" workspace state
     r"^- File deleted:\s*",  # "- File deleted: filename" workspace state
     r'"Answer already provided by \w+',  # Duplicate answer error messages
     r"Provide different answer or vote for existing one",  # Error continuation
+    r"'''Providing answer:",  # Triple-quoted providing answer
+    r'"""Providing answer:',  # Double triple-quoted providing answer
+    r"\*\*File Path",  # File path markers
+    r"\*\*Poem Content",  # Poem content markers
+    # Fragment JSON patterns (when JSON appears mid-content without proper structure)
+    r'"content"\s*:\s*"[^"]*"\s*"vote_data"',  # "content": "...""vote_data" concatenation
+    r'"action"\s*:\s*"vote"',  # "action": "vote" anywhere
+    r'"agent_id"\s*:\s*"agent\d*"',  # "agent_id": "agent1" anywhere
+    r'"target_answer_id"\s*:\s*"',  # "target_answer_id": "..." anywhere
+    r'"vote_data"\s*:\s*\{',  # "vote_data": { anywhere
+    r'"action_type"\s*:\s*"',  # "action_type": "..." anywhere (this is coordination JSON)
+    r'"action_type"\s*:\s*""',  # "action_type": "" malformed
+    # Status change messages (internal state updates)
+    r"Status changed to completed",  # Agent status change
+    r"Status changed to \w+",  # Any status change message
+    # Mixed content fragments (text + JSON)
+    r"This fully addresses the original message",  # Boilerplate reasoning
+    r"no further improvement or additional information is necessary",  # Boilerplate reasoning
 ]
 
 COMPILED_WORKSPACE_STATE_PATTERNS = [re.compile(p, re.IGNORECASE | re.MULTILINE) for p in WORKSPACE_STATE_PATTERNS]
@@ -371,12 +390,40 @@ class ContentNormalizer:
         - "- CWD: /path/..."
         - "- File created: ..."
         - "Answer already provided by agent_b..."
+        - Content with lots of escaped newlines (raw structured output)
+        - Content that is primarily JSON field fragments
 
         These are internal coordination messages that leak through from agent responses.
         """
         for pattern in COMPILED_WORKSPACE_STATE_PATTERNS:
             if pattern.search(content):
                 return True
+
+        # Check for content with lots of escaped newlines - sign of raw structured output
+        # If content has 3+ escaped \n and mentions workspace-related terms, filter it
+        escaped_newlines = content.count("\\n")
+        if escaped_newlines >= 3:
+            workspace_terms = ["Providing answer", "File Path", "content=", "answer_data"]
+            if any(term.lower() in content.lower() for term in workspace_terms):
+                return True
+
+        # Check for content that is primarily JSON-like fragments
+        # Count JSON-like indicators
+        json_indicators = [
+            '": "',  # JSON key-value separator
+            '": {',  # JSON nested object
+            '",',  # JSON string followed by comma
+            '"},',  # JSON end object with comma
+        ]
+        json_score = sum(content.count(ind) for ind in json_indicators)
+
+        # If content has significant JSON-like structure, it's probably coordination JSON
+        content_len = len(content)
+        if content_len > 0 and json_score >= 2:
+            # More aggressive filtering for short content with JSON
+            if content_len < 200 or json_score >= 3:
+                return True
+
         return False
 
     @staticmethod
@@ -492,6 +539,10 @@ class ContentNormalizer:
 
         # Filter workspace/action tool JSON (shown via tool cards instead)
         if cls.is_workspace_tool_json(content):
+            should_display = False
+
+        # Filter workspace state content (internal messages)
+        if cls.is_workspace_state_content(content):
             should_display = False
 
         # Apply light cleaning

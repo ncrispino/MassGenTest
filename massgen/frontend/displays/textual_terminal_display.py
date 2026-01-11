@@ -49,6 +49,8 @@ try:
         AgentTabBar,
         AgentTabChanged,
         CompletionFooter,
+        MultiLineInput,
+        PathSuggestionDropdown,
         TimelineSection,
         ToolCallCard,
         ToolDetailModal,
@@ -1539,6 +1541,9 @@ if TEXTUAL_AVAILABLE:
     class StatusBarEventsClicked(Message):
         """Message emitted when the events counter in StatusBar is clicked."""
 
+    class StatusBarCancelClicked(Message):
+        """Message emitted when the cancel button in StatusBar is clicked."""
+
     class StatusBar(Widget):
         """Persistent status bar showing orchestration state at the bottom of the TUI."""
 
@@ -1568,19 +1573,23 @@ if TEXTUAL_AVAILABLE:
                 self._vote_counts[agent_id] = 0
 
         def compose(self) -> ComposeResult:
-            """Create the status bar layout with phase, votes, events, MCP, and timer."""
+            """Create the status bar layout with phase, progress, votes, events, MCP, cancel, and timer."""
             yield Static("⏳ Idle", id="status_phase")
+            yield Static("", id="status_progress")  # Progress summary: "3 agents | 2 answers | 4/6 votes"
             yield Static("", id="status_votes")
             yield Static("", id="status_mcp")
             yield Static("📋 0 events", id="status_events", classes="clickable")
             yield Static("⏱️ 0:00", id="status_timer")
+            yield Static("", id="status_cancel", classes="cancel-button hidden")
 
         def on_click(self, event: events.Click) -> None:
-            """Handle click on the events counter to open events modal."""
-            # Check if click was on the events element
+            """Handle click on the events counter or cancel button."""
             target = event.target
-            if target and hasattr(target, "id") and target.id == "status_events":
-                self.post_message(StatusBarEventsClicked())
+            if target and hasattr(target, "id"):
+                if target.id == "status_events":
+                    self.post_message(StatusBarEventsClicked())
+                elif target.id == "status_cancel":
+                    self.post_message(StatusBarCancelClicked())
 
         def update_phase(self, phase: str) -> None:
             """Update the phase indicator."""
@@ -1624,6 +1633,44 @@ if TEXTUAL_AVAILABLE:
                     mcp_widget.update(f"🔌 {server_count}s/{tool_count}t")
                 else:
                     mcp_widget.update("")
+            except Exception:
+                pass  # Widget not mounted yet
+
+        def update_progress(
+            self,
+            agent_count: int,
+            answer_count: int,
+            vote_count: int,
+            expected_votes: int = 0,
+            winner: str = "",
+        ) -> None:
+            """Update progress summary in status bar.
+
+            Args:
+                agent_count: Number of agents in the session
+                answer_count: Number of answers received
+                vote_count: Number of votes cast
+                expected_votes: Total expected votes (for X/Y display)
+                winner: If set, display winner celebration instead
+            """
+            try:
+                progress_widget = self.query_one("#status_progress", Static)
+
+                if winner:
+                    text = f"🏆 [bold yellow]{winner[:12]} wins![/]"
+                else:
+                    parts = []
+                    if agent_count > 0:
+                        parts.append(f"{agent_count} agents")
+                    if answer_count > 0:
+                        parts.append(f"{answer_count} answers")
+                    if expected_votes > 0:
+                        parts.append(f"{vote_count}/{expected_votes} votes")
+                    elif vote_count > 0:
+                        parts.append(f"{vote_count} votes")
+                    text = " | ".join(parts) if parts else ""
+
+                progress_widget.update(text)
             except Exception:
                 pass  # Widget not mounted yet
 
@@ -1769,6 +1816,18 @@ if TEXTUAL_AVAILABLE:
             except Exception:
                 pass
 
+        def show_cancel_button(self, show: bool = True) -> None:
+            """Show or hide the cancel button."""
+            try:
+                cancel_widget = self.query_one("#status_cancel", Static)
+                if show:
+                    cancel_widget.update("❌ Cancel")
+                    cancel_widget.remove_class("hidden")
+                else:
+                    cancel_widget.add_class("hidden")
+            except Exception:
+                pass  # Widget not mounted yet
+
     class BaseModal(ModalScreen):
         """Base modal with common dismiss behavior for ESC and close buttons."""
 
@@ -1787,24 +1846,15 @@ if TEXTUAL_AVAILABLE:
         THEMES_DIR = Path(__file__).parent / "textual_themes"
         CSS_PATH = str(THEMES_DIR / "dark.tcss")
 
+        # Minimal bindings - most features accessed via /slash commands
+        # Only canonical shortcuts that users expect
         BINDINGS = [
-            Binding("tab", "next_agent", "Next"),
-            Binding("shift+tab", "prev_agent", "Prev"),
-            Binding("s", "open_system_status", "Status"),
-            Binding("o", "open_orchestrator", "Events"),
-            Binding("v", "open_vote_results", "Votes"),
-            Binding("f", "open_agent_output", "Full Output"),
-            Binding("c", "open_cost_breakdown", "Cost"),
-            Binding("m", "open_metrics", "Metrics"),
-            Binding("p", "open_mcp_status", "MCP"),
-            Binding("b", "open_answer_browser", "Browser"),
-            Binding("t", "open_timeline", "Timeline"),
-            Binding("w", "open_workspace_browser", "Workspace"),
-            Binding("question_mark", "show_shortcuts", "Help"),
-            Binding("h", "show_shortcuts", "Help", show=False),
-            Binding("q", "quit", "Quit"),
-            Binding("ctrl+q", "quit", "Quit", show=False),
-            Binding("escape", "quit", "Quit", show=False),
+            # Agent navigation
+            Binding("tab", "next_agent", "Next Agent"),
+            Binding("shift+tab", "prev_agent", "Prev Agent"),
+            # Quit - canonical shortcuts
+            Binding("ctrl+c", "quit", "Quit", priority=True),
+            Binding("ctrl+d", "quit", "Quit", show=False),
         ]
 
         def __init__(
@@ -1930,11 +1980,28 @@ if TEXTUAL_AVAILABLE:
                 self._status_bar.add_class("hidden")
             yield self._status_bar
 
-            self.question_input = Input(
-                placeholder="Type your question or /help for commands...",
-                id="question_input",
-            )
-            yield self.question_input
+            # Input area container with text input and @ autocomplete dropdown
+            with Container(id="input_area"):
+                # Path autocomplete dropdown (hidden by default, positioned above input)
+                self._path_dropdown = PathSuggestionDropdown(id="path_dropdown")
+                yield self._path_dropdown
+
+                # Input header with hint and vim mode indicator (above input)
+                with Horizontal(id="input_header"):
+                    # Hint for submission (updated dynamically for vim mode)
+                    self._input_hint = Static("Enter to submit • Shift+Enter for new line • /vim for vim mode", id="input_hint")
+                    yield self._input_hint
+                    # Vim mode indicator (hidden by default)
+                    self._vim_indicator = Static("", id="vim_indicator")
+                    yield self._vim_indicator
+
+                # Multi-line input: Enter to submit, Shift+Enter for new line
+                # Type @ to trigger path autocomplete
+                self.question_input = MultiLineInput(
+                    placeholder="Type your question (use @ for file context)...",
+                    id="question_input",
+                )
+                yield self.question_input
 
             self.footer_widget = Footer()
             yield self.footer_widget
@@ -1961,6 +2028,9 @@ if TEXTUAL_AVAILABLE:
                     self.coordination_display.restart_instructions or "",
                 )
             self._update_safe_indicator()
+            # Auto-focus input field on startup
+            if self.question_input:
+                self.question_input.focus()
 
         def _update_safe_indicator(self):
             """Show/hide safe keyboard status in footer area."""
@@ -2004,9 +2074,72 @@ if TEXTUAL_AVAILABLE:
             except Exception:
                 pass
 
+        def on_key(self, event: events.Key) -> None:
+            """Handle key events for agent shortcuts and @ autocomplete.
+
+            Number keys 1-9 switch to specific agents (when not typing).
+            All other shortcuts use Ctrl modifiers and are handled via BINDINGS.
+            """
+            # If @ autocomplete is showing, route keys to it first
+            if hasattr(self, "_path_dropdown") and self._path_dropdown.is_showing:
+                if self._path_dropdown.handle_key(event):
+                    event.prevent_default()
+                    event.stop()
+                    return
+
+            # Don't handle shortcuts when typing in input (supports both Input and MultiLineInput/TextArea)
+            if isinstance(self.focused, (Input, TextArea)) and getattr(self.focused, "id", None) == "question_input":
+                return
+
+            # Handle agent shortcuts
+            self._handle_agent_shortcuts(event)
+
         def on_input_submitted(self, event: Input.Submitted) -> None:
-            """Handle user input submission - delegate to controller."""
-            text = event.value.strip()
+            """Handle Enter key in the single-line Input widget (fallback)."""
+            if event.input.id == "question_input":
+                self._submit_question()
+
+        def on_multi_line_input_submitted(self, event: MultiLineInput.Submitted) -> None:
+            """Handle Enter in the multi-line input."""
+            if event.input.id == "question_input":
+                self._submit_question()
+
+        def on_multi_line_input_vim_mode_changed(self, event: MultiLineInput.VimModeChanged) -> None:
+            """Handle vim mode changes to update the indicator."""
+            if event.input.id == "question_input":
+                self._update_vim_indicator(event.vim_normal)
+
+        def on_multi_line_input_at_prefix_changed(self, event: MultiLineInput.AtPrefixChanged) -> None:
+            """Handle @ prefix changes for path autocomplete."""
+            if event.input.id == "question_input" and hasattr(self, "_path_dropdown"):
+                self._path_dropdown.update_suggestions(event.prefix)
+                self.question_input.autocomplete_active = self._path_dropdown.is_showing
+
+        def on_multi_line_input_at_dismissed(self, event: MultiLineInput.AtDismissed) -> None:
+            """Handle @ autocomplete dismissal."""
+            if event.input.id == "question_input" and hasattr(self, "_path_dropdown"):
+                self._path_dropdown.dismiss()
+                self.question_input.autocomplete_active = False
+
+        def on_path_suggestion_dropdown_path_selected(self, event: PathSuggestionDropdown.PathSelected) -> None:
+            """Handle path selection from autocomplete dropdown."""
+            if hasattr(self, "question_input"):
+                self.question_input.insert_completion(event.path, event.with_write)
+                self.question_input.autocomplete_active = False
+
+        def on_path_suggestion_dropdown_continue_browsing(self, event: PathSuggestionDropdown.ContinueBrowsing) -> None:
+            """Handle directory selection to continue browsing."""
+            if hasattr(self, "question_input"):
+                self.question_input.update_at_prefix(event.prefix)
+
+        def on_path_suggestion_dropdown_dismissed(self, event: PathSuggestionDropdown.Dismissed) -> None:
+            """Handle dropdown dismissal."""
+            if hasattr(self, "question_input"):
+                self.question_input.autocomplete_active = False
+
+        def _submit_question(self) -> None:
+            """Submit the current question text."""
+            text = self.question_input.text.strip()
             if not text:
                 return
 
@@ -2015,6 +2148,11 @@ if TEXTUAL_AVAILABLE:
             # Dismiss welcome screen on first real input
             if self._showing_welcome and not text.startswith("/"):
                 self._dismiss_welcome()
+
+            # Handle TUI-local slash commands first (like /vim)
+            if text.startswith("/"):
+                if self._handle_local_slash_command(text):
+                    return  # Command was handled locally
 
             if self._input_handler:
                 self._input_handler(text)
@@ -2037,6 +2175,23 @@ if TEXTUAL_AVAILABLE:
 
             if self.header_widget:
                 self.header_widget.update_question(text)
+
+        def _handle_local_slash_command(self, command: str) -> bool:
+            """Handle TUI-local slash commands that should not be passed to the orchestrator.
+
+            Args:
+                command: The slash command string.
+
+            Returns:
+                True if the command was handled locally, False otherwise.
+            """
+            cmd = command.split()[0].lower()
+
+            if cmd == "/vim":
+                self._toggle_vim_mode()
+                return True
+
+            return False
 
         def _handle_slash_command(self, command: str) -> None:
             """Handle slash commands within the TUI using unified SlashCommandDispatcher."""
@@ -2092,6 +2247,10 @@ if TEXTUAL_AVAILABLE:
                     self.action_open_timeline()
                 elif result.ui_action == "show_files":
                     self.action_open_workspace_browser()
+                elif result.ui_action == "show_browser":
+                    self.action_open_unified_browser()
+                elif result.ui_action == "toggle_vim":
+                    self._toggle_vim_mode()
                 elif result.message and not result.ui_action:
                     self.notify(result.message, severity="information" if result.handled else "warning")
 
@@ -2124,8 +2283,64 @@ if TEXTUAL_AVAILABLE:
                     self._show_workspace_files_modal()
                 elif cmd in ("/mcp", "/p"):
                     self.action_open_mcp_status()
+                elif cmd == "/vim":
+                    self._toggle_vim_mode()
                 else:
                     self.notify(f"Unknown command: {command}", severity="warning")
+
+        def _toggle_vim_mode(self) -> None:
+            """Toggle vim mode on the question input."""
+            if not hasattr(self, "question_input") or self.question_input is None:
+                return
+
+            current = self.question_input.vim_mode
+            self.question_input.vim_mode = not current
+
+            if self.question_input.vim_mode:
+                # Enter insert mode when enabling (more intuitive - user wants to type)
+                self.question_input._vim_normal = False
+                self.question_input.remove_class("vim-normal")
+                self._update_vim_indicator(False)  # False = insert mode
+            else:
+                self.question_input._vim_normal = False
+                self.question_input.remove_class("vim-normal")
+                self._update_vim_indicator(None)  # None = vim mode off
+
+        def _update_vim_indicator(self, vim_normal: bool | None) -> None:
+            """Update the vim mode indicator.
+
+            Args:
+                vim_normal: True for normal mode, False for insert mode, None to hide.
+            """
+            if not hasattr(self, "_vim_indicator"):
+                return
+
+            if vim_normal is None:
+                # Vim mode off - hide indicator
+                self._vim_indicator.update("")
+                self._vim_indicator.remove_class("vim-normal-indicator")
+                self._vim_indicator.remove_class("vim-insert-indicator")
+                if hasattr(self, "_input_hint"):
+                    self._input_hint.update("Enter to submit • Shift+Enter for new line • /vim for vim mode")
+            elif vim_normal:
+                # Normal mode
+                self._vim_indicator.update(" NORMAL ")
+                self._vim_indicator.remove_class("vim-insert-indicator")
+                self._vim_indicator.add_class("vim-normal-indicator")
+                if hasattr(self, "_input_hint"):
+                    self._input_hint.update("VIM: i/a insert • hjkl move • /vim off")
+            else:
+                # Insert mode
+                self._vim_indicator.update(" INSERT ")
+                self._vim_indicator.remove_class("vim-normal-indicator")
+                self._vim_indicator.add_class("vim-insert-indicator")
+                if hasattr(self, "_input_hint"):
+                    self._input_hint.update("VIM: Esc normal • Enter submit • /vim off")
+
+            # Force refresh to ensure visual update
+            self._vim_indicator.refresh(layout=True)
+            if hasattr(self, "_input_hint"):
+                self._input_hint.refresh()
 
         def _show_help_modal(self) -> None:
             """Show help information in a modal."""
@@ -2242,9 +2457,22 @@ Type your question and press Enter to ask the agents.
             vote_results=None,
             selected_agent=None,
         ):
-            """Display final answer modal with flush effect."""
+            """Display final answer modal with flush effect and winner celebration."""
             if not selected_agent:
                 return
+
+            # Track the winner
+            self._winner_agent_id = selected_agent
+
+            # Mark the winning answer(s) in tracked answers
+            for ans in self._answers:
+                if ans.get("agent_id") == selected_agent:
+                    ans["is_winner"] = True
+                    ans["is_final"] = True
+
+            # Celebrate the winner
+            self._celebrate_winner(selected_agent, answer)
+
             if self.final_stream_panel:
                 self.final_stream_panel.begin(selected_agent, vote_results or {})
                 if answer:
@@ -2350,7 +2578,13 @@ Type your question and press Enter to ask the agents.
             """Display vote results."""
             self.add_orchestrator_event("🗳️ Voting complete. Press 'v' to inspect details.")
             self._latest_vote_results_text = formatted_results
-            self._show_modal_async(VoteResultsModal(formatted_results))
+            self._show_modal_async(
+                VoteResultsModal(
+                    results_text=formatted_results,
+                    vote_counts=self._vote_counts.copy() if hasattr(self, "_vote_counts") else None,
+                    votes=self._votes.copy() if hasattr(self, "_votes") else None,
+                ),
+            )
 
         def display_coordination_table(self, table_text: str):
             """Display coordination table."""
@@ -2461,8 +2695,14 @@ Type your question and press Enter to ask the agents.
                 status = getattr(self.coordination_display, "_final_answer_metadata", {}) or {}
                 text = self.coordination_display._format_vote_results(status.get("vote_results", {})) if hasattr(self.coordination_display, "_format_vote_results") else ""
             if not text.strip():
-                text = "Vote results unavailable."
-            self._show_modal_async(VoteResultsModal(text))
+                text = ""
+            self._show_modal_async(
+                VoteResultsModal(
+                    results_text=text,
+                    vote_counts=self._vote_counts.copy() if hasattr(self, "_vote_counts") else None,
+                    votes=self._votes.copy() if hasattr(self, "_votes") else None,
+                ),
+            )
 
         @keyboard_action
         def action_open_system_status(self):
@@ -2553,6 +2793,22 @@ Type your question and press Enter to ask the agents.
                 ),
             )
 
+        @keyboard_action
+        def action_open_unified_browser(self):
+            """Open unified browser modal with tabs for Answers, Votes, Workspace, Timeline."""
+            if not self._answers and not self._votes:
+                self.notify("No activity yet", severity="warning", timeout=3)
+                return
+            self._show_modal_async(
+                BrowserTabsModal(
+                    answers=self._answers,
+                    votes=self._votes,
+                    vote_counts=self._vote_counts.copy() if hasattr(self, "_vote_counts") else {},
+                    agent_ids=self.coordination_display.agent_ids,
+                    winner_agent_id=self._winner_agent_id,
+                ),
+            )
+
         def _get_mcp_status(self) -> Dict[str, Any]:
             """Gather MCP server status from orchestrator."""
             orchestrator = getattr(self.coordination_display, "orchestrator", None)
@@ -2637,6 +2893,14 @@ Type your question and press Enter to ask the agents.
                 self._status_bar.add_vote(voted_for, voter)
                 standings = self._status_bar.get_standings_text()
 
+                # Update progress summary
+                agent_count = len(self.coordination_display.agent_ids)
+                answer_count = len(self._answers)
+                vote_count = len(self._votes)
+                # Expected votes = agents * (agents - 1) in typical voting round
+                expected_votes = agent_count * (agent_count - 1) if agent_count > 1 else 0
+                self._status_bar.update_progress(agent_count, answer_count, vote_count, expected_votes)
+
                 # Enhanced toast with model info
                 voter_display = f"{voter}" + (f" ({voter_model})" if voter_model else "")
                 target_display = f"{voted_for}" + (f" ({voted_for_model})" if voted_for_model else "")
@@ -2684,6 +2948,13 @@ Type your question and press Enter to ask the agents.
                     "is_winner": False,
                 },
             )
+
+            # Update progress summary in StatusBar
+            if self._status_bar:
+                agent_count = len(self.coordination_display.agent_ids)
+                answer_count = len(self._answers)
+                vote_count = len(self._votes)
+                self._status_bar.update_progress(agent_count, answer_count, vote_count)
 
             # Enhanced toast with model info
             agent_display = f"{agent_id}" + (f" ({model_name})" if model_name else "")
@@ -2754,6 +3025,57 @@ Type your question and press Enter to ask the agents.
                     print(f"[ERROR] Failed to add workspace/new_answer card: {e}", file=sys.stderr)
                     traceback.print_exc()
 
+        def _celebrate_winner(self, winner_id: str, answer_preview: str) -> None:
+            """Display prominent winner celebration effects.
+
+            Args:
+                winner_id: The winning agent's ID
+                answer_preview: Preview of the winning answer
+            """
+            # Get model name for richer display
+            model_name = self.coordination_display.agent_models.get(winner_id, "")
+
+            # 1. Update StatusBar with winner announcement
+            if self._status_bar:
+                agent_count = len(self.coordination_display.agent_ids)
+                answer_count = len(self._answers)
+                vote_count = len(self._votes)
+                self._status_bar.update_progress(
+                    agent_count,
+                    answer_count,
+                    vote_count,
+                    0,
+                    winner=winner_id,
+                )
+                self._status_bar.celebrate_winner(winner_id)
+
+            # 2. Add winner CSS class to the winning agent's tab
+            try:
+                tab_bar = self.query_one(AgentTabBar)
+                for tab in tab_bar.query(".agent-tab"):
+                    if getattr(tab, "agent_id", "") == winner_id:
+                        tab.add_class("winner")
+                        break
+            except Exception:
+                pass  # Tab bar might not be available
+
+            # 3. Enhanced toast notification for winner
+            winner_display = f"{winner_id}" + (f" ({model_name})" if model_name else "")
+
+            # Truncate answer preview
+            preview = answer_preview[:80].replace("\n", " ") if answer_preview else ""
+            if len(answer_preview or "") > 80:
+                preview += "..."
+
+            self.notify(
+                f"🏆 [bold yellow]Consensus Reached![/]\n" f"Winner: [bold]{winner_display}[/]\n" f"Preview: {preview}",
+                severity="information",
+                timeout=10,
+            )
+
+            # 4. Add orchestrator event
+            self.add_orchestrator_event(f"🏆 Winner: {winner_id} selected by consensus")
+
         def notify_phase(self, phase: str) -> None:
             """Called on phase change. Updates status bar phase indicator."""
             if self._status_bar:
@@ -2777,14 +3099,14 @@ Type your question and press Enter to ask the agents.
             if self._status_bar:
                 self._status_bar.update_votes(vote_counts)
 
-        def on_key(self, event: events.Key):
-            """Map number keys directly to agent inspection, mirroring Rich UI."""
+        def _handle_agent_shortcuts(self, event: events.Key) -> bool:
+            """Handle agent shortcuts. Returns True if event was handled."""
             if self._keyboard_locked():
-                return
+                return False
 
             key = event.character
             if not key:
-                return
+                return False
 
             if key.isdigit() and key != "0":
                 idx = int(key) - 1
@@ -2792,17 +3114,19 @@ Type your question and press Enter to ask the agents.
                     agent_id = self.coordination_display.agent_ids[idx]
                     self._switch_to_agent(agent_id)
                     event.stop()
-                    return
+                    return True
 
             if key.lower() == "s":
                 self.action_open_system_status()
                 event.stop()
-                return
+                return True
 
             if key.lower() == "o":
                 self.action_open_orchestrator()
                 event.stop()
-                return
+                return True
+
+            return False
 
         def _show_coordination_table_modal(self):
             """Display coordination table in a modal."""
@@ -2917,7 +3241,7 @@ Type your question and press Enter to ask the agents.
             else:
                 yield Label(f"Ready with {len(self.agents_info)} agents", id="welcome_agents")
             yield Label("Type your question below to begin...", id="welcome_hint")
-            yield Label("Press ? for keyboard shortcuts  •  /help for commands", id="welcome_shortcuts_hint")
+            yield Label("Type /help for commands  •  Ctrl+C to quit", id="welcome_shortcuts_hint")
 
     class HeaderWidget(Static):
         """Compact header widget showing minimal branding and session info."""
@@ -3590,11 +3914,15 @@ Type your question and press Enter to ask the agents.
                 parts.append(f"({backend})")
             if self.key_index and 1 <= self.key_index <= 9:
                 parts.append(f"[{self.key_index}]")
+
+            # Add spacing before time to separate it visually
             if self._start_time and self.status in ("working", "streaming"):
                 elapsed = datetime.now() - self._start_time
                 elapsed_str = self._format_elapsed(elapsed.total_seconds())
-                parts.append(f"⏱{elapsed_str}")
-            parts.append(f"[{self.status}]")
+                parts.append(f"  ⏱ {elapsed_str}")  # Extra spaces before timer
+
+            # Status in brackets at the end
+            parts.append(f"  [{self.status}]")
 
             return " ".join(parts)
 
@@ -3655,47 +3983,40 @@ Type your question and press Enter to ask the agents.
             return safe
 
     class KeyboardShortcutsModal(BaseModal):
-        """Modal showing keyboard shortcuts available during coordination."""
+        """Modal showing commands available during coordination."""
 
         def compose(self) -> ComposeResult:
             from textual.widgets import Static
 
             with Container(id="shortcuts_modal_container"):
-                yield Label("⌨️  Keyboard Shortcuts", id="shortcuts_modal_header")
-                yield Label("Press ? or h anytime to see this", id="shortcuts_hint")
+                yield Label("📖  Commands & Shortcuts", id="shortcuts_modal_header")
+                yield Label("Type /help for full command list", id="shortcuts_hint")
                 with Container(id="shortcuts_content"):
                     yield Static(
-                        "[bold cyan]Navigation[/]\n"
-                        "  [yellow]Tab[/] / [yellow]Shift+Tab[/]    Switch between agents\n"
-                        "  [yellow]1-9[/]                 Jump to agent by number\n"
+                        "[bold cyan]Input[/]\n"
+                        "  [yellow]Enter[/]          Submit question\n"
+                        "  [yellow]Shift+Enter[/]    New line\n"
+                        "  [yellow]Tab[/]            Next agent\n"
+                        "  [yellow]Shift+Tab[/]      Previous agent\n"
+                        "  [yellow]/vim[/]           Toggle vim mode\n"
                         "\n"
-                        "[bold cyan]Views & Modals[/]\n"
-                        "  [yellow]f[/]    Full agent output (current agent)\n"
-                        "  [yellow]b[/]    Browse all answers\n"
-                        "  [yellow]t[/]    Coordination timeline\n"
-                        "  [yellow]w[/]    Workspace file browser\n"
-                        "  [yellow]c[/]    Cost breakdown (token usage)\n"
-                        "  [yellow]m[/]    Metrics (tool statistics)\n"
-                        "  [yellow]p[/]    MCP server status\n"
-                        "  [yellow]v[/]    Vote results\n"
-                        "  [yellow]o[/]    Orchestrator events\n"
-                        "  [yellow]s[/]    System status\n"
-                        "  [yellow]?[/]    Show this help\n"
+                        "[bold cyan]Quit[/]\n"
+                        "  [yellow]Ctrl+C[/]         Exit MassGen\n"
+                        "  [yellow]Ctrl+D[/]         Exit MassGen\n"
+                        "  [yellow]/quit[/]          Exit MassGen\n"
                         "\n"
-                        "[bold cyan]Actions[/]\n"
-                        "  [yellow]q[/] / [yellow]Esc[/] / [yellow]Ctrl+Q[/]    Quit\n"
-                        "\n"
-                        "[bold cyan]Slash Commands[/] [dim](type in input)[/]\n"
+                        "[bold cyan]Slash Commands[/]\n"
                         "  [green]/help[/]         Full command list\n"
                         "  [green]/output[/]       View agent output\n"
                         "  [green]/answers[/]      Browse all answers\n"
                         "  [green]/timeline[/]     Coordination timeline\n"
                         "  [green]/files[/]        Workspace file browser\n"
+                        "  [green]/browser[/]      Unified browser\n"
                         "  [green]/cost[/]         Cost breakdown\n"
                         "  [green]/metrics[/]      Tool metrics\n"
+                        "  [green]/votes[/]        Vote results\n"
                         "  [green]/mcp[/]          MCP server status\n"
-                        "  [green]/events N[/]     Last N events\n"
-                        "  [green]/workspace[/]    List workspace files\n"
+                        "  [green]/status[/]       System status\n"
                         "  [green]/config[/]       Open config in editor",
                         id="shortcuts_text",
                         markup=True,
@@ -3986,6 +4307,227 @@ Type your question and press Enter to ask the agents.
 
         def on_button_pressed(self, event: Button.Pressed) -> None:
             if event.button.id == "close_timeline_button":
+                self.dismiss()
+
+        def key_escape(self) -> None:
+            self.dismiss()
+
+    class BrowserTabsModal(BaseModal):
+        """Unified browser modal with tabs for Answers, Votes, Workspace, and Timeline."""
+
+        BINDINGS = [
+            Binding("1", "tab_answers", "Answers"),
+            Binding("2", "tab_votes", "Votes"),
+            Binding("3", "tab_workspace", "Workspace"),
+            Binding("4", "tab_timeline", "Timeline"),
+            Binding("escape", "close", "Close"),
+        ]
+
+        def __init__(
+            self,
+            answers: List[Dict[str, Any]],
+            votes: List[Dict[str, Any]],
+            vote_counts: Dict[str, int],
+            agent_ids: List[str],
+            winner_agent_id: Optional[str] = None,
+        ):
+            super().__init__()
+            self.answers = answers
+            self.votes = votes
+            self.vote_counts = vote_counts
+            self.agent_ids = agent_ids
+            self.winner_agent_id = winner_agent_id
+            self._current_tab = "answers"
+
+        def compose(self) -> ComposeResult:
+            with Container(id="browser_tabs_container"):
+                yield Static(
+                    "[bold]1[/] Answers  [bold]2[/] Votes  [bold]3[/] Workspace  [bold]4[/] Timeline",
+                    id="browser_tab_bar",
+                )
+                yield Static(self._render_current_tab(), id="browser_content")
+                yield Button("Close (ESC)", id="close_browser_button")
+
+        def _render_current_tab(self) -> str:
+            """Render content for the current tab."""
+            if self._current_tab == "answers":
+                return self._render_answers_tab()
+            elif self._current_tab == "votes":
+                return self._render_votes_tab()
+            elif self._current_tab == "workspace":
+                return self._render_workspace_tab()
+            elif self._current_tab == "timeline":
+                return self._render_timeline_tab()
+            return ""
+
+        def _render_answers_tab(self) -> str:
+            """Render answers list."""
+            if not self.answers:
+                return "[dim]No answers yet[/]"
+
+            lines = ["[bold cyan]📝 Answers[/]", "─" * 50]
+
+            for i, answer in enumerate(self.answers, 1):
+                agent = answer.get("agent_id", "?")[:12]
+                model = answer.get("model", "")[:15]
+                label = answer.get("answer_label", f"#{i}")
+                is_winner = answer.get("is_winner", False) or answer.get("agent_id") == self.winner_agent_id
+
+                badge = " [bold yellow]🏆[/]" if is_winner else ""
+                model_info = f" ({model})" if model else ""
+
+                # Content preview
+                content = answer.get("content", "")[:60].replace("\n", " ")
+                if len(answer.get("content", "")) > 60:
+                    content += "..."
+
+                lines.append(f"  {i}. [bold]{agent}[/]{model_info} - {label}{badge}")
+                lines.append(f"     [dim]{content}[/]")
+
+            return "\n".join(lines)
+
+        def _render_votes_tab(self) -> str:
+            """Render vote distribution and individual votes."""
+            lines = ["[bold cyan]🗳️ Votes[/]", "─" * 50]
+
+            # Vote distribution
+            if self.vote_counts:
+                non_zero = {k: v for k, v in self.vote_counts.items() if v > 0}
+                if non_zero:
+                    max_votes = max(non_zero.values())
+                    total = sum(non_zero.values())
+                    lines.append("\n[bold]Distribution:[/]")
+                    for agent, count in sorted(non_zero.items(), key=lambda x: -x[1]):
+                        bar_width = int((count / max_votes) * 15) if max_votes > 0 else 0
+                        bar = "█" * bar_width + "░" * (15 - bar_width)
+                        prefix = "🏆 " if count == max_votes else "   "
+                        pct = (count / total * 100) if total > 0 else 0
+                        lines.append(f"{prefix}{agent[:10]:10} {bar} {count} ({pct:.0f}%)")
+
+            # Individual votes
+            if self.votes:
+                lines.append("\n[bold]Vote History:[/]")
+                for i, vote in enumerate(self.votes, 1):
+                    voter = vote.get("voter", "?")[:10]
+                    target = vote.get("voted_for", "?")[:10]
+                    lines.append(f"  {i}. [dim]{voter}[/] → [bold]{target}[/]")
+            elif not self.vote_counts:
+                lines.append("[dim]No votes yet[/]")
+
+            return "\n".join(lines)
+
+        def _render_workspace_tab(self) -> str:
+            """Render workspace info summary."""
+            if not self.answers:
+                return "[dim]No workspaces available yet[/]"
+
+            lines = ["[bold cyan]📁 Workspaces[/]", "─" * 50]
+            lines.append("[dim]Tip: Press 'w' for full workspace browser[/]\n")
+
+            for i, answer in enumerate(self.answers, 1):
+                agent = answer.get("agent_id", "?")[:12]
+                workspace = answer.get("workspace_path", "")
+
+                if workspace:
+                    import os
+
+                    if os.path.isdir(workspace):
+                        try:
+                            file_count = sum(1 for f in os.listdir(workspace) if os.path.isfile(os.path.join(workspace, f)))
+                            lines.append(f"  {i}. [bold]{agent}[/]: {file_count} files")
+                        except Exception:
+                            lines.append(f"  {i}. [bold]{agent}[/]: [dim]path unavailable[/]")
+                    else:
+                        lines.append(f"  {i}. [bold]{agent}[/]: [dim]no workspace[/]")
+                else:
+                    lines.append(f"  {i}. [bold]{agent}[/]: [dim]no workspace[/]")
+
+            return "\n".join(lines)
+
+        def _render_timeline_tab(self) -> str:
+            """Render timeline summary."""
+            lines = ["[bold cyan]📅 Timeline[/]", "─" * 50]
+            lines.append("[dim]Tip: Press 't' for detailed timeline[/]\n")
+
+            # Build events from answers and votes
+            events = []
+            for answer in self.answers:
+                events.append(
+                    {
+                        "type": "answer",
+                        "timestamp": answer.get("timestamp", 0),
+                        "agent": answer.get("agent_id", "?")[:10],
+                        "label": answer.get("answer_label", "?"),
+                        "is_winner": answer.get("is_winner", False) or answer.get("agent_id") == self.winner_agent_id,
+                    },
+                )
+            for vote in self.votes:
+                events.append(
+                    {
+                        "type": "vote",
+                        "timestamp": vote.get("timestamp", 0),
+                        "voter": vote.get("voter", "?")[:10],
+                        "target": vote.get("voted_for", "?")[:10],
+                    },
+                )
+
+            # Sort by timestamp
+            events.sort(key=lambda x: x.get("timestamp", 0))
+
+            for event in events[-10:]:  # Last 10 events
+                import datetime as dt_module
+
+                ts = event.get("timestamp", 0)
+                time_str = dt_module.datetime.fromtimestamp(ts).strftime("%H:%M:%S") if ts else "??:??:??"
+
+                if event["type"] == "answer":
+                    symbol = "★" if event.get("is_winner") else "○"
+                    lines.append(f"  {time_str} {symbol} {event['agent']} → {event['label']}")
+                else:
+                    lines.append(f"  {time_str} ◇ {event['voter']} → {event['target']}")
+
+            lines.append(f"\n[dim]Total: {len(self.answers)} answers, {len(self.votes)} votes[/]")
+            return "\n".join(lines)
+
+        def _switch_tab(self, tab: str) -> None:
+            """Switch to a different tab."""
+            self._current_tab = tab
+            try:
+                content = self.query_one("#browser_content", Static)
+                content.update(self._render_current_tab())
+
+                # Update tab bar to show active tab
+                tab_bar = self.query_one("#browser_tab_bar", Static)
+                tabs = ["answers", "votes", "workspace", "timeline"]
+                tab_labels = ["Answers", "Votes", "Workspace", "Timeline"]
+                parts = []
+                for i, (t, label) in enumerate(zip(tabs, tab_labels), 1):
+                    if t == tab:
+                        parts.append(f"[bold reverse] {i} {label} [/]")
+                    else:
+                        parts.append(f"[bold]{i}[/] {label}")
+                tab_bar.update("  ".join(parts))
+            except Exception:
+                pass
+
+        def action_tab_answers(self) -> None:
+            """Switch to answers tab."""
+            self._switch_tab("answers")
+
+        def action_tab_votes(self) -> None:
+            """Switch to votes tab."""
+            self._switch_tab("votes")
+
+        def action_tab_workspace(self) -> None:
+            """Switch to workspace tab."""
+            self._switch_tab("workspace")
+
+        def action_tab_timeline(self) -> None:
+            """Switch to timeline tab."""
+            self._switch_tab("timeline")
+
+        def on_button_pressed(self, event: Button.Pressed) -> None:
+            if event.button.id == "close_browser_button":
                 self.dismiss()
 
         def key_escape(self) -> None:
@@ -4301,16 +4843,88 @@ Type your question and press Enter to ask the agents.
                 yield Button("Close (ESC)", id="close_button")
 
     class VoteResultsModal(BaseModal):
-        """Modal for detailed vote results."""
+        """Modal for detailed vote results with distribution visualization."""
 
-        def __init__(self, results_text: str):
+        def __init__(
+            self,
+            results_text: str,
+            vote_counts: Optional[Dict[str, int]] = None,
+            votes: Optional[List[Dict[str, Any]]] = None,
+        ):
             super().__init__()
             self.results_text = results_text
+            self.vote_counts = vote_counts or {}
+            self.votes = votes or []
+
+        def _render_vote_distribution(self) -> str:
+            """Render ASCII bar chart of vote distribution."""
+            if not self.vote_counts:
+                return ""
+
+            # Filter out zero votes
+            non_zero = {k: v for k, v in self.vote_counts.items() if v > 0}
+            if not non_zero:
+                return ""
+
+            max_votes = max(non_zero.values())
+            total_votes = sum(non_zero.values())
+            lines = []
+            lines.append("[bold cyan]Vote Distribution[/]")
+            lines.append("─" * 45)
+
+            # Sort by vote count (descending)
+            for agent_id, count in sorted(non_zero.items(), key=lambda x: -x[1]):
+                short_id = agent_id[:12]
+                bar_width = int((count / max_votes) * 20) if max_votes > 0 else 0
+                bar = "█" * bar_width + "░" * (20 - bar_width)
+                pct = (count / total_votes * 100) if total_votes > 0 else 0
+
+                # Winner gets trophy
+                prefix = "🏆 " if count == max_votes else "   "
+                lines.append(f"{prefix}[bold]{short_id:12}[/] {bar} {count}/{total_votes} ({pct:.0f}%)")
+
+            lines.append("")
+            return "\n".join(lines)
+
+        def _render_vote_details(self) -> str:
+            """Render individual vote details."""
+            if not self.votes:
+                return ""
+
+            lines = []
+            lines.append("[bold cyan]Individual Votes[/]")
+            lines.append("─" * 45)
+
+            for i, vote in enumerate(self.votes, 1):
+                voter = vote.get("voter", "?")[:10]
+                target = vote.get("voted_for", "?")[:10]
+                reason = vote.get("reason", "")[:40]
+                lines.append(f"  {i}. [dim]{voter}[/] → [bold]{target}[/]")
+                if reason:
+                    lines.append(f"     [italic dim]{reason}[/]")
+
+            lines.append("")
+            return "\n".join(lines)
 
         def compose(self) -> ComposeResult:
+            # Build combined content
+            distribution = self._render_vote_distribution()
+            details = self._render_vote_details()
+
+            # Combine distribution, details, and original text
+            combined_parts = []
+            if distribution:
+                combined_parts.append(distribution)
+            if details:
+                combined_parts.append(details)
+            if self.results_text:
+                combined_parts.append("[bold cyan]Vote Summary[/]\n" + "─" * 45 + "\n" + self.results_text)
+
+            full_content = "\n".join(combined_parts) if combined_parts else "No votes recorded."
+
             with Container(id="vote_results_container"):
-                yield Label("🗳️ Voting Breakdown", id="vote_header")
-                yield TextArea(self.results_text, id="vote_results", read_only=True)
+                yield Label("🗳️ Voting Results", id="vote_header")
+                yield Static(full_content, id="vote_results_content")
                 yield Button("Close (ESC)", id="close_vote_button")
 
     class SystemStatusModal(BaseModal):

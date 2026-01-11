@@ -242,7 +242,9 @@ class ReasoningSection(Vertical):
         max-height: 30%;
         margin: 0 0 1 0;
         padding: 0;
-        border: dashed $primary-darken-3;
+        border: solid #30363d;
+        border-left: thick #484f58;
+        background: #161b22;
     }
 
     ReasoningSection.collapsed #reasoning_content {
@@ -257,7 +259,12 @@ class ReasoningSection(Vertical):
         height: 1;
         width: 100%;
         padding: 0 1;
-        background: $surface-darken-1;
+        background: #21262d;
+        color: #8b949e;
+    }
+
+    ReasoningSection #reasoning_header:hover {
+        background: #30363d;
     }
 
     ReasoningSection #reasoning_content {
@@ -265,12 +272,13 @@ class ReasoningSection(Vertical):
         max-height: 100%;
         padding: 0 1;
         overflow-y: auto;
+        background: #0d1117;
     }
 
     ReasoningSection .reasoning-text {
         width: 100%;
         padding: 0;
-        color: $text-muted;
+        color: #8b949e;
     }
     """
 
@@ -435,6 +443,13 @@ class TimelineSection(Vertical):
         background: $surface-darken-1;
         padding: 0 1;
     }
+
+    TimelineSection .timeline-text.reasoning-inline {
+        color: #8b949e;
+        border-left: thick #484f58;
+        padding-left: 1;
+        margin: 0 0 1 0;
+    }
     """
 
     def __init__(self, id: Optional[str] = None) -> None:
@@ -444,9 +459,7 @@ class TimelineSection(Vertical):
         self._reasoning_section_id = f"reasoning_{id}" if id else "reasoning_section"
 
     def compose(self) -> ComposeResult:
-        # Reasoning section at the top (collapsible)
-        yield ReasoningSection(id=self._reasoning_section_id)
-        # Main timeline content
+        # Main timeline content (reasoning is now inline)
         yield ScrollableContainer(id="timeline_container")
 
     def add_tool(self, tool_data: ToolDisplayData) -> ToolCallCard:
@@ -574,14 +587,28 @@ class TimelineSection(Vertical):
             print(f"[ERROR] add_separator failed: {e}", file=sys.stderr)
 
     def add_reasoning(self, content: str) -> None:
-        """Add coordination/reasoning content to the collapsible reasoning section.
+        """Add coordination/reasoning content inline with nice styling.
 
         Args:
             content: Reasoning/voting/coordination text
         """
+        if not content.strip():
+            return
+
+        self._item_count += 1
+        widget_id = f"tl_reasoning_{self._item_count}"
+
         try:
-            reasoning = self.query_one(f"#{self._reasoning_section_id}", ReasoningSection)
-            reasoning.add_content(content)
+            container = self.query_one("#timeline_container", ScrollableContainer)
+
+            # Style reasoning content with a subtle left border and muted color
+            widget = Static(
+                Text(f"💭 {content}", style="dim italic"),
+                id=widget_id,
+                classes="timeline-text reasoning-inline",
+            )
+            container.mount(widget)
+            container.scroll_end(animate=False)
         except Exception:
             pass
 
@@ -590,12 +617,6 @@ class TimelineSection(Vertical):
         try:
             container = self.query_one("#timeline_container", ScrollableContainer)
             container.remove_children()
-        except Exception:
-            pass
-        # Also clear reasoning section
-        try:
-            reasoning = self.query_one(f"#{self._reasoning_section_id}", ReasoningSection)
-            reasoning.clear()
         except Exception:
             pass
         self._tools.clear()
@@ -940,13 +961,13 @@ class CompletionFooter(Static):
 
 
 class RestartBanner(Static):
-    """Prominent restart separator banner.
+    """Subtle, professional restart separator banner.
 
-    Design:
+    Design - understated gradient style:
     ```
-    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    ⚡ RESTART — ATTEMPT 2 — Consensus not reached
-    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
+                        ⟳ Round 1 Complete
+    ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄
     ```
     """
 
@@ -954,24 +975,8 @@ class RestartBanner(Static):
     RestartBanner {
         width: 100%;
         height: auto;
-        margin: 1 0;
+        margin: 2 0;
         padding: 0;
-    }
-
-    RestartBanner .restart-line {
-        width: 100%;
-        height: 1;
-        background: #d63031;
-    }
-
-    RestartBanner .restart-label {
-        width: 100%;
-        height: 1;
-        padding: 0 2;
-        background: #d63031;
-        color: white;
-        text-style: bold;
-        text-align: center;
     }
     """
 
@@ -980,9 +985,39 @@ class RestartBanner(Static):
         self._label = label
 
     def render(self) -> Text:
-        """Render the restart banner."""
+        """Render a subtle, professional restart banner."""
         text = Text()
-        text.append("━" * 70 + "\n", style="bold #ff6b6b")
-        text.append(f"  {self._label}  ".center(70), style="bold white on #d63031")
-        text.append("\n" + "━" * 70, style="bold #ff6b6b")
+
+        # Clean up the label - extract meaningful info
+        display_label = self._label
+        if "RESTART" in display_label.upper():
+            # Try to extract round number
+            import re
+
+            match = re.search(r"ROUND\s*(\d+)", display_label, re.IGNORECASE)
+            if match:
+                round_num = match.group(1)
+                display_label = f"⟳ Round {round_num} Complete"
+            else:
+                display_label = "⟳ New Round Starting"
+
+        # Subtle dotted line style - professional and understated
+        line_char = "┄"
+        line_width = 68
+
+        # Top line - gradient fade effect using dim styling
+        text.append("  ", style="")
+        text.append(line_char * line_width, style="dim #5a6374")
+        text.append("\n")
+
+        # Center label with subtle amber/gold accent
+        label_centered = display_label.center(line_width)
+        text.append("  ", style="")
+        text.append(label_centered, style="#e2b340")
+        text.append("\n")
+
+        # Bottom line
+        text.append("  ", style="")
+        text.append(line_char * line_width, style="dim #5a6374")
+
         return text

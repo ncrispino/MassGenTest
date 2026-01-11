@@ -15,6 +15,8 @@ from .content_sections import (
     TimelineSection,
     ToolSection,
 )
+from .multi_line_input import MultiLineInput
+from .path_suggestion import PathSuggestion, PathSuggestionDropdown
 from .tab_bar import AgentTab, AgentTabBar, AgentTabChanged
 from .tool_card import ToolCallCard, format_tool_display_name, get_tool_category
 from .tool_detail_modal import ToolDetailModal
@@ -38,4 +40,9 @@ __all__ = [
     "StatusBadge",
     "CompletionFooter",
     "RestartBanner",
+    # Input widgets
+    "MultiLineInput",
+    # Path autocomplete
+    "PathSuggestion",
+    "PathSuggestionDropdown",
 ]
