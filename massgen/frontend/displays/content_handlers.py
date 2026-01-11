@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, Optional
 
-from .content_normalizer import NormalizedContent
+from .content_normalizer import ContentNormalizer, NormalizedContent
 
 
 @dataclass
@@ -176,6 +176,17 @@ TOOL_CATEGORIES = {
             "context",
         ],
     },
+    "workspace": {
+        "icon": "📝",
+        "color": "#4fc1ff",
+        "patterns": [
+            "workspace",
+            "new_answer",
+            "vote",
+            "answer",
+            "coordination",
+        ],
+    },
 }
 
 
@@ -243,6 +254,9 @@ def summarize_result(result: str, max_len: int = 100) -> str:
     """Summarize tool result for display."""
     if not result:
         return ""
+
+    # Strip injection markers that may appear in tool results
+    result = ContentNormalizer.strip_injection_markers(result)
 
     # Count lines
     lines = result.split("\n")
@@ -442,6 +456,9 @@ class ToolContentHandler(BaseContentHandler):
         end_time = datetime.now()
         elapsed = (end_time - state.start_time).total_seconds()
 
+        # Strip injection markers from result content
+        cleaned_content = ContentNormalizer.strip_injection_markers(content) if content else ""
+
         return ToolDisplayData(
             tool_id=state.tool_id,
             tool_name=state.tool_name,
@@ -456,7 +473,7 @@ class ToolContentHandler(BaseContentHandler):
             elapsed_seconds=elapsed,
             args_full=state.args_full,  # Pass through stored args
             result_summary=summarize_result(content),
-            result_full=content,  # Store full result for modal
+            result_full=cleaned_content,  # Store cleaned result for modal
         )
 
     def _handle_failed(self, meta, content: str) -> Optional[ToolDisplayData]:

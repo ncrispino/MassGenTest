@@ -101,13 +101,14 @@ class ToolDetailModal(ModalScreen[None]):
 
     ToolDetailModal .modal-content {
         height: auto;
-        max-height: 15;
+        max-height: 25;
         padding: 0 1;
         overflow-y: auto;
+        scrollbar-gutter: stable;
     }
 
     ToolDetailModal.expanded .modal-content {
-        max-height: 40;
+        max-height: 60;
     }
 
     ToolDetailModal .args-content {

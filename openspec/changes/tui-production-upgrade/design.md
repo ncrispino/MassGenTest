@@ -643,61 +643,116 @@ ToastNotification.type-error {
 
 ---
 
-## 9. Content Filtering & Smart Display
+## 9. Content Display Architecture (Revised)
 
 ### Problem
-Current TUI shows ALL streaming content, causing information overload.
+Current TUI shows ALL streaming content, causing information overload. Original plan was to filter content, but internal reasoning is valuable - it just needs organization.
 
-### Solution: Content Type Filtering
+### Solution: Content Normalization & Section Widgets
+
+**Key Decision**: Don't filter valuable content (internal reasoning, voting). Instead, categorize it and display in organized sections. Only filter true noise.
+
+### Content Normalization (Single Entry Point)
 ```python
-class ContentFilter:
-    """Filter content by type for display."""
+class ContentNormalizer:
+    """Single entry point for all content preprocessing."""
 
-    def __init__(self):
-        self.show_thinking: bool = True
-        self.show_tools: bool = True  # Always show as cards
-        self.show_reasoning: bool = False  # Collapsed by default
-        self.show_web_search: bool = False  # Truncated
+    @classmethod
+    def normalize(cls, content: str, raw_type: str = "") -> NormalizedContent:
+        """Process content for display.
 
-    def should_display(self, content: str, content_type: str) -> bool:
-        """Determine if content should be displayed."""
-        if content_type == "tool":
-            return self.show_tools
-        elif content_type == "thinking":
-            return self.show_thinking
-        elif content_type == "reasoning":
-            return self.show_reasoning
-        return True
+        Steps:
+        1. Strip backend prefixes (emojis, [MCP], etc.)
+        2. Detect content type (tool_start, thinking, text, etc.)
+        3. Extract tool metadata
+        4. Flag coordination content (for grouping, not filtering)
+        5. Filter noise (empty JSON, workspace tool JSON)
+        """
 
-    def format_content(self, content: str, content_type: str) -> str:
-        """Format content for display."""
-        if content_type == "web_search" and not self.show_web_search:
-            # Truncate to preview
-            lines = content.split("\n")
-            if len(lines) > 3:
-                return "\n".join(lines[:3]) + "\n[... truncated]"
-        return content
+    @staticmethod
+    def is_workspace_tool_json(content: str) -> bool:
+        """Check for internal coordination JSON.
+
+        Filters: action_type, answer_data, action: "new_answer", etc.
+        These are hidden because they'll be shown via proper tool cards.
+        """
+
+    @staticmethod
+    def is_coordination_content(content: str) -> bool:
+        """Check for voting/coordination patterns (for categorization).
+
+        Patterns: "Voting for", "I will vote for", "existing answers", etc.
+        This content is displayed in ReasoningSection, not filtered.
+        """
 ```
 
-### Tool Call Detection
-```python
-def detect_tool_call(content: str) -> Optional[ToolCallEvent]:
-    """Parse tool call from content stream."""
-    # Pattern for tool start
-    start_pattern = r"🔧\s+(?:Calling|Using)\s+(\w+)"
-    # Pattern for tool result
-    result_pattern = r"🔧\s+Result:\s*(.*)"
+### Section Widget Architecture
+```
+TimelineSection (Container) - Chronological content display
+├── ResponseSection (Static)      # Clean response/answer display
+├── ReasoningSection (Static)     # Collapsible coordination content
+├── ToolCallCard (Static)         # Individual tool call with status
+└── RestartBanner (Static)        # Prominent restart separator
+```
 
-    if match := re.match(start_pattern, content):
-        return ToolCallEvent(
-            call_id=str(uuid.uuid4())[:8],
-            tool_name=match.group(1),
-            status="running"
-        )
-    elif match := re.match(result_pattern, content):
-        # Update existing tool call
-        ...
-    return None
+### TimelineSection
+```python
+class TimelineSection(Container):
+    """Chronological content with tools interleaved."""
+
+    def add_text(self, content: str) -> None
+    def add_reasoning(self, content: str) -> None  # Coordination content
+    def add_tool(self, tool_name: str, status: str, args: str = "") -> str
+    def update_tool(self, tool_id: str, status: str, result: str = "") -> None
+    def add_separator(self, label: str = "") -> None  # RestartBanner for restarts
+```
+
+### RestartBanner
+```python
+class RestartBanner(Static):
+    """Prominent visual separator for session restarts."""
+    # Red background, centered label
+    # Format: "⚡ RESTART — ATTEMPT N — reason"
+```
+
+### Content Routing Flow
+```
+Content → ContentNormalizer.normalize()
+              │
+              ├── is_workspace_tool_json? → FILTER (hidden)
+              ├── is_json_noise? → FILTER (hidden)
+              ├── is_coordination? → TimelineSection.add_reasoning()
+              └── else → TimelineSection.add_text()
+
+Tool events → ToolContentHandler.process()
+              │
+              └── TimelineSection.add_tool() / update_tool()
+
+Restart → show_restart_separator()
+              │
+              └── TimelineSection.add_separator() → RestartBanner
+```
+
+### What Gets Filtered vs Categorized
+
+| Content Type | Action | Reason |
+|--------------|--------|--------|
+| Empty JSON `{}`, `[]` | FILTER | Pure noise |
+| Workspace tool JSON | FILTER | Will be tool cards |
+| Voting/coordination | CATEGORIZE → ReasoningSection | Valuable but needs organization |
+| Tool calls | PARSE → ToolCallCard | Structured display |
+| Regular text | DISPLAY → TimelineSection | Normal content |
+
+### CSS: Legacy RichLog Hidden
+```css
+/* Hide legacy RichLog, TimelineSection is primary display */
+AgentPanel RichLog {
+    display: none;
+}
+
+TimelineSection {
+    height: 1fr;  /* Fill available space */
+}
 ```
 
 ---
@@ -742,15 +797,15 @@ massgen/frontend/displays/
 ├── base_display.py
 ├── terminal_display.py
 ├── rich_terminal_display.py
-├── textual_terminal_display.py  # Major refactor
-├── textual_widgets/             # NEW
-│   ├── __init__.py
-│   ├── tab_bar.py              # AgentTabBar
-│   ├── tool_card.py            # ToolCallCard
-│   ├── toast.py                # ToastNotification, ToastContainer
-│   ├── status_bar.py           # StatusBar
-│   └── content_panel.py        # AgentContentPanel
+├── textual_terminal_display.py  # Main display, AgentPanel
+├── content_normalizer.py        # ContentNormalizer, NormalizedContent
+├── content_handlers.py          # ToolContentHandler, ThinkingContentHandler
+├── textual_widgets/
+│   ├── __init__.py              # Widget exports
+│   ├── tab_bar.py               # AgentTabBar, AgentTab
+│   ├── tool_card.py             # ToolCallCard (for tool display)
+│   └── content_sections.py      # TimelineSection, ReasoningSection, RestartBanner
 └── textual_themes/
-    ├── dark.tcss               # Update with new styles
-    └── light.tcss              # Update with new styles
+    ├── dark.tcss                # Dark theme (VS Code-inspired)
+    └── light.tcss               # Light theme
 ```

@@ -550,16 +550,28 @@ class TimelineSection(Vertical):
         try:
             container = self.query_one("#timeline_container", ScrollableContainer)
 
-            sep_text = Text()
-            sep_text.append("─" * 50, style="dim")
-            if label:
-                sep_text.append(f" {label} ", style="dim italic")
-                sep_text.append("─" * 10, style="dim")
+            # Check if this is a restart separator
+            is_restart = "RESTART" in label.upper() if label else False
 
-            container.mount(Static(sep_text, id=widget_id))
+            if is_restart:
+                # Create prominent restart banner
+                banner = RestartBanner(label=label, id=widget_id)
+                container.mount(banner)
+            else:
+                # Regular separator
+                sep_text = Text()
+                sep_text.append("─" * 50, style="dim")
+                if label:
+                    sep_text.append(f" {label} ", style="dim italic")
+                    sep_text.append("─" * 10, style="dim")
+                container.mount(Static(sep_text, id=widget_id))
+
             container.scroll_end(animate=False)
-        except Exception:
-            pass
+        except Exception as e:
+            # Log the error but don't crash
+            import sys
+
+            print(f"[ERROR] add_separator failed: {e}", file=sys.stderr)
 
     def add_reasoning(self, content: str) -> None:
         """Add coordination/reasoning content to the collapsible reasoning section.
@@ -925,3 +937,52 @@ class CompletionFooter(Static):
     def hide(self) -> None:
         """Hide the footer."""
         self.is_visible = False
+
+
+class RestartBanner(Static):
+    """Prominent restart separator banner.
+
+    Design:
+    ```
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    ⚡ RESTART — ATTEMPT 2 — Consensus not reached
+    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    ```
+    """
+
+    DEFAULT_CSS = """
+    RestartBanner {
+        width: 100%;
+        height: auto;
+        margin: 1 0;
+        padding: 0;
+    }
+
+    RestartBanner .restart-line {
+        width: 100%;
+        height: 1;
+        background: #d63031;
+    }
+
+    RestartBanner .restart-label {
+        width: 100%;
+        height: 1;
+        padding: 0 2;
+        background: #d63031;
+        color: white;
+        text-style: bold;
+        text-align: center;
+    }
+    """
+
+    def __init__(self, label: str = "", id: Optional[str] = None) -> None:
+        super().__init__(id=id)
+        self._label = label
+
+    def render(self) -> Text:
+        """Render the restart banner."""
+        text = Text()
+        text.append("━" * 70 + "\n", style="bold #ff6b6b")
+        text.append(f"  {self._label}  ".center(70), style="bold white on #d63031")
+        text.append("\n" + "━" * 70, style="bold #ff6b6b")
+        return text

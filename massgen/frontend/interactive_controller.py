@@ -560,8 +560,18 @@ class SlashCommandDispatcher:
      /inspect           - Current turn outputs
      /inspect <N>       - View turn N outputs
      /inspect all       - List all session turns
+   /output [agent]      - Show full agent output (modal view)
+     /output            - Select from agent list
+     /output Agent_1    - View specific agent output
    /events [N]          - Show last N coordination events (default: 5)
    /vote                - Show vote results for last turn
+   /cost, /c            - Show token usage and cost breakdown
+   /workspace, /w       - List workspace files
+   /metrics, /m         - Show tool execution metrics
+   /mcp, /p             - Show MCP server status
+   /answers, /b         - Browse all answers submitted
+   /timeline, /t        - Show coordination timeline
+   /files, /w           - Browse workspace files from answers
 
 💡 Multi-line Input:
    Start with \"\"\" or ''' and end with the same delimiter
@@ -625,6 +635,20 @@ class SlashCommandDispatcher:
             return self._handle_events(args)
         elif cmd in ("/vote", "/v"):
             return self._handle_vote(args)
+        elif cmd in ("/cost", "/c"):
+            return self._handle_cost()
+        elif cmd in ("/workspace", "/w"):
+            return self._handle_workspace()
+        elif cmd in ("/metrics", "/m"):
+            return self._handle_metrics()
+        elif cmd in ("/mcp", "/p"):
+            return self._handle_mcp()
+        elif cmd in ("/answers", "/b"):
+            return self._handle_answers()
+        elif cmd in ("/timeline", "/t"):
+            return self._handle_timeline()
+        elif cmd == "/files":
+            return self._handle_files()
         else:
             return CommandResult(
                 handled=False,
@@ -820,6 +844,55 @@ class SlashCommandDispatcher:
         return CommandResult(
             message="\n".join(lines),
             ui_action="show_vote",
+        )
+
+    def _handle_cost(self) -> CommandResult:
+        """Handle /cost command - show token usage and cost breakdown."""
+        return CommandResult(
+            message="Opening cost breakdown...",
+            ui_action="show_cost",
+        )
+
+    def _handle_workspace(self) -> CommandResult:
+        """Handle /workspace command - show workspace files."""
+        return CommandResult(
+            message="Opening workspace files...",
+            ui_action="show_workspace",
+        )
+
+    def _handle_metrics(self) -> CommandResult:
+        """Handle /metrics command - show tool execution metrics."""
+        return CommandResult(
+            message="Opening tool metrics...",
+            ui_action="show_metrics",
+        )
+
+    def _handle_mcp(self) -> CommandResult:
+        """Handle /mcp command - show MCP server status."""
+        return CommandResult(
+            message="Opening MCP server status...",
+            ui_action="show_mcp",
+        )
+
+    def _handle_answers(self) -> CommandResult:
+        """Handle /answers command - open answer browser modal."""
+        return CommandResult(
+            message="Opening answer browser...",
+            ui_action="show_answers",
+        )
+
+    def _handle_timeline(self) -> CommandResult:
+        """Handle /timeline command - show coordination timeline."""
+        return CommandResult(
+            message="Opening coordination timeline...",
+            ui_action="show_timeline",
+        )
+
+    def _handle_files(self) -> CommandResult:
+        """Handle /files command - browse workspace files from answer snapshots."""
+        return CommandResult(
+            message="Opening workspace file browser...",
+            ui_action="show_files",
         )
 
 

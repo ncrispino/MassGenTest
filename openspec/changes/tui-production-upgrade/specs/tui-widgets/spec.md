@@ -447,6 +447,131 @@ class ToastContainer(Widget):
 
 ---
 
+## 7. Content Section Widgets (Phase 2)
+
+These widgets provide structured content display within AgentPanel.
+
+### TimelineSection
+
+Chronological content container that replaces RichLog as the primary display.
+
+```python
+class TimelineSection(Container):
+    """Chronological content display with tools interleaved."""
+
+    def add_text(self, content: str) -> None:
+        """Add regular text content."""
+
+    def add_reasoning(self, content: str) -> None:
+        """Add coordination/reasoning content to ReasoningSection."""
+
+    def add_tool(
+        self,
+        tool_name: str,
+        status: str = "running",
+        args: str = "",
+    ) -> str:
+        """Add a tool call card, returns tool_id for updates."""
+
+    def update_tool(
+        self,
+        tool_id: str,
+        status: str = "success",
+        result: str = "",
+    ) -> None:
+        """Update an existing tool card status/result."""
+
+    def add_separator(self, label: str = "") -> None:
+        """Add a separator. Uses RestartBanner for restart labels."""
+```
+
+### CSS
+```css
+TimelineSection {
+    height: 1fr;  /* Fill available vertical space */
+    padding: 0;
+    margin: 0;
+}
+```
+
+---
+
+### ReasoningSection
+
+Collapsible section for internal reasoning and coordination content.
+
+```python
+class ReasoningSection(Static):
+    """Collapsible reasoning/coordination content."""
+
+    expanded: reactive[bool] = True
+
+    def add_content(self, content: str) -> None:
+        """Add reasoning content."""
+
+    def toggle(self) -> None:
+        """Toggle expanded/collapsed state."""
+```
+
+### Content Routed Here
+- Voting decisions ("I will vote for...")
+- Answer analysis ("existing answers show...")
+- Coordination messages ("Agent 1 provides...")
+
+### CSS
+```css
+ReasoningSection {
+    border: dashed #3d4550;
+    padding: 0 1;
+    margin: 1 0;
+}
+
+ReasoningSection.collapsed {
+    height: 1;
+    overflow: hidden;
+}
+```
+
+---
+
+### RestartBanner
+
+Prominent visual separator when session restarts.
+
+```python
+class RestartBanner(Static):
+    """Prominent restart separator banner."""
+
+    def __init__(self, label: str = "") -> None:
+        """Initialize with restart label.
+
+        Args:
+            label: Format "⚡ RESTART — ATTEMPT N — reason"
+        """
+
+    def render(self) -> Text:
+        """Render red banner with centered label."""
+```
+
+### Visual Design
+```
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ⚡ RESTART — ATTEMPT 2 — Consensus not reached
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+```
+
+### CSS
+```css
+RestartBanner {
+    width: 100%;
+    height: auto;
+    margin: 2 0;
+    text-align: center;
+}
+```
+
+---
+
 ## Widget Hierarchy
 
 ```
@@ -455,11 +580,14 @@ TextualApp
 ├── AgentTabBar
 │   └── AgentTab × N
 ├── Container (main)
-│   └── AgentContentPanel
+│   └── AgentPanel
 │       ├── AgentHeader
-│       └── ScrollableContainer
-│           ├── RichLog (text content)
-│           └── ToolCallCard × N
+│       ├── RichLog (hidden via CSS, legacy)
+│       └── TimelineSection (primary content display)
+│           ├── ReasoningSection (collapsible coordination content)
+│           ├── ToolCallCard × N (tool calls with status)
+│           ├── ResponseSection (final answers)
+│           └── RestartBanner (session restart separators)
 ├── Input
 ├── StatusBar
 │   ├── VoteDisplay

@@ -30,7 +30,7 @@ ContentType = Literal[
     "coordination",  # New type for voting/coordination content
 ]
 
-# Patterns for stripping backend prefixes
+# Patterns for stripping backend prefixes (applied at start of content)
 STRIP_PATTERNS = [
     # Emojis at start of line
     (r"^[\U0001F300-\U0001F9FF\u2600-\u26FF\u2700-\u27BF]+\s*", ""),
@@ -46,12 +46,26 @@ STRIP_PATTERNS = [
     (r"^[📊📁🔧✅❌⏳📥💡🎤🧠📋🔄⚡🌐💻🗄️📦🔌🤖]\s*[📊📁🔧✅❌⏳📥💡🎤🧠📋🔄⚡🌐💻🗄️📦🔌🤖]\s*", ""),
 ]
 
+# Patterns for stripping markers that can appear anywhere in content (not just start)
+GLOBAL_STRIP_PATTERNS = [
+    # [INJECTION] marker with optional preceding backslash/whitespace
+    (r"\\?\s*\[INJECTION\]\s*", " "),
+    # [REMINDER] marker anywhere
+    (r"\\?\s*\[REMINDER\]\s*", " "),
+    # MCP: prefix anywhere (with optional preceding backslash)
+    (r"\\?\s*MCP:\s*🐢?\s*", " "),
+]
+
+COMPILED_GLOBAL_STRIP_PATTERNS = [(re.compile(p), r) for p, r in GLOBAL_STRIP_PATTERNS]
+
 # Compiled regex patterns for performance
 COMPILED_STRIP_PATTERNS = [(re.compile(p), r) for p, r in STRIP_PATTERNS]
 
 # Patterns for detecting tool events
+# NOTE: The first pattern uses negative lookbehind to avoid matching
+# "Results for Calling" or "Arguments for Calling" as start events
 TOOL_START_PATTERNS = [
-    r"Calling (?:tool )?['\"]?([^\s'\"\.]+)['\"]?",
+    r"(?<!Results for )(?<!Arguments for )Calling (?:tool )?['\"]?([^\s'\"\.]+)['\"]?",
     r"Tool call: (\w+)",
     r"Executing (\w+)",
     r"Starting tool[:\s]+(\w+)",
@@ -93,6 +107,35 @@ JSON_NOISE_PATTERNS = [
     r"^\s*```json\s*$",  # JSON code fence opener
 ]
 
+# Workspace/action tool JSON patterns - these are internal structures that
+# should be filtered as they'll be shown via proper tool cards instead
+WORKSPACE_TOOL_PATTERNS = [
+    # Standard JSON patterns
+    r'"action_type"\s*:\s*"',  # "action_type": "new_answer"
+    r'"answer_data"\s*:\s*\{',  # "answer_data": {
+    r'"action"\s*:\s*"new_answer"',  # "action": "new_answer"
+    r'"action"\s*:\s*"vote"',  # "action": "vote"
+    r'"content"\s*:\s*"[^"]*\\n',  # "content": "...\n (multiline content in JSON)
+    # Partial/malformed patterns (content may be concatenated with other text)
+    r'action"\s*:\s*"new_answer"',  # action": "new_answer" (without leading quote)
+    r'action"\s*:\s*"vote"',  # action": "vote" (without leading quote)
+    r'action_type"\s*:\s*"',  # action_type": " (without leading quote)
+    r'answer_data"\s*:\s*\{',  # answer_data": { (without leading quote)
+    # Vote-specific patterns
+    r'"target_agent_id"\s*:\s*"',  # Vote target field
+    r'"reason"\s*:\s*"[^"]*vot',  # Vote reason field mentioning vote
+    r'target_agent_id"\s*:\s*"',  # target_agent_id": (without leading quote)
+    # Workspace tool patterns
+    r'workspace\.action"\s*:\s*"',  # workspace.action": pattern
+    r'\.action"\s*:\s*"new_answer"',  # .action": "new_answer"
+    r'\.action"\s*:\s*"vote"',  # .action": "vote"
+    # Structured output patterns (Gemini format)
+    r'\{\s*"action_type"\s*:',  # Start of structured JSON block
+    r'\{\s*"action"\s*:\s*"(?:new_answer|vote)"',  # {"action": "new_answer" or "vote"
+]
+
+COMPILED_WORKSPACE_PATTERNS = [re.compile(p, re.IGNORECASE) for p in WORKSPACE_TOOL_PATTERNS]
+
 COMPILED_JSON_NOISE = [re.compile(p) for p in JSON_NOISE_PATTERNS]
 
 # Patterns to detect coordination/voting content (for categorization, not filtering)
@@ -107,6 +150,20 @@ COORDINATION_PATTERNS = [
     r"current answers",
     r"restarting due to new answers",
 ]
+
+# Patterns for workspace state content that should be filtered from display
+# These are internal messages that leak through from agent responses
+WORKSPACE_STATE_PATTERNS = [
+    r'^Providing answer:\s*"',  # "Providing answer: "..." at start
+    r"^- CWD:\s*",  # "- CWD: /path/..." workspace path
+    r"^- File created:\s*",  # "- File created: filename" workspace state
+    r"^- File modified:\s*",  # "- File modified: filename" workspace state
+    r"^- File deleted:\s*",  # "- File deleted: filename" workspace state
+    r'"Answer already provided by \w+',  # Duplicate answer error messages
+    r"Provide different answer or vote for existing one",  # Error continuation
+]
+
+COMPILED_WORKSPACE_STATE_PATTERNS = [re.compile(p, re.IGNORECASE | re.MULTILINE) for p in WORKSPACE_STATE_PATTERNS]
 
 COMPILED_COORDINATION_PATTERNS = [re.compile(p, re.IGNORECASE) for p in COORDINATION_PATTERNS]
 
@@ -150,6 +207,20 @@ class ContentNormalizer:
         result = content
         for pattern, replacement in COMPILED_STRIP_PATTERNS:
             result = pattern.sub(replacement, result)
+        return result.strip()
+
+    @staticmethod
+    def strip_injection_markers(content: str) -> str:
+        """Strip [INJECTION], [REMINDER], and MCP markers from anywhere in content.
+
+        Unlike strip_prefixes which only works at the start, this removes markers
+        that can appear mid-content (e.g., in tool results).
+        """
+        result = content
+        for pattern, replacement in COMPILED_GLOBAL_STRIP_PATTERNS:
+            result = pattern.sub(replacement, result)
+        # Clean up multiple spaces that may result from substitutions
+        result = re.sub(r"  +", " ", result)
         return result.strip()
 
     @staticmethod
@@ -250,6 +321,60 @@ class ContentNormalizer:
     def is_coordination_content(content: str) -> bool:
         """Check if content is coordination/voting related (for categorization)."""
         for pattern in COMPILED_COORDINATION_PATTERNS:
+            if pattern.search(content):
+                return True
+        return False
+
+    @staticmethod
+    def is_workspace_tool_json(content: str) -> bool:
+        """Check if content is primarily workspace/action tool JSON that should be filtered.
+
+        These are internal coordination structures (action_type, answer_data, etc.)
+        that will be shown via proper tool cards instead of raw JSON.
+
+        Only returns True if:
+        1. Content starts with { or [ (after stripping whitespace/markdown)
+        2. AND contains workspace action patterns
+
+        This prevents filtering mixed content like "Here is my answer: {json}"
+        where the reasoning part should be preserved.
+        """
+        stripped = content.strip()
+
+        # Remove markdown code fence if present
+        if stripped.startswith("```"):
+            # Find end of first line
+            first_newline = stripped.find("\n")
+            if first_newline > 0:
+                stripped = stripped[first_newline + 1 :]
+            # Remove closing fence
+            if stripped.rstrip().endswith("```"):
+                stripped = stripped.rstrip()[:-3].rstrip()
+            stripped = stripped.strip()
+
+        # Only consider it workspace JSON if it starts with JSON structure
+        if not (stripped.startswith("{") or stripped.startswith("[")):
+            return False
+
+        # Now check for workspace action patterns
+        for pattern in COMPILED_WORKSPACE_PATTERNS:
+            if pattern.search(content):
+                return True
+        return False
+
+    @staticmethod
+    def is_workspace_state_content(content: str) -> bool:
+        """Check if content is workspace state info that should be filtered.
+
+        This includes messages like:
+        - "Providing answer: ..."
+        - "- CWD: /path/..."
+        - "- File created: ..."
+        - "Answer already provided by agent_b..."
+
+        These are internal coordination messages that leak through from agent responses.
+        """
+        for pattern in COMPILED_WORKSPACE_STATE_PATTERNS:
             if pattern.search(content):
                 return True
         return False
@@ -361,8 +486,12 @@ class ContentNormalizer:
         # Determine if should display
         should_display = True
 
-        # Only filter pure JSON noise
+        # Filter pure JSON noise
         if cls.is_json_noise(content):
+            should_display = False
+
+        # Filter workspace/action tool JSON (shown via tool cards instead)
+        if cls.is_workspace_tool_json(content):
             should_display = False
 
         # Apply light cleaning

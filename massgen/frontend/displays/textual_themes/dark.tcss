@@ -44,6 +44,12 @@ Screen {
     margin-top: 2;
 }
 
+#welcome_shortcuts_hint {
+    color: #858585;
+    text-style: italic;
+    margin-top: 1;
+}
+
 #main_container {
     layout: vertical;
     background: #1e1e1e;
@@ -544,6 +550,314 @@ ToolDetailModal .close-button {
     color: #d4d4d4;
 }
 
+/* Cost Breakdown Modal */
+#cost_breakdown_container {
+    background: #252526;
+    border: thick #4ec9b0;
+    padding: 2;
+    width: 90%;
+    height: 70%;
+}
+
+#cost_header {
+    color: #4ec9b0;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#cost_content {
+    background: #1e1e1e;
+    color: #d4d4d4;
+}
+
+/* Workspace Files Modal */
+#workspace_container {
+    background: #252526;
+    border: thick #569cd6;
+    padding: 2;
+    width: 80%;
+    height: 70%;
+}
+
+#workspace_header {
+    color: #569cd6;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#workspace_content {
+    background: #1e1e1e;
+    color: #d4d4d4;
+    height: 1fr;
+}
+
+#workspace_buttons {
+    margin-top: 1;
+}
+
+#workspace_buttons Button {
+    margin-right: 1;
+}
+
+/* Context Modal */
+#context_container {
+    background: #252526;
+    border: thick #ce9178;
+    padding: 2;
+    width: 80%;
+    height: auto;
+    max-height: 80%;
+}
+
+#context_header {
+    color: #ce9178;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#context_hint {
+    color: #9cdcfe;
+    margin-bottom: 1;
+}
+
+#context_current_paths {
+    background: #1e1e1e;
+    color: #d4d4d4;
+    height: auto;
+    max-height: 10;
+    margin-bottom: 1;
+}
+
+#add_path_label {
+    color: #ffffff;
+    margin-top: 1;
+}
+
+#new_path_input {
+    margin-bottom: 1;
+}
+
+#context_buttons {
+    margin-top: 1;
+}
+
+#context_buttons Button {
+    margin-right: 1;
+}
+
+/* Metrics Modal */
+#metrics_container {
+    background: #252526;
+    border: thick #c586c0;
+    padding: 2;
+    width: 90%;
+    height: 70%;
+}
+
+#metrics_header {
+    color: #c586c0;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#metrics_content {
+    background: #1e1e1e;
+    color: #d4d4d4;
+}
+
+/* Broadcast Prompt Modal */
+#broadcast_container {
+    background: #252526;
+    border: thick #f44747;
+    padding: 2;
+    width: 80%;
+    height: auto;
+    max-height: 80%;
+}
+
+#broadcast_banner {
+    color: #ffffff;
+    background: #f44747;
+    text-style: bold;
+    text-align: center;
+    padding: 1;
+    margin-bottom: 1;
+}
+
+#broadcast_sender {
+    color: #9cdcfe;
+    margin-bottom: 1;
+}
+
+#broadcast_question_label {
+    color: #ffffff;
+    text-style: bold;
+}
+
+#broadcast_question {
+    background: #1e1e1e;
+    color: #d4d4d4;
+    height: auto;
+    max-height: 8;
+    margin-bottom: 1;
+}
+
+#broadcast_timeout {
+    color: #ce9178;
+    margin-bottom: 1;
+}
+
+#response_label {
+    color: #ffffff;
+    text-style: bold;
+}
+
+#broadcast_input {
+    margin-bottom: 1;
+}
+
+#broadcast_buttons {
+    margin-top: 1;
+}
+
+#broadcast_buttons Button {
+    margin-right: 1;
+}
+
+#submit_broadcast_button {
+    background: #4ec9b0;
+}
+
+#skip_broadcast_button {
+    background: #5a5a5a;
+}
+
+/* File Inspection Modal */
+#file_inspection_container {
+    background: #252526;
+    border: thick #007ACC;
+    padding: 2;
+    width: 90%;
+    height: 80%;
+}
+
+#file_inspection_header {
+    color: #007ACC;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#file_inspection_content {
+    height: 1fr;
+}
+
+#file_tree_panel {
+    width: 35%;
+    border-right: solid #3d4550;
+    padding-right: 1;
+}
+
+#tree_label {
+    color: #9cdcfe;
+    margin-bottom: 1;
+}
+
+#workspace_tree {
+    height: 1fr;
+    background: #1e1e1e;
+}
+
+#file_preview_panel {
+    width: 65%;
+    padding-left: 1;
+}
+
+#preview_label {
+    color: #9cdcfe;
+    margin-bottom: 1;
+}
+
+#file_preview {
+    background: #1e1e1e;
+    color: #d4d4d4;
+    height: 1fr;
+}
+
+#file_inspection_buttons {
+    margin-top: 1;
+}
+
+#file_inspection_buttons Button {
+    margin-right: 1;
+}
+
+/* === Agent Output Modal === */
+#agent_output_container {
+    width: 90%;
+    height: 85%;
+    background: #252526;
+    border: solid #4ec9b0;
+    padding: 1 2;
+}
+
+#agent_output_header {
+    color: #4ec9b0;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#agent_output_stats {
+    color: #858585;
+    margin-bottom: 1;
+}
+
+#agent_output_text {
+    height: 1fr;
+    background: #1e1e1e;
+    color: #d4d4d4;
+    border: solid #3d4550;
+    padding: 1;
+}
+
+#agent_output_buttons {
+    margin-top: 1;
+}
+
+#agent_output_buttons Button {
+    margin-right: 1;
+}
+
+/* === Keyboard Shortcuts Modal === */
+#shortcuts_modal_container {
+    width: 55;
+    height: auto;
+    background: #252526;
+    border: solid #569cd6;
+    padding: 1 2;
+}
+
+#shortcuts_modal_header {
+    color: #569cd6;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#shortcuts_hint {
+    color: #858585;
+    margin-bottom: 1;
+}
+
+#shortcuts_content {
+    height: auto;
+    background: #1e1e1e;
+    padding: 1;
+    border: solid #3d4550;
+}
+
+#shortcuts_text {
+    color: #d4d4d4;
+}
+
 #table_hint {
     color: #9cdcfe;
     margin-bottom: 1;
@@ -633,33 +947,37 @@ ToolCallCard {
     width: 100%;
     height: auto;
     min-height: 2;
-    max-height: 5;
+    max-height: 6;
     padding: 0 1;
-    margin: 0 0 1 0;
-    background: #2d333b;
+    margin: 1 0;
+    background: #1e2530;
+    border: solid #3d4550;
 }
 
 ToolCallCard:hover {
-    background: #363d47;
+    background: #252d3a;
+    border: solid #4a5568;
 }
 
 ToolCallCard:focus {
-    background: #3d4550;
+    background: #2d3748;
+    border: solid #569cd6;
     outline: none;
 }
 
 ToolCallCard.status-running {
-    border-left: tall #569cd6;
+    border: solid #569cd6;
+    background: #1a2535;
 }
 
 ToolCallCard.status-success {
-    border-left: tall #4ec9b0;
-    background: #1c3528;
+    border: solid #4ec9b0;
+    background: #1a2d28;
 }
 
 ToolCallCard.status-error {
-    border-left: tall #f44747;
-    background: #3d1c1c;
+    border: solid #f44747;
+    background: #2d1a1a;
 }
 
 /* Tool type category colors */
@@ -693,6 +1011,10 @@ ToolCallCard.type-ai {
 
 ToolCallCard.type-memory {
     border-left: tall #b5cea8;
+}
+
+ToolCallCard.type-workspace {
+    border-left: tall #4fc1ff;
 }
 
 /* === Content Sections === */
@@ -774,6 +1096,15 @@ TimelineSection .timeline-text.thinking {
 
 TimelineSection .timeline-text.response {
     color: #4ec9b0;
+}
+
+/* Restart Banner - prominent separator for session restarts */
+RestartBanner {
+    width: 100%;
+    height: auto;
+    margin: 2 0;
+    padding: 0;
+    text-align: center;
 }
 
 /* Thinking Section - auto height, shrinks to content */
@@ -901,4 +1232,259 @@ StatusBar.phase-enforcement {
 
 StatusBar.phase-presentation {
     border-top: solid #dcdcaa;
+}
+
+/* === Vote Visualization Animations === */
+
+/* Vote counter pulse animation when vote is cast */
+#status_votes.vote-updated {
+    text-style: bold;
+    background: #4ec9b0 30%;
+}
+
+/* Highlight when vote leader changes */
+#status_votes.leader-changed {
+    background: #dcdcaa 30%;
+    text-style: bold;
+}
+
+/* StatusBar celebration when consensus is reached */
+StatusBar.consensus-reached {
+    background: #2d4a3d;
+    border-top: double #4ec9b0;
+}
+
+StatusBar.consensus-reached #status_votes {
+    color: #4ec9b0;
+    text-style: bold;
+}
+
+/* === MCP Status Modal === */
+#mcp_status_container {
+    width: 70;
+    height: auto;
+    max-height: 80%;
+    background: #252526;
+    border: solid #9cdcfe;
+    padding: 1 2;
+}
+
+#mcp_status_header {
+    color: #9cdcfe;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#mcp_status_summary {
+    color: #858585;
+    margin-bottom: 1;
+}
+
+#mcp_servers_list {
+    height: auto;
+    max-height: 20;
+    background: #1e1e1e;
+    padding: 1;
+    border: solid #3d4550;
+}
+
+.mcp-server-item {
+    margin: 1 0;
+    padding: 0 1;
+    border-left: solid #4ec9b0;
+}
+
+.mcp-server-item.disconnected {
+    border-left: solid #f44747;
+}
+
+/* StatusBar MCP indicator */
+#status_mcp {
+    width: auto;
+    color: #9cdcfe;
+    margin-left: 2;
+}
+
+/* === Answer Browser Modal === */
+#answer_browser_container {
+    width: 90%;
+    height: 85%;
+    background: #252526;
+    border: solid #4ec9b0;
+    padding: 1 2;
+}
+
+#answer_browser_header {
+    color: #4ec9b0;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#answer_browser_summary {
+    color: #858585;
+    margin-bottom: 1;
+}
+
+#answer_filter_row {
+    height: 3;
+    margin-bottom: 1;
+}
+
+#filter_label {
+    width: auto;
+    margin-right: 1;
+}
+
+#agent_filter {
+    width: 30;
+}
+
+#answer_list {
+    height: 1fr;
+    max-height: 50%;
+    background: #1e1e1e;
+    border: solid #3d4550;
+    padding: 1;
+}
+
+.answer-item {
+    margin: 1 0;
+    padding: 0 1;
+    border-left: solid #569cd6;
+}
+
+.answer-item:hover {
+    background: #2a2d2e;
+}
+
+#answer_detail_panel {
+    height: auto;
+    max-height: 30%;
+    background: #1e1e1e;
+    border: solid #3d4550;
+    padding: 1;
+    margin-top: 1;
+}
+
+#answer_detail_content {
+    color: #d4d4d4;
+}
+
+#answer_browser_buttons {
+    margin-top: 1;
+}
+
+/* === Timeline Modal === */
+#timeline_container {
+    width: 95%;
+    height: 85%;
+    background: #252526;
+    border: solid #c586c0;
+    padding: 1 2;
+}
+
+#timeline_header {
+    color: #c586c0;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#timeline_legend {
+    color: #858585;
+    margin-bottom: 1;
+}
+
+#timeline_content {
+    height: 1fr;
+    background: #1e1e1e;
+    border: solid #3d4550;
+    padding: 1;
+}
+
+#timeline_diagram {
+    color: #d4d4d4;
+}
+
+/* === Workspace Browser Modal === */
+#workspace_browser_container {
+    width: 90%;
+    max-width: 120;
+    height: 85%;
+    background: #252526;
+    border: solid #4ec9b0;
+    padding: 1 2;
+}
+
+#workspace_browser_header {
+    color: #4ec9b0;
+    text-style: bold;
+    text-align: center;
+    margin-bottom: 1;
+}
+
+#workspace_answer_row {
+    height: 3;
+    margin-bottom: 1;
+}
+
+#workspace_answer_label {
+    width: auto;
+    padding-right: 1;
+}
+
+#answer_selector {
+    width: 1fr;
+}
+
+#workspace_split {
+    height: 1fr;
+    margin-bottom: 1;
+}
+
+#workspace_file_list_container {
+    width: 35%;
+    height: 100%;
+    border: solid #3d4550;
+    padding: 1;
+}
+
+#file_list_header {
+    color: #9cdcfe;
+    margin-bottom: 1;
+}
+
+#workspace_file_list {
+    height: 1fr;
+    background: #1e1e1e;
+}
+
+.workspace-file-item {
+    padding: 0 1;
+    margin: 0;
+}
+
+.workspace-file-item:hover {
+    background: #2d2d30;
+}
+
+#workspace_preview_container {
+    width: 65%;
+    height: 100%;
+    border: solid #3d4550;
+    padding: 1;
+    margin-left: 1;
+}
+
+#preview_header {
+    color: #9cdcfe;
+    margin-bottom: 1;
+}
+
+#workspace_preview {
+    height: 1fr;
+    background: #1e1e1e;
+}
+
+#close_workspace_browser_button {
+    width: 100%;
 }

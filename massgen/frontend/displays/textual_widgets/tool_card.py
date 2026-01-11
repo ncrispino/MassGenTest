@@ -137,6 +137,17 @@ TOOL_CATEGORIES = {
             "context",
         ],
     },
+    "workspace": {
+        "icon": "📝",
+        "color": "#4fc1ff",
+        "patterns": [
+            "workspace",
+            "new_answer",
+            "vote",
+            "answer",
+            "coordination",
+        ],
+    },
 }
 
 

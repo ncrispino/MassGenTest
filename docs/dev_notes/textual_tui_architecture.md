@@ -24,12 +24,20 @@ TextualTerminalDisplay (TerminalDisplay)
     │   └── FinalStreamPanel              # Final presentation stream
     │
     └── Nested Modal Classes
+        ├── KeyboardShortcutsModal   # ? or h - shortcuts help
+        ├── AgentOutputModal         # f - full agent output
+        ├── CostBreakdownModal       # c - token usage/costs
+        ├── MetricsModal             # m - tool metrics
+        ├── VoteResultsModal         # v - vote results
+        ├── OrchestratorEventsModal  # o - events
+        ├── SystemStatusModal        # s - system status
+        ├── AgentSelectorModal       # Post-answer inspection
+        ├── ContextModal             # /context command
+        ├── WorkspaceFilesModal      # /workspace command
+        ├── FileInspectionModal      # File tree + preview
+        ├── BroadcastPromptModal     # Human input requests
         ├── PresentationModal
-        ├── AgentSelectorModal
         ├── TableModal
-        ├── VoteResultsModal
-        ├── SystemStatusModal
-        ├── OrchestratorEventsModal
         └── TextContentModal
 ```
 
@@ -162,6 +170,57 @@ on_input_submitted() → _dismiss_welcome()
     └── Show main_container (remove_class("hidden"))
 ```
 
+## Keyboard Shortcuts
+
+The TUI supports keyboard shortcuts that work during coordination. Press `?` or `h` to see the shortcuts popup.
+
+### Live Shortcuts (During Coordination)
+
+| Key | Action | Method |
+|-----|--------|--------|
+| `?` or `h` | Show shortcuts help | `action_show_shortcuts()` |
+| `f` | Full agent output | `action_open_agent_output()` |
+| `c` | Cost breakdown | `action_open_cost_breakdown()` |
+| `m` | Metrics | `action_open_metrics()` |
+| `v` | Vote results | `action_open_vote_results()` |
+| `o` | Orchestrator events | `action_open_orchestrator()` |
+| `s` | System status | `action_open_system_status()` |
+| `Tab` | Next agent | `action_next_agent()` |
+| `Shift+Tab` | Previous agent | `action_prev_agent()` |
+| `1-9` | Jump to agent N | `on_key()` handler |
+| `q`/`Esc`/`Ctrl+Q` | Quit | `action_quit()` |
+
+### Slash Commands (Type in Input)
+
+| Command | Shortcut | Description |
+|---------|----------|-------------|
+| `/help` | `/h` | Full command list |
+| `/output [agent]` | - | View agent output |
+| `/cost` | `/c` | Cost breakdown |
+| `/metrics` | `/m` | Tool metrics |
+| `/events [N]` | - | Last N events |
+| `/workspace` | `/w` | Workspace files |
+| `/config` | - | Open config in editor |
+| `/context` | - | Manage context paths |
+| `/inspect` | `/i` | Agent inspection |
+| `/vote` | `/v` | Vote results |
+
+### Adding New Shortcuts
+
+1. Add binding to `BINDINGS` list in `TextualApp`:
+   ```python
+   Binding("x", "my_action", "Label")
+   ```
+
+2. Add action method with `@keyboard_action` decorator:
+   ```python
+   @keyboard_action
+   def action_my_action(self):
+       self._show_modal_async(MyModal())
+   ```
+
+3. Create modal class inheriting from `BaseModal`
+
 ## Styling (TCSS)
 
 Themes are in `massgen/frontend/displays/textual_themes/`:
@@ -256,6 +315,20 @@ Background Thread (Orchestration)
 
 5. **Height in Textual**: Use `height: 1fr` for flexible containers, `height: auto` for content-sized.
 
+## Learnings from Phase 2
+
+### Content Display Redesign
+
+1. **Hide legacy widgets via CSS**: Using `AgentPanel RichLog { display: none; }` is cleaner than removing the widget entirely, preserving the option to re-enable.
+
+2. **Route to new widgets, not old ones**: When `show_restart_separator()` was writing to the hidden RichLog, banners didn't show. Always verify that methods write to the active display widgets.
+
+3. **Filter vs Categorize**: Don't filter valuable content (internal reasoning). Instead, categorize it and display in a collapsible section. Only filter true noise (empty JSON fragments, internal tool JSON that will be shown via proper tool cards).
+
+4. **Content normalization as single entry point**: Having one `ContentNormalizer.normalize()` method that handles all preprocessing makes the system easier to maintain and debug.
+
+5. **Workspace tool JSON filtering**: Internal coordination structures (`action_type`, `answer_data`) should be filtered from raw display because they'll be shown via proper tool cards - otherwise users see ugly JSON.
+
 ## Adding New Features
 
 ### Adding a New Widget
@@ -279,13 +352,161 @@ Content flows through `AgentPanel.add_content()`. To intercept/transform:
 2. Or modify `_flush_buffers()` in `TextualApp`
 3. Or add preprocessing in `update_agent_content()` in `TextualTerminalDisplay`
 
+## Content Display Architecture (Phase 2)
+
+The content display system uses a layered architecture with content normalization, categorization, and specialized section widgets.
+
+### Content Processing Flow
+
+```
+Content from Orchestrator
+    │
+    ▼
+ContentNormalizer.normalize()
+    │
+    ├── Strip backend prefixes (emojis, [MCP], etc.)
+    ├── Detect content type (tool_start, thinking, text, etc.)
+    ├── Extract tool metadata
+    ├── Flag coordination content (voting, answers)
+    └── Filter noise (empty JSON fragments, workspace tool JSON)
+    │
+    ▼
+AgentPanel.add_content()
+    │
+    ├── is_workspace_tool_json? → FILTER (hidden, will be tool cards)
+    ├── is_json_noise? → FILTER (hidden)
+    ├── is_coordination? → TimelineSection.add_reasoning()
+    └── else → TimelineSection.add_text()
+```
+
+### Content Section Widgets
+
+Located in `textual_widgets/content_sections.py`:
+
+```
+TimelineSection (Container)
+├── ResponseSection (Static)      # Clean response/answer display
+├── ReasoningSection (Static)     # Collapsible coordination content
+├── ToolCallCard (Static)         # Individual tool call with status
+└── RestartBanner (Static)        # Prominent restart separator
+```
+
+#### TimelineSection
+
+Main content container that displays content chronologically:
+
+```python
+class TimelineSection(Container):
+    """Chronological content display with tools interleaved."""
+
+    def add_text(self, content: str) -> None
+    def add_reasoning(self, content: str) -> None  # For coordination content
+    def add_tool(self, tool_name: str, status: str, args: str = "") -> str
+    def update_tool(self, tool_id: str, status: str, result: str = "") -> None
+    def add_separator(self, label: str = "") -> None  # Uses RestartBanner for restarts
+```
+
+#### ReasoningSection
+
+Collapsible section for internal reasoning and coordination content:
+
+```python
+class ReasoningSection(Static):
+    """Collapsible reasoning/coordination section."""
+    # Shows voting decisions, answer analysis, coordination messages
+    # Styled with dashed border, can be expanded/collapsed
+```
+
+#### RestartBanner
+
+Prominent visual separator when session restarts:
+
+```python
+class RestartBanner(Static):
+    """Prominent restart separator banner."""
+    # Red background, centered label
+    # Format: "⚡ RESTART — ATTEMPT N — reason"
+```
+
+### Content Normalizer
+
+Located in `content_normalizer.py`:
+
+```python
+class ContentNormalizer:
+    @classmethod
+    def normalize(cls, content: str, raw_type: str = "") -> NormalizedContent:
+        """Single entry point for all content processing."""
+
+    @staticmethod
+    def strip_prefixes(content: str) -> str:
+        """Remove backend emojis and prefixes."""
+
+    @staticmethod
+    def is_json_noise(content: str) -> bool:
+        """Check for empty JSON fragments."""
+
+    @staticmethod
+    def is_workspace_tool_json(content: str) -> bool:
+        """Check for internal action_type/answer_data JSON."""
+
+    @staticmethod
+    def is_coordination_content(content: str) -> bool:
+        """Check for voting/coordination patterns."""
+```
+
+Key filtering patterns:
+- **JSON noise**: `{}`, `[]`, `{`, `}`, etc.
+- **Workspace tool JSON**: `action_type`, `answer_data`, `action: "new_answer"`, etc.
+- **Coordination patterns**: "Voting for", "I will vote for", "existing answers", etc.
+
+### CSS Styling
+
+Tool cards use status-based styling:
+
+```css
+ToolCallCard {
+    border: solid #3d4550;
+    background: #1e2530;
+}
+
+ToolCallCard.status-running {
+    border: solid #569cd6;
+    background: #1a2535;
+}
+
+ToolCallCard.status-success {
+    border: solid #4ec9b0;
+    background: #1a2d28;
+}
+```
+
+TimelineSection fills available space:
+
+```css
+TimelineSection {
+    height: 1fr;  /* Fills available vertical space */
+}
+```
+
+Legacy RichLog is hidden (replaced by TimelineSection):
+
+```css
+AgentPanel RichLog {
+    display: none;
+}
+```
+
 ## File Reference
 
 | File | Purpose |
 |------|---------|
-| `textual_terminal_display.py` | Main display class, TextualApp, all widgets |
+| `textual_terminal_display.py` | Main display class, TextualApp, AgentPanel |
 | `textual_widgets/__init__.py` | Widget exports |
 | `textual_widgets/tab_bar.py` | AgentTabBar, AgentTab, AgentTabChanged |
+| `textual_widgets/content_sections.py` | TimelineSection, ReasoningSection, RestartBanner, etc. |
+| `content_normalizer.py` | ContentNormalizer, NormalizedContent |
+| `content_handlers.py` | ToolContentHandler, ThinkingContentHandler |
 | `textual_themes/dark.tcss` | Dark theme styles |
 | `textual_themes/light.tcss` | Light theme styles |
 | `coordination_ui.py` | Creates display, manages coordination |
@@ -311,3 +532,91 @@ uv run python scripts/test_tab_bar.py
 4. Status updates - tabs and panels update colors
 5. Terminal resize - layout adapts
 6. Theme switching - both dark and light work
+
+## WebUI Parity Roadmap
+
+The Textual TUI aims to provide feature parity with the MassGen WebUI. This section tracks the mapping between WebUI features and TUI implementations.
+
+### Feature Comparison
+
+| WebUI Feature | TUI Status | Key Binding | Notes |
+|---------------|------------|-------------|-------|
+| Toast Notifications | ✅ Basic | - | Using `self.notify()`, needs enhanced answer/vote toasts |
+| Agent Cards | ✅ Done | Tab/1-9 | AgentPanel with status, streaming |
+| Agent Status | ✅ Done | - | StatusBar + tab status badges |
+| Vote Results | ✅ Done | `v` | VoteResultsModal |
+| Vote Distribution | ⚠️ Partial | `v` | Leader highlighting done, bar chart TODO |
+| Cost Breakdown | ✅ Done | `c` | CostBreakdownModal |
+| Tool Metrics | ✅ Done | `m` | MetricsModal |
+| MCP Status | ✅ Done | `p` | MCPStatusModal |
+| Keyboard Shortcuts | ✅ Done | `?`/`h` | KeyboardShortcutsModal |
+| Full Agent Output | ✅ Done | `f` | AgentOutputModal with copy/save |
+| Workspace Browser | ⚠️ Basic | `/workspace` | Tree view exists, needs enhancements |
+| File Preview | ⚠️ Basic | - | FileInspectionModal, needs improvements |
+| Answer Browser | ❌ TODO | `b` | List all answers with filtering |
+| Timeline View | ❌ TODO | `t` | ASCII swimlane visualization |
+| Progress Summary | ⚠️ Partial | - | StatusBar shows phase, needs counts |
+| Follow-up Input | ⚠️ Basic | - | Input field exists, needs polish |
+| Winner Celebration | ⚠️ Partial | - | Vote leader highlight, needs final winner |
+
+### WebUI-Inspired Enhancements (Phase 5.5+)
+
+#### Enhanced Toast Notifications
+WebUI shows rich toasts for answers/votes. TUI should:
+- Show agent model name in answer toasts
+- Show voter → target in vote toasts
+- Color-code by event type
+- Auto-dismiss with configurable timeout
+
+#### Answer Browser Modal
+WebUI has a comprehensive answer browser. TUI should:
+- List all answers with timestamps
+- Filter by agent
+- Show Final Answer / Winner badges
+- Expandable content preview
+- Navigate to agent panel on selection
+
+#### Vote Distribution Visualization
+WebUI shows bar chart. TUI should:
+- ASCII bar chart (`████░░░░ 3/5`)
+- Winner highlighted with trophy
+- Sorted by vote count
+- Total votes summary
+
+#### Timeline Visualization
+WebUI shows SVG swimlane. TUI should:
+```
+┌─Agent_1─┬─Agent_2─┬─Agent_3─┐
+│    ○    │         │    ○    │  t=0 Initial answers
+│    │    │    ○    │    │    │  t=1
+│    └────┼────◇────┤    │    │  t=2 Vote
+│         │    │    │    ★    │  t=3 Final
+└─────────┴─────────┴─────────┘
+○ = answer, ◇ = vote, ★ = final
+```
+
+#### Workspace Browser Enhancements
+WebUI shows file operations. TUI should:
+- File operation badges: `[+]` create, `[~]` modify, `[-]` delete
+- Per-agent workspace selector
+- Version selector for historical snapshots
+- Filter hidden files by default
+
+### Implementation Priority
+
+1. **High Priority** (Core parity)
+   - Enhanced toast notifications
+   - Answer browser modal
+   - Vote distribution bar chart
+   - Workspace operation badges
+
+2. **Medium Priority** (Enhanced UX)
+   - Timeline visualization
+   - Progress summary in StatusBar
+   - Winner celebration effects
+   - Multi-tab browser modal
+
+3. **Lower Priority** (Polish)
+   - File preview improvements
+   - Animated progress indicators
+   - Compare workspaces view

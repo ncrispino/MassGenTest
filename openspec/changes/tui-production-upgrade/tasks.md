@@ -74,64 +74,87 @@
 
 ---
 
-## Phase 2: Tool Call Cards ⚠️ PARTIAL (Styled Bars Approach)
-**Goal**: Structured, collapsible tool call visualization
+## Phase 2: Content Display Redesign ✅ COMPLETE
+**Goal**: Clean, organized content display with section widgets
 **Estimated Effort**: Medium
 **Dependencies**: Phase 1
-**Status**: Completed with styled bars approach; collapsible widgets deferred
+**Status**: Completed 2026-01-10
+
+### Design Decision Change
+
+**Original approach**: Filter content aggressively, use styled bars in RichLog
+**Revised approach**: Categorize content (not filter), use section widgets, hide RichLog
+
+**Key insight**: Internal reasoning (voting, coordination) is valuable - it just needs organization, not filtering. Only filter true noise (empty JSON fragments, internal tool JSON that will become tool cards).
 
 ### What Was Implemented
 
-- [x] **2.3** Implement tool call detection
-  - Parse tool calls from content stream via `_parse_tool_message()`
-  - Detect tool start/result/error patterns
-  - Track active tool calls per agent with `_pending_tool`
+- [x] **2.1** Create `content_normalizer.py`
+  - `ContentNormalizer.normalize()` - Single entry point for all content preprocessing
+  - `NormalizedContent` dataclass with `is_coordination` flag
+  - Minimal JSON noise filtering (empty braces, fragments)
+  - Workspace tool JSON filtering (`action_type`, `answer_data`, etc.)
+  - Coordination content detection (voting patterns) for categorization
 
-- [x] **2.5** Add tool type styling (via styled bars)
-  - Category icons: Filesystem (📁), Web (🌐), Code (💻), Database (🗄️), Git (📦), API (🔌), AI (🤖), Memory (🧠)
-  - Status colors: Green (success), Red (error), Alternating gray (in-progress)
-  - Full-width bars with timing display
+- [x] **2.2** Create `content_handlers.py`
+  - `ToolContentHandler` - Parse tool events, track pending tools
+  - `ThinkingContentHandler` - Clean streaming content
+  - `ToolDisplayData` dataclass for tool card integration
 
-- [x] **2.6** Update TCSS themes
-  - Tool card CSS added (for future use)
-  - ToolCallCard styles in dark.tcss and light.tcss
+- [x] **2.3** Create `content_sections.py` section widgets
+  - `TimelineSection` - Chronological container replacing RichLog
+  - `ReasoningSection` - Collapsible section for coordination content
+  - `RestartBanner` - Prominent red banner for session restarts
+  - `ToolCallCard` - Individual tool call with status styling
+  - `ResponseSection` - Clean response display
+  - `StatusBadge` - Compact inline indicator
+  - `CompletionFooter` - Subtle completion indicator
 
-- [x] **Additional features**
-  - Reasoning display: "🤔 Reasoning" header with dimmed content below
-  - Injection display: Purple bars for cross-agent context
-  - Reminder display: Orange bars for high-priority tasks
-  - Restart detection: Red banner on session restart
-  - JSON filtering: Raw vote/action blocks hidden
+- [x] **2.4** Integrate with AgentPanel
+  - `compose()` yields TimelineSection
+  - `add_content()` routes content to appropriate sections
+  - `show_restart_separator()` uses TimelineSection.add_separator()
+  - Coordination content routed to ReasoningSection
 
-### What Was Attempted But Deferred
+- [x] **2.5** Update CSS themes
+  - ToolCallCard: Full borders, status-colored backgrounds
+  - TimelineSection: `height: 1fr` to fill available space
+  - ReasoningSection: Collapsible with dashed border
+  - RestartBanner: Red background, centered text
+  - Legacy RichLog hidden: `AgentPanel RichLog { display: none; }`
 
-- [ ] **2.1** Define `ToolCallEvent` data model - Not needed for styled bars
-- [ ] **2.2** Implement `ToolCallCard` widget - Created but reverted
-  - Widget exists at `textual_widgets/tool_card.py` but not used
-  - **Issue**: Mounting widgets with `.mount()` doesn't integrate with RichLog scroll
-  - Cards ended up stuck at bottom, click events didn't work
-  - Would require replacing RichLog entirely (major refactor)
-- [ ] **2.4** Integrate with content panel - Using styled bars in RichLog instead
-- [ ] **2.7** Write tests for tool cards - Deferred
+- [x] **2.6** Export widgets
+  - All section widgets exported from `textual_widgets/__init__.py`
 
-### Acceptance Criteria (Revised for Styled Bars)
-- [x] Tool calls display as styled full-width bars
-- [x] Bars show tool name, category icon, and status
-- [x] Status (running/success/error) visually indicated with colors
-- [x] Timing shown on completion
-- [x] Different tool types have distinct category icons
-- [ ] ~~Toggle works via click and Enter key~~ (Deferred - requires RichLog replacement)
+### Acceptance Criteria
+- [x] Content appears in TimelineSection (not hidden RichLog)
+- [x] Restart banners show prominently with red styling
+- [x] Coordination content categorized to ReasoningSection
+- [x] Workspace tool JSON filtered (will be tool cards)
+- [x] Empty JSON noise filtered
+- [x] TimelineSection fills available vertical space
+- [x] Tool cards have status-based styling
 
-### Files Modified
-- `massgen/frontend/displays/textual_terminal_display.py` - `_format_tool_line()`, `_handle_tool_content()`, `_make_full_width_bar()`
-- `massgen/frontend/displays/textual_widgets/tool_card.py` - Created (unused)
-- `massgen/frontend/displays/textual_themes/dark.tcss` - Tool card CSS
-- `massgen/frontend/displays/textual_themes/light.tcss` - Tool card CSS
+### Files Created/Modified
+- `content_normalizer.py` (new) - ContentNormalizer, NormalizedContent
+- `content_handlers.py` (new) - ToolContentHandler, ThinkingContentHandler
+- `textual_widgets/content_sections.py` (new) - All section widgets
+- `textual_widgets/__init__.py` (modified) - Export new widgets
+- `textual_terminal_display.py` (modified) - AgentPanel uses TimelineSection
+- `textual_themes/dark.tcss` (modified) - Section widget CSS
+- `textual_themes/light.tcss` (modified) - Section widget CSS
 
-### Future Work (If Collapsible Cards Still Desired)
-1. Replace RichLog with custom ScrollableContainer holding individual widgets
-2. Or implement virtual collapsibility (re-render RichLog on keyboard shortcut)
-3. Or add separate tool panel sidebar
+### Key Learnings
+
+1. **Hide legacy widgets via CSS**: `AgentPanel RichLog { display: none; }` is cleaner than removing
+2. **Route to new widgets, not old ones**: Restart banners weren't showing because `show_restart_separator()` wrote to hidden RichLog
+3. **Filter vs Categorize**: Don't filter valuable content - categorize and display in collapsible sections
+4. **Use `height: 1fr`**: Not `height: auto; max-height: 70%` for containers that should fill space
+
+### Remaining Work (Phase 2.5)
+- [ ] Parse workspace tool calls into nice tool cards (currently just filtered)
+- [ ] Better tool card expansion/collapse UX
+- [ ] Reasoning section expand/collapse click handling
 
 ---
 
@@ -198,109 +221,268 @@
 
 ---
 
-## Phase 4: Feature Parity with Rich
+## Phase 4: Feature Parity with Rich ✅ COMPLETE
 **Goal**: Port all Rich terminal features
 **Estimated Effort**: Large
 **Dependencies**: Phase 1-3
+**Status**: Completed 2026-01-10
 
-### Tasks
+### What Was Implemented
 
-- [ ] **4.1** Port `/context` command
-  - Interactive path addition UI
-  - Path validation
-  - Config update
+- [x] **4.1** Port `/context` command
+  - Created `ContextModal` with interactive path addition UI
+  - Shows current context paths
+  - Add/remove path operations
+  - Path validation (checks if path exists)
 
-- [ ] **4.2** Port `/config` command
-  - Open config in external editor
-  - Detect editor (VS Code, vim, nano)
-  - Handle editor exit
+- [x] **4.2** Port `/config` command
+  - Already worked via SlashCommandDispatcher
+  - Opens config in external editor (VS Code, vim, nano, or system default)
+  - Proper editor detection and subprocess handling
 
-- [ ] **4.3** Implement `/metrics` command
-  - Tool metrics summary table
-  - Call counts, timing, success rates
-  - Modal or inline display
+- [x] **4.3** Implement `/metrics` command
+  - Created `MetricsModal` with tool metrics summary table
+  - Shows call counts, success/failure rates, avg/min/max duration
+  - Sortable by different columns
 
-- [ ] **4.4** Implement cost breakdown
-  - Per-agent token usage
-  - Cost calculation
-  - Display in modal or status
+- [x] **4.4** Implement cost breakdown
+  - Created `CostBreakdownModal` with per-agent token usage table
+  - Shows input/output/reasoning/cached tokens
+  - Calculates costs from token_manager pricing
+  - Shows peak context usage percentage
 
-- [ ] **4.5** Port full agent selector
-  - View agent output files
-  - Open in external editor
-  - View workspace files
-  - Navigate between agents
+- [x] **4.5** Port full agent selector
+  - Enhanced `AgentSelectorModal` with new options:
+    - Agent inspection (1-9 keys)
+    - Cost breakdown (c key)
+    - Workspace files (w key)
+    - Metrics (m key)
+    - Open workspace (o key)
+  - Navigate between agents with proper file viewing
 
-- [ ] **4.6** Port file inspection
-  - Tree view of workspace
-  - File preview
-  - Open files externally
+- [x] **4.6** Port file inspection
+  - Created `FileInspectionModal` with DirectoryTree widget
+  - Tree view of workspace files (left panel)
+  - File preview with syntax highlighting (right panel)
+  - Open in editor functionality
+  - File size limits for safe preview
 
-- [ ] **4.7** Implement broadcast prompt handling
-  - Human input requests from agents
-  - Timeout handling
-  - Skip in automation mode
+- [x] **4.7** Implement broadcast prompt handling
+  - Created `BroadcastPromptModal` for human input during coordination
+  - Displays agent's question with formatting
+  - Input field for user response
+  - Timeout indicator (countdown)
+  - Skip button for automation mode
+  - Async integration with orchestrator via `prompt_for_broadcast_response()`
 
-- [ ] **4.8** Verify all slash commands
-  - /help, /quit, /reset, /status
-  - /inspect, /events, /vote
-  - /cancel, /config, /context
+- [x] **4.8** Verify all slash commands
+  - /help - Shows command list
+  - /quit, /q - Exit TUI
+  - /reset - Reset session
+  - /status, /s - Show status
+  - /inspect, /i - Agent inspection modal
+  - /events [N] - Last N orchestrator events
+  - /vote - Vote results modal
+  - /cancel - Cancel current operation
+  - /config - Open config in editor
+  - /context - Context path modal
+  - /cost, /c - Cost breakdown modal (NEW)
+  - /workspace, /w - Workspace files modal (NEW)
+  - /metrics, /m - Tool metrics modal (NEW)
 
-- [ ] **4.9** Write comparison tests
+- [ ] **4.9** Write comparison tests (deferred to testing phase)
   - Rich vs TUI output comparison
   - Command behavior parity
 
+### New Slash Commands Added
+| Command | Shortcut | Description |
+|---------|----------|-------------|
+| `/cost` | `/c` | Token usage and cost breakdown |
+| `/workspace` | `/w` | List workspace files |
+| `/metrics` | `/m` | Tool execution metrics |
+
+### Files Created/Modified
+- `massgen/frontend/displays/textual_terminal_display.py` - 6 new modals, helper methods
+- `massgen/frontend/interactive_controller.py` - New command handlers
+- `massgen/frontend/displays/textual_themes/dark.tcss` - Modal CSS styles
+- `massgen/frontend/displays/textual_themes/light.tcss` - Modal CSS styles
+
 ### Acceptance Criteria
-- [ ] All Rich commands work in TUI
-- [ ] Command outputs are equivalent
-- [ ] File inspection works
-- [ ] Cost/metrics display works
-- [ ] Broadcast prompts work
+- [x] All Rich commands work in TUI
+- [x] Command outputs are equivalent
+- [x] File inspection works
+- [x] Cost/metrics display works
+- [x] Broadcast prompts work
 
 ---
 
-## Phase 5: WebUI-Inspired Enhancements
+## Phase 5: WebUI-Inspired Enhancements ⚠️ PARTIAL
 **Goal**: Polish and production readiness
 **Estimated Effort**: Medium
 **Dependencies**: Phase 4
+**Status**: In Progress
 
-### Tasks
+### What Was Implemented
 
-- [ ] **5.1** Real-time vote visualization
-  - Animated vote count updates
-  - Winner highlight animation
-  - Vote history in status bar
+- [x] **5.0** Keyboard shortcuts help system (NEW)
+  - `?` or `h` key opens shortcuts modal during coordination
+  - Rich-formatted display with color-coded sections
+  - Welcome screen shows "Press ? for shortcuts" hint
+  - All keyboard shortcuts documented in popup
 
-- [ ] **5.2** File browser modal
-  - Tree view with folders
-  - File type icons
-  - Preview panel
-  - Navigate and select
+- [x] **5.1** Agent output modal (NEW)
+  - `f` key opens full output for current agent
+  - Copy to clipboard functionality
+  - Save to file functionality
+  - Scrollable text view with line count
 
-- [ ] **5.3** Animated progress indicators
+- [x] **5.2** Live keyboard shortcuts during coordination
+  - `f` - Full agent output
+  - `c` - Cost breakdown modal
+  - `m` - Metrics modal
+  - `p` - MCP server status
+  - `v` - Vote results
+  - `o` - Orchestrator events
+  - `s` - System status
+  - `?`/`h` - Help/shortcuts
+  - `Tab`/`Shift+Tab` - Switch agents
+
+### Keyboard Shortcuts Reference
+
+| Key | Action | Description |
+|-----|--------|-------------|
+| `?` or `h` | Show Help | Keyboard shortcuts popup |
+| `f` | Full Output | Current agent's full output |
+| `c` | Cost | Token usage breakdown |
+| `m` | Metrics | Tool execution stats |
+| `p` | MCP Status | MCP server connections & tools |
+| `v` | Votes | Vote results |
+| `o` | Events | Orchestrator events |
+| `s` | Status | System status |
+| `Tab` | Next Agent | Switch to next agent |
+| `Shift+Tab` | Prev Agent | Switch to previous agent |
+| `1-9` | Agent N | Jump to specific agent |
+| `q`/`Esc` | Quit | Exit TUI |
+
+- [x] **5.3** Real-time vote visualization
+  - Crown emoji (👑) highlights vote leader in StatusBar
+  - CSS animation on vote updates (flash/pulse effect)
+  - Vote history tracking with timestamps
+  - Standings shown in toast notifications
+  - `consensus-reached` CSS animation for winner
+
+- [x] **5.4** MCP server status
+  - `MCPStatusModal` shows connected servers and tools
+  - `p` key binding opens MCP status
+  - `/mcp` or `/p` slash command
+  - StatusBar MCP indicator (`🔌 Ns/Nt` format)
+  - Per-server tool count and preview
+
+### Remaining Tasks - WebUI Parity Features
+
+#### High Priority (Core WebUI Features)
+
+- [ ] **5.5** Enhanced Toast Notifications
+  - New answer toast with agent ID and model name
+  - Vote cast toast with voter → target info
+  - Session completion notifications
+  - Auto-dismiss after configurable timeout
+  - Color-coded by type (answer=green, vote=amber, error=red)
+
+- [ ] **5.6** Answer Browser Modal (`/answers` or `a` key)
+  - List all answers with expandable detail view
+  - Filter by agent
+  - Visual indicators: Final Answer (green), Winner (gold + 🏆)
+  - Timestamp display
+  - Answer content preview
+  - `b` key binding to open browser
+
+- [ ] **5.7** Vote Browser with Distribution
+  - Vote distribution summary (ASCII bar chart)
+  - Winner highlighted with trophy
+  - Individual votes list:
+    - Voter and target agent
+    - Reason text
+    - Valid/superseded status
+  - Integrate into existing vote modal or new tab
+
+- [ ] **5.8** Workspace Browser Enhancements
+  - File operation badges: `[+]` create, `[~]` modify, `[-]` delete
+  - Per-agent workspace selection dropdown
+  - Version selector (current + historical snapshots)
+  - Split pane: file tree (left) + preview (right)
+  - Filter hidden files (.mcp/, __pycache__, etc.)
+  - File size display
+
+- [ ] **5.9** Timeline Visualization
+  - ASCII/Unicode swimlane diagram
+  - Vertical columns per agent
+  - Node types: answer (○), vote (◇), final (★)
+  - Arrows showing context dependencies
+  - Color-coded by agent
+  - `/timeline` or `t` key
+
+#### Medium Priority (Enhanced Features)
+
+- [ ] **5.10** Progress Summary Bar
+  - Compact status line in StatusBar or header
+  - Agent count, answer count, vote progress
+  - Winner announcement when complete
+
+- [ ] **5.11** Agent Card Enhancements
+  - Answer counter per agent
+  - Tool activity badges (last N tools)
+  - Vote target display when voting
+  - Winner badge (crown, gold border)
+
+- [ ] **5.12** Final Answer View
+  - Prominent display of winning answer
+  - Winner info with model name
+  - Copy to clipboard button
+  - Workspace browser for winner
+  - Follow-up question input
+
+- [ ] **5.13** Multi-Tab Browser Modal
+  - Tabs: Answers | Votes | Workspace | Timeline
+  - Unified navigation with number keys (1-4)
+  - Keyboard shortcuts per tab
+  - Progress summary header
+
+#### Lower Priority (Nice-to-Haves)
+
+- [ ] **5.14** File Preview Enhancements
+  - Text file inline preview
+  - Markdown rendering
+  - Syntax highlighting for code
+  - External open for binary files
+
+- [ ] **5.15** Animated Progress Indicators
   - Initialization progress bar
   - Agent setup spinner
   - Turn completion animation
 
-- [ ] **5.4** MCP server status
-  - Show connected servers
-  - Tool availability indicator
-  - Error states
-
-- [ ] **5.5** Workspace quick-view
-  - See files created by agent
-  - Quick preview without leaving panel
-  - Open full view
-
-- [ ] **5.6** Polish and refinement
+- [ ] **5.16** Polish and Refinement
   - Consistent animations
   - Smooth transitions
   - Error state styling
   - Loading states
 
+### Files Modified
+- `textual_terminal_display.py` - KeyboardShortcutsModal, AgentOutputModal, MCPStatusModal, StatusBar vote visualization, action methods
+- `interactive_controller.py` - `/mcp` command, HELP_TEXT updated
+- `textual_themes/dark.tcss` - Modal styling, vote animations, MCP styles
+- `textual_themes/light.tcss` - Modal styling, vote animations, MCP styles
+
 ### Acceptance Criteria
-- [ ] Vote visualization feels responsive
-- [ ] File browser is navigable
+- [x] Keyboard shortcuts accessible via ? key
+- [x] Agent output viewable during coordination
+- [x] Welcome screen shows help hint
+- [x] Vote visualization feels responsive (leader highlight, animations)
+- [x] MCP status viewable via p key or /mcp command
+- [ ] Answer browser with filtering and details
+- [ ] Vote distribution visualization
+- [ ] Enhanced workspace browser with file operations
+- [ ] Timeline visualization
 - [ ] Progress indicators give feedback
 - [ ] Overall UX feels polished
 

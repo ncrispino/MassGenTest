@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 
 from ..cancellation import CancellationRequested
 from .displays.base_display import BaseDisplay
+from .displays.content_normalizer import ContentNormalizer
 from .displays.none_display import NoneDisplay
 from .displays.rich_terminal_display import RichTerminalDisplay, is_rich_available
 from .displays.silent_display import SilentDisplay
@@ -88,6 +89,11 @@ class CoordinationUI:
 
         # Status bar tracking
         self._last_phase = "idle"
+
+        # Per-agent content buffer for filtering workspace tool JSON
+        # Streaming sends small chunks that individually don't match patterns,
+        # so we buffer until we see a complete line or JSON block
+        self._agent_content_buffers: Dict[str, str] = {}
 
     def _process_reasoning_summary(self, chunk_type: str, summary_delta: str, source: str) -> str:
         """Process reasoning summary content using display's shared logic."""
@@ -413,6 +419,13 @@ class CoordinationUI:
             except asyncio.CancelledError:
                 pass
 
+            # Flush any remaining agent content buffers
+            try:
+                if hasattr(self, "_agent_content_buffers") and self._agent_content_buffers:
+                    await self._flush_agent_content_buffers()
+            except asyncio.CancelledError:
+                pass
+
             # Small delay to ensure display updates are processed
             try:
                 await asyncio.sleep(0.1)
@@ -469,6 +482,10 @@ class CoordinationUI:
             self._answer_timeout_task = None
         if hasattr(self, "_final_answer_shown"):
             self._final_answer_shown = False
+
+        # Reset content buffers
+        if hasattr(self, "_agent_content_buffers"):
+            self._agent_content_buffers = {}
 
     async def coordinate(self, orchestrator, question: str, agent_ids: Optional[List[str]] = None) -> str:
         """Coordinate agents with visual display.
@@ -917,6 +934,13 @@ class CoordinationUI:
             except asyncio.CancelledError:
                 pass  # Silently handle cancellation
 
+            # Flush any remaining agent content buffers
+            try:
+                if hasattr(self, "_agent_content_buffers") and self._agent_content_buffers:
+                    await self._flush_agent_content_buffers()
+            except asyncio.CancelledError:
+                pass  # Silently handle cancellation
+
             # Small delay to ensure display updates are processed
             try:
                 await asyncio.sleep(0.1)
@@ -1358,6 +1382,13 @@ class CoordinationUI:
             except asyncio.CancelledError:
                 pass  # Silently handle cancellation
 
+            # Flush any remaining agent content buffers
+            try:
+                if hasattr(self, "_agent_content_buffers") and self._agent_content_buffers:
+                    await self._flush_agent_content_buffers()
+            except asyncio.CancelledError:
+                pass  # Silently handle cancellation
+
             # Small delay to ensure display updates are processed
             try:
                 await asyncio.sleep(0.1)
@@ -1458,13 +1489,113 @@ class CoordinationUI:
                     self.logger.log_orchestrator_event(event)
 
     async def _process_agent_content(self, agent_id: str, content: str):
-        """Process content from a specific agent."""
+        """Process content from a specific agent.
+
+        Uses buffered filtering to handle streaming: small chunks are accumulated
+        until we see a newline or have enough content to check for workspace JSON.
+        """
         # Update agent status - if agent is streaming content, they're working
         # But don't override "completed" status
         current_status = self.display.get_agent_status(agent_id)
         if current_status not in ["working", "completed"]:
             self.display.update_agent_status(agent_id, "working")
 
+        # Initialize buffer for this agent if needed
+        if agent_id not in self._agent_content_buffers:
+            self._agent_content_buffers[agent_id] = ""
+
+        # Add content to buffer
+        self._agent_content_buffers[agent_id] += content
+
+        # Check if we should process the buffer:
+        # The goal is to accumulate enough content to reliably detect workspace JSON
+        # while not delaying display too much for normal content.
+        buffer = self._agent_content_buffers[agent_id]
+        buffer_len = len(buffer)
+
+        # First, check if this looks like a JSON block in progress
+        # If so, wait until we see the closing brace/bracket
+        looks_like_json = buffer.lstrip().startswith("{") or buffer.lstrip().startswith("[")
+        if looks_like_json:
+            # Count braces to detect if JSON is complete
+            open_braces = buffer.count("{") - buffer.count("}")
+            open_brackets = buffer.count("[") - buffer.count("]")
+            json_complete = open_braces == 0 and open_brackets == 0 and buffer_len > 5
+
+            if not json_complete and buffer_len < 500:
+                # JSON still incomplete, keep buffering (up to 500 chars max)
+                return
+
+        # Flush conditions for non-JSON or complete JSON:
+        # 1. Buffer is large enough to reliably match patterns (100+ chars)
+        # 2. Buffer contains newline AND is at least 30 chars
+        # 3. Sentence-ending punctuation with substantial content (30+ chars)
+        # 4. Closing braces/brackets with substantial content (suggests JSON block end)
+        ends_with_sentence = buffer.rstrip().endswith((".", "!", "?"))
+        ends_with_json_close = buffer.rstrip().endswith(("}", "]"))
+        has_newline = "\n" in buffer
+
+        should_flush = buffer_len >= 100 or (has_newline and buffer_len >= 30) or (ends_with_sentence and buffer_len >= 30) or (ends_with_json_close and buffer_len >= 30)
+
+        if not should_flush:
+            # Keep buffering
+            return
+
+        # Process the buffered content
+        self._agent_content_buffers[agent_id] = ""
+
+        # Check if this is workspace tool JSON (action_type, answer_data, etc.)
+        # If so, convert it to a tool card instead of filtering
+        if ContentNormalizer.is_workspace_tool_json(buffer):
+            workspace_action = self._parse_workspace_action(buffer)
+            if workspace_action:
+                action_type, params = workspace_action
+                # Create a tool message that will be displayed as a tool card
+                tool_msg = f"🔧 Calling workspace/{action_type}"
+                if params:
+                    tool_msg += f" {params}"
+                self.display.update_agent_content(agent_id, tool_msg, "tool")
+                if self.logger:
+                    self.logger.log_agent_content(agent_id, tool_msg, "tool")
+            else:
+                # Couldn't parse, just log and skip
+                if self.logger:
+                    self.logger.log_agent_content(agent_id, buffer, "filtered_workflow_json")
+            return
+
+        # Check if buffer contains embedded workspace JSON (mixed content)
+        # If so, try to extract and create tool card, then emit the non-JSON part
+        workspace_action = self._parse_workspace_action(buffer)
+        if workspace_action:
+            action_type, params = workspace_action
+            # Create tool card for the workspace action
+            tool_msg = f"🔧 Calling workspace/{action_type}"
+            if params:
+                tool_msg += f" {params}"
+            self.display.update_agent_content(agent_id, tool_msg, "tool")
+            if self.logger:
+                self.logger.log_agent_content(agent_id, tool_msg, "tool")
+
+            # Extract the non-JSON part (reasoning) to display
+            json_start = buffer.find("{")
+            if json_start > 0:
+                reasoning_part = buffer[:json_start].strip()
+                if reasoning_part and not ContentNormalizer.is_workspace_state_content(reasoning_part):
+                    await self._emit_agent_content(agent_id, reasoning_part)
+            return
+
+        # Filter workspace state content (CWD, File created, etc.)
+        # This is internal coordination info that shouldn't be shown to users
+        if ContentNormalizer.is_workspace_state_content(buffer):
+            if self.logger:
+                self.logger.log_agent_content(agent_id, buffer, "filtered_workspace_state")
+            return
+
+        # Emit the buffered content
+        await self._emit_agent_content(agent_id, buffer)
+
+    async def _emit_agent_content(self, agent_id: str, content: str):
+        """Emit agent content to the display after filtering."""
         # Determine content type and process
         if "🔧" in content or "🔄 Vote invalid" in content:
             # Tool usage or status messages
@@ -1496,6 +1627,119 @@ class CoordinationUI:
             self.display.update_agent_content(agent_id, content, "thinking")
             if self.logger:
                 self.logger.log_agent_content(agent_id, content, "thinking")
+
+    def _parse_workspace_action(self, content: str) -> Optional[tuple]:
+        """Parse workspace action from JSON content.
+
+        Returns:
+            Tuple of (action_type, params_summary) or None if parsing fails.
+        """
+        import json
+
+        # Try to extract JSON from content
+        # Content may have extra text before/after JSON
+        json_start = content.find("{")
+        json_end = content.rfind("}") + 1
+
+        if json_start == -1 or json_end <= json_start:
+            return None
+
+        json_str = content[json_start:json_end]
+
+        try:
+            data = json.loads(json_str)
+        except json.JSONDecodeError:
+            # Try to fix common issues like escaped newlines
+            try:
+                # Replace literal \n with actual newlines for parsing
+                fixed = json_str.replace("\\n", "\n")
+                data = json.loads(fixed)
+            except json.JSONDecodeError:
+                return None
+
+        # Extract action type
+        action_type = data.get("action_type") or data.get("action")
+        if not action_type:
+            # Check for nested structure
+            if "answer_data" in data:
+                action_type = data["answer_data"].get("action")
+            elif "vote_data" in data:
+                action_type = data["vote_data"].get("action")
+
+        if not action_type:
+            return None
+
+        # Build params summary based on action type
+        params = ""
+        if action_type == "new_answer":
+            # Extract answer content preview (may be nested in answer_data)
+            answer_data = data.get("answer_data", data)
+            content_preview = answer_data.get("content", "")
+            if content_preview:
+                # Truncate to first 50 chars
+                preview = content_preview[:50].replace("\n", " ")
+                if len(content_preview) > 50:
+                    preview += "..."
+                params = f'content="{preview}"'
+        elif action_type == "vote":
+            # Extract vote target (may be nested in vote_data)
+            vote_data = data.get("vote_data", data)
+            target = vote_data.get("agent_id", "") or data.get("target_agent_id", "")
+            reason = vote_data.get("reason", "") or data.get("reason", "")
+            if target:
+                params = f"target={target}"
+                if reason:
+                    reason_preview = reason[:30].replace("\n", " ")
+                    if len(reason) > 30:
+                        reason_preview += "..."
+                    params += f' reason="{reason_preview}"'
+
+        return (action_type, params)
+
+    async def _flush_agent_content_buffers(self):
+        """Flush any remaining content in agent buffers.
+
+        Called at the end of a coordination turn to ensure no content is lost.
+        """
+        for agent_id, buffer in list(self._agent_content_buffers.items()):
+            if buffer.strip():
+                # Check if it's pure workspace JSON - if so, convert to tool card
+                if ContentNormalizer.is_workspace_tool_json(buffer):
+                    workspace_action = self._parse_workspace_action(buffer)
+                    if workspace_action:
+                        action_type, params = workspace_action
+                        tool_msg = f"🔧 Calling workspace/{action_type}"
+                        if params:
+                            tool_msg += f" {params}"
+                        self.display.update_agent_content(agent_id, tool_msg, "tool")
+                        if self.logger:
+                            self.logger.log_agent_content(agent_id, tool_msg, "tool")
+                    elif self.logger:
+                        self.logger.log_agent_content(agent_id, buffer, "filtered_workflow_json")
+                # Check if buffer contains embedded workspace JSON (mixed content)
+                elif self._parse_workspace_action(buffer):
+                    workspace_action = self._parse_workspace_action(buffer)
+                    action_type, params = workspace_action
+                    # Create tool card
+                    tool_msg = f"🔧 Calling workspace/{action_type}"
+                    if params:
+                        tool_msg += f" {params}"
+                    self.display.update_agent_content(agent_id, tool_msg, "tool")
+                    if self.logger:
+                        self.logger.log_agent_content(agent_id, tool_msg, "tool")
+                    # Emit reasoning part if any
+                    json_start = buffer.find("{")
+                    if json_start > 0:
+                        reasoning_part = buffer[:json_start].strip()
+                        if reasoning_part and not ContentNormalizer.is_workspace_state_content(reasoning_part):
+                            await self._emit_agent_content(agent_id, reasoning_part)
+                # Filter workspace state content (CWD, File created, etc.)
+                elif ContentNormalizer.is_workspace_state_content(buffer):
+                    if self.logger:
+                        self.logger.log_agent_content(agent_id, buffer, "filtered_workspace_state")
+                else:
+                    await self._emit_agent_content(agent_id, buffer)
+        self._agent_content_buffers = {}
 
     async def _flush_final_answer(self):
         """Flush the buffered final answer after a timeout to prevent duplicate calls."""

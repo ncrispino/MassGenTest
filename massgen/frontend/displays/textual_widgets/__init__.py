@@ -9,6 +9,7 @@ from .content_sections import (
     CompletionFooter,
     ReasoningSection,
     ResponseSection,
+    RestartBanner,
     StatusBadge,
     ThinkingSection,
     TimelineSection,
@@ -36,4 +37,5 @@ __all__ = [
     "ResponseSection",
     "StatusBadge",
     "CompletionFooter",
+    "RestartBanner",
 ]
