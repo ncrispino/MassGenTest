@@ -193,6 +193,11 @@ class Orchestrator(ChatAgent):
         self.agent_states = {aid: AgentState() for aid in agents.keys()}
         self.config = config or AgentConfig.create_openai_config()
         self.dspy_paraphraser = dspy_paraphraser
+
+        # Debug: Log timeout config values
+        logger.info(
+            f"[Orchestrator] Timeout config: initial={self.config.timeout_config.initial_round_timeout_seconds}s, " f"subsequent={self.config.timeout_config.subsequent_round_timeout_seconds}s",
+        )
         self.trace_classification = trace_classification
 
         # Shared memory for all agents
@@ -2748,7 +2753,8 @@ Your answer:"""
                                     content=f"🔄 Vote for [{voted_for}] ignored (reason: {reason}) - restarting due to new answers",
                                     source=agent_id,
                                 )
-                                # yield StreamChunk(type="content", content="🔄 Vote ignored - restarting due to new answers", source=agent_id)
+                                # Clear the stale vote data to prevent it leaking into final results
+                                self.agent_states[agent_id].votes = {}
                             else:
                                 # Save vote snapshot (includes workspace)
                                 vote_timestamp = await self._save_agent_snapshot(
@@ -2909,6 +2915,7 @@ Your answer:"""
                 # Reset all agents' has_voted to False (any new answer invalidates all votes)
                 for state in self.agent_states.values():
                     state.has_voted = False
+                    state.votes = {}  # Clear stale vote data
                 votes.clear()
 
                 for agent_id in self.agent_states.keys():
@@ -3505,6 +3512,10 @@ Your answer:"""
             # Increment injection count
             self.agent_states[agent_id].injection_count += 1
 
+            # Update answers to include newly injected answers (prevents re-injection)
+            # This mutates the captured closure variable so future callbacks see updated state
+            answers.update(new_answers)
+
             # Track the injection
             logger.info(
                 f"[Orchestrator] Mid-stream injection for {agent_id}: {len(new_answers)} new answer(s)",
@@ -3698,6 +3709,10 @@ Your answer:"""
 
             # Increment injection count
             self.agent_states[agent_id].injection_count += 1
+
+            # Update answers to include newly injected answers (prevents re-injection)
+            # This mutates the captured closure variable so future callbacks see updated state
+            answers.update(new_answers)
 
             # Track the injection
             logger.info(
@@ -6530,6 +6545,7 @@ Then call either submit(confirmed=True) if the answer is satisfactory, or restar
         for state in self.agent_states.values():
             state.answer = None
             state.has_voted = False
+            state.votes = {}  # Clear stale vote data
             state.restart_pending = False
             state.is_killed = False
             state.timeout_reason = None
