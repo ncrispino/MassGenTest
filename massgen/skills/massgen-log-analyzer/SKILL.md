@@ -595,6 +595,17 @@ In this case, please sleep (for up to a minute) and try again.
 
 When asked to analyze a MassGen log run, generate a **markdown report** saved to `[log_dir]/turn_N/ANALYSIS_REPORT.md` where N is the turn being analyzed. Each turn (coordination session) gets its own analysis report as a sibling to the attempt directories. The report must cover the **Standard Analysis Questions** below.
 
+### Important: Ground Truth and Correctness
+
+**CRITICAL**: Do not assume any agent's answer is "correct" unless the user explicitly provides ground truth.
+
+- Report what each agent claimed/produced without asserting correctness
+- Note when agents agree or disagree, but don't claim agreement = correctness
+- If agents produce different answers, present both neutrally
+- Only mark answers as correct/incorrect if user provides the actual answer
+- Phrases to avoid: "correctly identified", "got the right answer", "solved correctly"
+- Phrases to use: "claimed", "produced", "submitted", "arrived at"
+
 ### Standard Analysis Questions
 
 Every analysis report MUST answer these questions:

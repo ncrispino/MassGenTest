@@ -111,8 +111,20 @@ IMPORTANT: You are responding to the latest message in an ongoing conversation. 
 (no answers available yet)
 <END OF CURRENT ANSWERS>"""
 
-    def format_current_answers_with_summaries(self, agent_summaries: Dict[str, str]) -> str:
-        """Format current answers section with agent summaries (Case 2) using anonymous agent IDs."""
+    def format_current_answers_with_summaries(
+        self,
+        agent_summaries: Dict[str, str],
+        agent_mapping: Optional[Dict[str, str]] = None,
+    ) -> str:
+        """Format current answers section with agent summaries (Case 2) using anonymous agent IDs.
+
+        Args:
+            agent_summaries: Dict of agent_id -> answer summary
+            agent_mapping: Optional mapping from real agent ID to anonymous ID (e.g., agent_a -> agent1).
+                          If not provided, creates mapping from sorted agent_summaries keys.
+                          Pass this from coordination_tracker.get_reverse_agent_mapping() for
+                          global consistency with vote tool and injections.
+        """
         if "format_current_answers_with_summaries" in self._template_overrides:
             override = self._template_overrides["format_current_answers_with_summaries"]
             if callable(override):
@@ -120,13 +132,14 @@ IMPORTANT: You are responding to the latest message in an ongoing conversation. 
 
         lines = ["<CURRENT ANSWERS from the agents>"]
 
-        # Create anonymous mapping: agent1, agent2, etc.
-        agent_mapping = {}
-        for i, agent_id in enumerate(sorted(agent_summaries.keys()), 1):
-            agent_mapping[agent_id] = f"agent{i}"
+        # Use provided mapping or create from agent_summaries keys (legacy behavior)
+        if agent_mapping is None:
+            agent_mapping = {}
+            for i, agent_id in enumerate(sorted(agent_summaries.keys()), 1):
+                agent_mapping[agent_id] = f"agent{i}"
 
         for agent_id, summary in agent_summaries.items():
-            anon_id = agent_mapping[agent_id]
+            anon_id = agent_mapping.get(agent_id, f"agent_{agent_id}")
             lines.append(f"<{anon_id}> {summary} <end of {anon_id}>")
 
         lines.append("<END OF CURRENT ANSWERS>")
@@ -516,16 +529,46 @@ Please address these specific issues in your coordination and final answer.
 
 {self.format_current_answers_empty()}"""
 
-    def build_case2_user_message(self, task: str, agent_summaries: Dict[str, str], paraphrase: Optional[str] = None) -> str:
-        """Build Case 2 user message (summaries exist)."""
+    def build_case2_user_message(
+        self,
+        task: str,
+        agent_summaries: Dict[str, str],
+        paraphrase: Optional[str] = None,
+        agent_mapping: Optional[Dict[str, str]] = None,
+    ) -> str:
+        """Build Case 2 user message (summaries exist).
+
+        Args:
+            task: The task description
+            agent_summaries: Dict of agent_id -> answer summary
+            paraphrase: Optional paraphrase of the task
+            agent_mapping: Mapping from real agent ID to anonymous ID (e.g., agent_a -> agent1).
+                          Pass from coordination_tracker.get_reverse_agent_mapping() for
+                          global consistency with vote tool and injections.
+        """
         return f"""{self.format_original_message(task, paraphrase)}
 
-{self.format_current_answers_with_summaries(agent_summaries)}"""
+{self.format_current_answers_with_summaries(agent_summaries, agent_mapping)}"""
 
-    def build_evaluation_message(self, task: str, agent_answers: Optional[Dict[str, str]] = None, paraphrase: Optional[str] = None) -> str:
-        """Build evaluation user message for any case."""
+    def build_evaluation_message(
+        self,
+        task: str,
+        agent_answers: Optional[Dict[str, str]] = None,
+        paraphrase: Optional[str] = None,
+        agent_mapping: Optional[Dict[str, str]] = None,
+    ) -> str:
+        """Build evaluation user message for any case.
+
+        Args:
+            task: The task description
+            agent_answers: Optional dict of agent_id -> answer
+            paraphrase: Optional paraphrase of the task
+            agent_mapping: Mapping from real agent ID to anonymous ID (e.g., agent_a -> agent1).
+                          Pass from coordination_tracker.get_reverse_agent_mapping() for
+                          global consistency with vote tool and injections.
+        """
         if agent_answers:
-            return self.build_case2_user_message(task, agent_answers, paraphrase)
+            return self.build_case2_user_message(task, agent_answers, paraphrase, agent_mapping)
         else:
             return self.build_case1_user_message(task, paraphrase)
 
@@ -535,8 +578,19 @@ Please address these specific issues in your coordination and final answer.
         conversation_history: Optional[List[Dict[str, str]]] = None,
         agent_answers: Optional[Dict[str, str]] = None,
         paraphrase: Optional[str] = None,
+        agent_mapping: Optional[Dict[str, str]] = None,
     ) -> str:
-        """Build coordination context including conversation history and current state."""
+        """Build coordination context including conversation history and current state.
+
+        Args:
+            current_task: The current task description
+            conversation_history: Optional conversation history
+            agent_answers: Optional dict of agent_id -> answer
+            paraphrase: Optional paraphrase of the task
+            agent_mapping: Mapping from real agent ID to anonymous ID (e.g., agent_a -> agent1).
+                          Pass from coordination_tracker.get_reverse_agent_mapping() for
+                          global consistency with vote tool and injections.
+        """
         if "build_coordination_context" in self._template_overrides:
             override = self._template_overrides["build_coordination_context"]
             if callable(override):
@@ -561,7 +615,7 @@ Please address these specific issues in your coordination and final answer.
 
         # Add agent answers
         if agent_answers:
-            context_parts.append(self.format_current_answers_with_summaries(agent_answers))
+            context_parts.append(self.format_current_answers_with_summaries(agent_answers, agent_mapping))
         else:
             context_parts.append(self.format_current_answers_empty())
 
@@ -578,8 +632,20 @@ Please address these specific issues in your coordination and final answer.
         valid_agent_ids: Optional[List[str]] = None,
         base_system_message: Optional[str] = None,
         paraphrase: Optional[str] = None,
+        agent_mapping: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
-        """Build complete initial conversation for MassGen evaluation."""
+        """Build complete initial conversation for MassGen evaluation.
+
+        Args:
+            task: The task description
+            agent_summaries: Optional dict of agent_id -> answer summary
+            valid_agent_ids: List of valid agent IDs for voting
+            base_system_message: Optional base system message
+            paraphrase: Optional paraphrase of the task
+            agent_mapping: Mapping from real agent ID to anonymous ID (e.g., agent_a -> agent1).
+                          Pass from coordination_tracker.get_reverse_agent_mapping() for
+                          global consistency with vote tool and injections.
+        """
         # Use agent's custom system message if provided, otherwise use default evaluation message
         if base_system_message:
             # Check if this is a structured system prompt (contains <system_prompt> tag)
@@ -594,7 +660,7 @@ Please address these specific issues in your coordination and final answer.
 
         return {
             "system_message": system_message,
-            "user_message": self.build_evaluation_message(task, agent_summaries, paraphrase),
+            "user_message": self.build_evaluation_message(task, agent_summaries, paraphrase, agent_mapping),
             "tools": self.get_standard_tools(valid_agent_ids),
         }
 
@@ -606,8 +672,21 @@ Please address these specific issues in your coordination and final answer.
         valid_agent_ids: Optional[List[str]] = None,
         base_system_message: Optional[str] = None,
         paraphrase: Optional[str] = None,
+        agent_mapping: Optional[Dict[str, str]] = None,
     ) -> Dict[str, Any]:
-        """Build complete conversation with conversation history context for MassGen evaluation."""
+        """Build complete conversation with conversation history context for MassGen evaluation.
+
+        Args:
+            current_task: The current task description
+            conversation_history: Optional conversation history
+            agent_summaries: Optional dict of agent_id -> answer summary
+            valid_agent_ids: List of valid agent IDs for voting
+            base_system_message: Optional base system message
+            paraphrase: Optional paraphrase of the task
+            agent_mapping: Mapping from real agent ID to anonymous ID (e.g., agent_a -> agent1).
+                          Pass from coordination_tracker.get_reverse_agent_mapping() for
+                          global consistency with vote tool and injections.
+        """
         # Use agent's custom system message if provided, otherwise use default context-aware message
         if base_system_message:
             # Check if this is a structured system prompt (contains <system_prompt> tag)
@@ -622,7 +701,7 @@ Please address these specific issues in your coordination and final answer.
 
         return {
             "system_message": system_message,
-            "user_message": self.build_coordination_context(current_task, conversation_history, agent_summaries, paraphrase),
+            "user_message": self.build_coordination_context(current_task, conversation_history, agent_summaries, paraphrase, agent_mapping),
             "tools": self.get_standard_tools(valid_agent_ids),
         }
 
@@ -701,6 +780,7 @@ Based on the coordination process above, present your final answer:"""
         enable_command_execution: bool = False,
         docker_mode: bool = False,
         enable_sudo: bool = False,
+        agent_mapping: Optional[Dict[str, str]] = None,
     ) -> str:
         """Generate filesystem access instructions for agents with filesystem support.
 
@@ -715,6 +795,8 @@ Based on the coordination process above, present your final answer:"""
             enable_command_execution: Whether command line execution is enabled
             docker_mode: Whether commands execute in Docker containers
             enable_sudo: Whether sudo is available in Docker containers
+            agent_mapping: Optional mapping from real agent ID to anonymous ID.
+                          Pass from coordination_tracker.get_reverse_agent_mapping() for consistency.
         """
         if "filesystem_system_message" in self._template_overrides:
             return str(self._template_overrides["filesystem_system_message"])
@@ -747,13 +829,18 @@ Based on the coordination process above, present your final answer:"""
             # This was added bc weaker models would often try many incorrect paths.
             # No point in requiring extra list dir calls if we can just show them the structure.
             if agent_answers:
-                # Create anonymous mapping: agent1, agent2, etc.
-                agent_mapping = {}
-                for i, agent_id in enumerate(sorted(agent_answers.keys()), 1):
-                    agent_mapping[agent_id] = f"agent{i}"
+                # Use provided mapping or create from agent_answers keys (legacy behavior)
+                if agent_mapping is None:
+                    agent_mapping = {}
+                    for i, agent_id in enumerate(sorted(agent_answers.keys()), 1):
+                        agent_mapping[agent_id] = f"agent{i}"
+                else:
+                    # Filter to only agents with answers, maintain global numbering
+                    agent_mapping = {aid: agent_mapping[aid] for aid in agent_answers.keys() if aid in agent_mapping}
 
                 workspace_tree += "   Available agent workspaces:\n"
-                agent_items = list(agent_mapping.items())
+                # Sort by anon ID to ensure consistent display order
+                agent_items = sorted(agent_mapping.items(), key=lambda x: x[1])
                 for idx, (agent_id, anon_id) in enumerate(agent_items):
                     is_last = idx == len(agent_items) - 1
                     prefix = "   └── " if is_last else "   ├── "

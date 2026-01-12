@@ -4909,6 +4909,9 @@ class ConfigBuilder:
             "orchestrator": orchestrator_config,
             "timeout_settings": {
                 "orchestrator_timeout_seconds": 1800,
+                "initial_round_timeout_seconds": 600,  # 10 min for first answer
+                "subsequent_round_timeout_seconds": 300,  # 5 min for rounds with input answers
+                "round_timeout_grace_seconds": 120,  # 2 min grace before hard block
             },
             "ui": {
                 "type": "rich_terminal",

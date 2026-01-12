@@ -6,9 +6,11 @@ MassGen provides timeout configuration to control how long coordination and agen
 Quick Reference
 ---------------
 
-**Default Timeout**:
+**Default Timeouts**:
 
 * **Orchestrator**: 1800 seconds (30 minutes)
+* **Per-Round**: Disabled by default in YAML configs; enabled in ``--quickstart`` (10 min initial, 5 min subsequent)
+* **Grace Period**: 120 seconds (time after soft timeout before hard block)
 
 **CLI Override**:
 
@@ -25,9 +27,17 @@ Quick Reference
 
    timeout_settings:
      orchestrator_timeout_seconds: 1800
+     initial_round_timeout_seconds: 600      # 10 min for first answer
+     subsequent_round_timeout_seconds: 180   # 3 min for voting rounds
+     round_timeout_grace_seconds: 120        # Grace period before hard block
 
 Timeout Types
 -------------
+
+MassGen has two levels of timeout control:
+
+1. **Orchestrator Timeout**: Overall session limit (kills entire coordination)
+2. **Per-Round Timeout**: Individual round limits (prompts agents to submit)
 
 Orchestrator Timeout
 ~~~~~~~~~~~~~~~~~~~~
@@ -44,7 +54,78 @@ Controls the maximum time for multi-agent coordination:
    timeout_settings:
      orchestrator_timeout_seconds: 600  # 10 minutes
 
+Per-Round Timeout
+~~~~~~~~~~~~~~~~~
+
+Controls the maximum time for individual agent rounds. This prevents agents from getting stuck in analysis loops (e.g., repeatedly analyzing the same image with inconsistent results).
+
+* **Covers**: Single round of agent work (initial answer or voting)
+* **Default**: Needs to be added in YAML configs; ``--quickstart`` enables with 600s/300s/120s
+* **When it triggers**: Agent exceeds time limit for current round
+* **What happens**: Two-phase timeout (soft warning, then hard block)
+
+**Configuration Options**:
+
+.. code-block:: yaml
+
+   timeout_settings:
+     initial_round_timeout_seconds: 600    # Soft timeout for round 0 (initial answer)
+     subsequent_round_timeout_seconds: 180 # Soft timeout for rounds 1+ (voting)
+     round_timeout_grace_seconds: 120      # Grace period before hard block
+
+**Two-Phase Timeout Behavior**:
+
+1. **Soft Timeout**: When reached, a friendly warning message is injected telling the agent to wrap up and submit. The agent can still finish final touches to make their work presentable.
+
+2. **Hard Timeout**: After the grace period expires (soft timeout + ``round_timeout_grace_seconds``), non-terminal tool calls are blocked. Only ``vote`` and ``new_answer`` tools are allowed.
+
+**Timeline Example** (initial round with 600s timeout + 120s grace):
+
+.. code-block:: text
+
+   0-600s:   Agent works normally
+   600s:     Soft timeout - friendly warning message injected
+   600-720s: Grace period - agent can finish final touches
+   720s+:    Hard timeout - non-terminal tools blocked, only vote/new_answer allowed
+
+**Soft Timeout Message**:
+
+.. code-block:: text
+
+   ============================================================
+   ⏰ ROUND TIME LIMIT APPROACHING
+   ============================================================
+
+   You have been working on this initial answer round for 605s.
+   The soft time limit of 600s has been reached.
+
+   You have approximately 120 seconds before tool calls will be blocked.
+   Please wrap up your work and submit your answer using the `new_answer` tool.
+
+   You may finish any final touches to make your work presentable, but
+   please submit soon. The next coordination round will allow further
+   iteration if needed.
+   ============================================================
+
+**Why Use Per-Round Timeouts**:
+
+* **Prevent stuck agents**: Agents can get caught in loops (e.g., repeatedly calling vision tools on the same image)
+* **Predictable costs**: Cap spending on individual rounds
+* **Fairer coordination**: Ensure all agents get timely turns
+* **Different phases, different needs**: Initial answers need more time than voting rounds
+
+**Smart Injection Skipping**:
+
+When a new answer arrives from another agent, MassGen normally injects it mid-stream so the current agent can consider it. However, if the agent is close to their soft timeout, injection is skipped and the agent restarts instead. This ensures agents have enough time to properly consider new answers rather than being forced to submit immediately after seeing them.
+
+The threshold is ``round_timeout_grace_seconds`` - if remaining time before soft timeout is less than the grace period, injection is skipped.
+
+.. code-block:: text
+
+   [Orchestrator] Skipping mid-stream injection for agent_a - only 45s until soft timeout (need 120s to think)
+
 Configuration Methods
+
 ---------------------
 
 Method 1: CLI Flag (Highest Priority)
@@ -313,6 +394,27 @@ Example 4: MCP Tool Integration
 
 **Reasoning**: MCP tools may have API latency, planning mode adds coordination time, 40 minutes provides safety margin.
 
+Example 5: Per-Round Timeouts for Image Analysis
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Task**: Agents analyzing images with vision models (prone to getting stuck in loops)
+
+.. code-block:: yaml
+
+   agents:
+     - id: "analyst1"
+       backend: {type: "openai", model: "gpt-4o"}
+     - id: "analyst2"
+       backend: {type: "claude", model: "claude-sonnet-4"}
+
+   timeout_settings:
+     orchestrator_timeout_seconds: 2400       # 40 min overall
+     initial_round_timeout_seconds: 600       # 10 min for initial analysis
+     subsequent_round_timeout_seconds: 180    # 3 min for voting
+     round_timeout_grace_seconds: 120         # 2 min grace before hard block
+
+**Reasoning**: Vision model analysis can be inconsistent, causing agents to retry repeatedly. Per-round timeouts force agents to submit their best work and move forward. Initial rounds get more time for thorough analysis, while voting rounds are shorter since context is already established.
+
 Troubleshooting
 ---------------
 
@@ -350,6 +452,14 @@ Timeouts Occurring Too Frequently
 
 6. **Check for stuck agents**: Review debug logs for agents not responding
 
+7. **Enable per-round timeouts**: Force agents to submit after a time limit:
+
+   .. code-block:: yaml
+
+      timeout_settings:
+        initial_round_timeout_seconds: 600
+        subsequent_round_timeout_seconds: 180
+
 Tasks Completing Too Quickly
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -363,6 +473,40 @@ Tasks Completing Too Quickly
 
 * This is generally not a problem - fast completion is good!
 * If you want more thorough discussion, adjust system messages to encourage analysis
+
+Per-Round Timeout Issues
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Symptoms**:
+
+* Soft timeout message appears but agent keeps working
+* Hard timeout blocks tools unexpectedly
+* Agent submits incomplete work
+
+**Solutions**:
+
+1. **Increase grace period** if agents need more time to finish:
+
+   .. code-block:: yaml
+
+      timeout_settings:
+        round_timeout_grace_seconds: 180  # 3 minutes instead of 2
+
+2. **Increase initial timeout** for complex tasks:
+
+   .. code-block:: yaml
+
+      timeout_settings:
+        initial_round_timeout_seconds: 900  # 15 minutes
+
+3. **Check log messages** for timeout events:
+
+   .. code-block:: text
+
+      [RoundTimeoutPostHook] Soft timeout reached for agent_b after 605s
+      [RoundTimeoutPreHook] Blocking mcp__filesystem__write_file for agent_b - hard timeout exceeded
+
+4. **Disable per-round timeouts** by omitting the settings (they're disabled by default)
 
 Timeout But No Error Message
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

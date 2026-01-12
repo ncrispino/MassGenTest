@@ -25,9 +25,19 @@ class TimeoutConfig:
 
     Args:
         orchestrator_timeout_seconds: Maximum time for orchestrator coordination (default: 1800s = 30min)
+        initial_round_timeout_seconds: Soft timeout for round 0 (initial answer). After this time,
+                                       a warning is injected telling the agent to submit. None = disabled.
+        subsequent_round_timeout_seconds: Soft timeout for rounds 1+ (voting/refinement). After this time,
+                                          a warning is injected telling the agent to submit. None = disabled.
+        round_timeout_grace_seconds: Grace period after soft timeout before hard timeout kicks in.
+                                     After hard timeout, non-terminal tool calls are blocked - only
+                                     vote and new_answer are allowed. Default: 60 seconds.
     """
 
     orchestrator_timeout_seconds: int = 1800  # 30 minutes
+    initial_round_timeout_seconds: Optional[int] = None  # None = disabled
+    subsequent_round_timeout_seconds: Optional[int] = None  # None = disabled
+    round_timeout_grace_seconds: int = 120  # Grace period before hard block
 
 
 @dataclass
@@ -734,7 +744,8 @@ class AgentConfig:
         templates = self.message_templates or get_templates()
 
         # Derive valid agent IDs from agent summaries
-        valid_agent_ids = list(agent_summaries.keys()) if agent_summaries else None
+        # Sort for consistent anonymous mapping with coordination_tracker
+        valid_agent_ids = sorted(agent_summaries.keys()) if agent_summaries else None
 
         # Build base conversation
         conversation = templates.build_initial_conversation(task=task, agent_summaries=agent_summaries, valid_agent_ids=valid_agent_ids)
