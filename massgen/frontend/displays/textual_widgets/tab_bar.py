@@ -120,7 +120,7 @@ class AgentTabBar(Widget):
     DEFAULT_CSS = """
     AgentTabBar {
         height: 3;
-        dock: top;
+        width: 100%;
         layout: horizontal;
         background: $surface;
         border-bottom: solid $primary;

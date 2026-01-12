@@ -88,9 +88,10 @@ Screen {
 }
 
 /* === Agent Tab Bar === */
+/* NOTE: No dock: top - flows naturally below HeaderWidget */
 AgentTabBar {
     height: 3;
-    dock: top;
+    width: 100%;
     layout: horizontal;
     background: #161b22;
     border-bottom: solid #30363d;
@@ -266,12 +267,23 @@ AgentPanel.status-error {
 .loading-container {
     width: 100%;
     height: 100%;
+    min-height: 5;
     align: center middle;
-    background: transparent;
+    content-align: center middle;
+    background: #0d1117;
 }
 
 .loading-container.hidden {
     display: none;
+}
+
+.loading-container ProgressIndicator {
+    text-align: center;
+    color: #58a6ff;
+    text-style: bold;
+    width: 100%;
+    height: auto;
+    content-align: center middle;
 }
 
 .loading-text {
@@ -280,21 +292,28 @@ AgentPanel.status-error {
     text-style: italic;
 }
 
-/* Compact Header */
+/* Compact Header - Shows question and turn info */
 HeaderWidget {
     height: 2;
+    min-height: 2;
+    max-height: 2;
     dock: top;
-    background: #161b22;
-    color: #e6edf3;
+    background: #58a6ff;
+    color: #ffffff;
     padding: 0 1;
     text-style: bold;
     border-bottom: solid #30363d;
+    content-align: left middle;
 }
 
-#status_line_label {
-    color: #e6edf3;
-    text-style: bold;
+HeaderWidget.hidden {
+    display: none;
+    height: 0;
+    min-height: 0;
 }
+
+/* Note: HeaderWidget styling is handled by the class selector above.
+   The #header_widget ID selector was removed to avoid CSS conflicts. */
 
 /* Input area container - docks to bottom */
 #input_area {
@@ -818,6 +837,53 @@ ToolDetailModal .close-button {
 
 #context_buttons Button {
     margin-right: 1;
+}
+
+/* Conversation History Modal */
+#history_container {
+    background: #252526;
+    border: thick #9cdcfe;
+    padding: 2;
+    width: 85%;
+    height: 80%;
+}
+
+#history_header {
+    color: #9cdcfe;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+#current_prompt {
+    color: #4ec9b0;
+    background: #1e1e1e;
+    padding: 1;
+    margin-bottom: 1;
+    border: solid #4ec9b0;
+}
+
+#history_scroll {
+    height: 1fr;
+    background: #1e1e1e;
+    padding: 1;
+    margin-bottom: 1;
+}
+
+.history-turn {
+    padding: 1;
+    margin-bottom: 1;
+    background: #2d2d2d;
+    border-left: thick #58a6ff;
+}
+
+#no_history {
+    color: #8b949e;
+    text-align: center;
+    margin-top: 2;
+}
+
+#close_history_button {
+    margin-top: 1;
 }
 
 /* Metrics Modal */
@@ -1370,13 +1436,21 @@ CompletionFooter.status-error {
 /* === Status Bar === */
 StatusBar {
     dock: bottom;
-    height: auto;
-    min-height: 1;
-    background: #21262d;
-    color: #e6edf3;
+    height: 2;
+    min-height: 2;
+    max-height: 2;
+    background: #3fb950;
+    color: #ffffff;
     padding: 0 1;
     layout: horizontal;
-    border-top: solid #58a6ff;
+    border-top: solid #30363d;
+    content-align: left middle;
+}
+
+StatusBar.hidden {
+    display: none;
+    height: 0;
+    min-height: 0;
 }
 
 StatusBar > Static {
@@ -1387,6 +1461,28 @@ StatusBar > Static {
     width: auto;
     color: #58a6ff;
     margin-right: 2;
+}
+
+#status_phase.restart-active {
+    color: #f0883e;
+    text-style: bold;
+    background: #30363d;
+}
+
+/* Activity indicator - shows when agents are working */
+#status_activity {
+    width: auto;
+    color: #58a6ff;
+    text-style: bold;
+    margin-right: 2;
+}
+
+#status_activity.hidden {
+    display: none;
+}
+
+.activity-indicator {
+    color: #58a6ff;
 }
 
 #status_progress {
@@ -1514,6 +1610,18 @@ StatusBar.consensus-reached #status_votes {
     margin-left: 2;
 }
 
+/* StatusBar CWD display */
+#status_cwd {
+    width: auto;
+    color: #8b949e;
+    margin-left: 2;
+}
+
+#status_cwd:hover {
+    color: #58a6ff;
+    text-style: underline;
+}
+
 /* StatusBar Cancel button */
 #status_cancel {
     width: auto;
@@ -1533,8 +1641,8 @@ StatusBar.consensus-reached #status_votes {
 
 /* === Answer Browser Modal === */
 #answer_browser_container {
-    width: 90%;
-    height: 85%;
+    width: 95%;
+    height: 90%;
     background: #252526;
     border: solid #4ec9b0;
     padding: 1 2;
@@ -1565,16 +1673,23 @@ StatusBar.consensus-reached #status_votes {
     width: 30;
 }
 
-#answer_list {
+/* Split view layout */
+#answer_browser_content {
     height: 1fr;
-    max-height: 50%;
+    width: 100%;
+}
+
+#answer_list {
+    width: 35%;
+    height: 100%;
     background: #1e1e1e;
     border: solid #3d4550;
     padding: 1;
+    overflow-y: auto;
 }
 
 .answer-item {
-    margin: 1 0;
+    margin: 0 0 1 0;
     padding: 0 1;
     border-left: solid #569cd6;
 }
@@ -1583,21 +1698,56 @@ StatusBar.consensus-reached #status_votes {
     background: #2a2d2e;
 }
 
+.answer-item.clickable {
+    /* Clickable indicator - hover effect only */
+}
+
+.answer-item-selected {
+    background: #264f78;
+    border-left: solid #58a6ff;
+}
+
 #answer_detail_panel {
-    height: auto;
-    max-height: 30%;
+    width: 65%;
+    height: 100%;
     background: #1e1e1e;
     border: solid #3d4550;
     padding: 1;
-    margin-top: 1;
+    margin-left: 1;
+    layout: vertical;
 }
 
-#answer_detail_content {
-    color: #d4d4d4;
+#answer_detail_header {
+    color: #4ec9b0;
+    text-style: bold;
+    height: 1;
+    margin-bottom: 1;
+}
+
+#answer_detail_scroll {
+    height: 1fr;
+    background: #0d1117;
+    padding: 1;
+    overflow-y: auto;
+}
+
+#answer_full_content {
+    width: 100%;
+}
+
+#answer_detail_buttons {
+    height: 3;
+    margin-top: 1;
+    align: center middle;
+}
+
+#answer_detail_buttons Button {
+    margin: 0 1;
 }
 
 #answer_browser_buttons {
     margin-top: 1;
+    height: 3;
 }
 
 /* === Timeline Modal === */
@@ -1864,12 +2014,6 @@ ProgressIndicator {
 
 ProgressIndicator.hidden {
     display: none;
-}
-
-/* Loading container with spinner */
-.loading-container ProgressIndicator {
-    width: 100%;
-    text-align: center;
 }
 
 /* === Final Stream Panel Enhancements (Task 5.12) === */

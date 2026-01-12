@@ -270,10 +270,6 @@ class PathSuggestionDropdown(Widget):
                 return []
 
             suggestions = []
-            with open("/tmp/at_debug.log", "a") as f:
-                f.write(f"[DEBUG Dropdown] Searching in: {parent_dir}, exists={parent_dir.exists()}\n")
-                all_entries = list(parent_dir.iterdir())
-                f.write(f"[DEBUG Dropdown] Found {len(all_entries)} entries: {[e.name for e in all_entries[:10]]}\n")
             for entry in sorted(parent_dir.iterdir(), key=lambda e: (not e.is_dir(), e.name.lower())):
                 # Skip hidden files unless explicitly requested
                 if entry.name.startswith(".") and not partial_name.startswith("."):
@@ -325,14 +321,10 @@ class PathSuggestionDropdown(Widget):
 
     def watch_visible(self, visible: bool) -> None:
         """Update visibility class."""
-        with open("/tmp/at_debug.log", "a") as f:
-            f.write(f"[DEBUG Dropdown] watch_visible called, visible={visible}, classes before={self.classes}\n")
         if visible:
             self.add_class("visible")
         else:
             self.remove_class("visible")
-        with open("/tmp/at_debug.log", "a") as f:
-            f.write(f"[DEBUG Dropdown] classes after={self.classes}\n")
 
     def watch_selected_index(self, index: int) -> None:
         """Update selected row highlighting."""
@@ -368,8 +360,6 @@ class PathSuggestionDropdown(Widget):
         Returns:
             True if the event was handled, False otherwise.
         """
-        with open("/tmp/at_debug.log", "a") as f:
-            f.write(f"[DEBUG Dropdown] handle_key called: key={event.key}, visible={self.visible}, suggestions={len(self._suggestions) if self._suggestions else 0}\n")
         if not self.visible or not self._suggestions:
             return False
 
