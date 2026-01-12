@@ -54,6 +54,8 @@ from .mcp_tools.hooks import (
     HighPriorityTaskReminderHook,
     HookType,
     MidStreamInjectionHook,
+    RoundTimeoutPostHook,
+    RoundTimeoutPreHook,
 )
 from .memory import ConversationMemory, PersistentMemoryBase
 from .message_templates import MessageTemplates
@@ -84,6 +86,8 @@ class AgentState:
         timeout_reason: Reason for timeout (if applicable)
         answer_count: Number of answers this agent has created (increments on new_answer)
         injection_count: Number of update injections this agent has received
+        round_start_time: Timestamp when current round started (for per-round timeouts)
+        round_timeout_hooks: Tuple of (post_hook, pre_hook) for per-round timeouts, or None
     """
 
     answer: Optional[str] = None
@@ -96,6 +100,8 @@ class AgentState:
     paraphrase: Optional[str] = None
     answer_count: int = 0  # Track number of answers for memory archiving
     injection_count: int = 0  # Track injections received for mid-stream injection timing
+    round_start_time: Optional[float] = None  # For per-round timeouts
+    round_timeout_hooks: Optional[tuple] = None  # (post_hook, pre_hook) for resetting on new round
 
 
 class Orchestrator(ChatAgent):
@@ -202,8 +208,10 @@ class Orchestrator(ChatAgent):
         self._system_message_builder: Optional[SystemMessageBuilder] = None  # Lazy initialization
         # Create workflow tools for agents (vote, new_answer, and optionally broadcast)
         # Will be updated with broadcast tools after coordination config is set
+        # Sort agent IDs for consistent anonymous mapping (agent1, agent2, etc.)
+        # This ensures consistency with coordination_tracker.get_anonymous_agent_mapping()
         self.workflow_tools = get_workflow_tools(
-            valid_agent_ids=list(agents.keys()),
+            valid_agent_ids=sorted(agents.keys()),
             template_overrides=getattr(self.message_templates, "_template_overrides", {}),
             api_format="chat_completions",  # Default format, will be overridden per backend
             orchestrator=self,  # Pass self for broadcast tools
@@ -463,8 +471,9 @@ class Orchestrator(ChatAgent):
                 logger.info(f"[Orchestrator] Broadcast sensitivity: {broadcast_sensitivity}")
 
                 # Recreate workflow tools with broadcast enabled
+                # Sort agent IDs for consistent anonymous mapping with coordination_tracker
                 self.workflow_tools = get_workflow_tools(
-                    valid_agent_ids=list(self.agents.keys()),
+                    valid_agent_ids=sorted(self.agents.keys()),
                     template_overrides=getattr(self.message_templates, "_template_overrides", {}),
                     api_format="chat_completions",  # Default, overridden per backend
                     orchestrator=self,
@@ -2968,12 +2977,9 @@ Your answer:"""
         if not agent.backend.filesystem_manager:
             return None
 
-        # Create anonymous mapping for agent IDs (same logic as in message_templates.py)
+        # Create anonymous mapping for agent IDs
         # This ensures consistency with the anonymous IDs shown to agents
-        agent_mapping = {}
-        sorted_agent_ids = sorted(self.agents.keys())
-        for i, real_agent_id in enumerate(sorted_agent_ids, 1):
-            agent_mapping[real_agent_id] = f"agent{i}"
+        agent_mapping = self.coordination_tracker.get_reverse_agent_mapping()
 
         # Collect snapshots from snapshot_storage directory
         all_snapshots = {}
@@ -3068,9 +3074,7 @@ Your answer:"""
                     current_answers = {aid: state.answer for aid, state in self.agent_states.items() if state.answer}
 
                     # Create anonymous agent mapping (agent1, agent2, etc.)
-                    agent_mapping = {}
-                    for i, real_id in enumerate(sorted(self.agents.keys()), 1):
-                        agent_mapping[f"agent{i}"] = real_id
+                    agent_mapping = self.coordination_tracker.get_anonymous_agent_mapping()
 
                     # Get answer labels from coordination tracker (e.g., "agent1.2", "agent2.1")
                     # Use the voter's context labels (what they were shown) to avoid race conditions
@@ -3191,6 +3195,33 @@ Your answer:"""
             except Exception as ce:
                 logger.warning(f"[Orchestrator._save_agent_snapshot] Failed to save context for {agent_id}: {ce}")
 
+        # Save execution trace if available (for both answer and vote snapshots)
+        # Votes also contain valuable execution history (tool calls, reasoning, etc.)
+        if answer_content is not None or vote_data is not None or is_final:
+            try:
+                if hasattr(agent.backend, "_save_execution_trace"):
+                    # Save to log directory for historical tracking
+                    log_session_dir = get_log_session_dir()
+                    if log_session_dir:
+                        if is_final:
+                            timestamped_dir = log_session_dir / "final" / agent_id
+                        else:
+                            timestamped_dir = log_session_dir / agent_id / timestamp
+                        timestamped_dir.mkdir(parents=True, exist_ok=True)
+                        agent.backend._save_execution_trace(timestamped_dir)
+
+                    # Also save to snapshot_storage so other agents can access it
+                    # via temp_workspace when they receive context updates
+                    if agent.backend.filesystem_manager and agent.backend.filesystem_manager.snapshot_storage:
+                        snapshot_storage = agent.backend.filesystem_manager.snapshot_storage
+                        snapshot_storage.mkdir(parents=True, exist_ok=True)
+                        agent.backend._save_execution_trace(snapshot_storage)
+                        logger.debug(
+                            f"[Orchestrator._save_agent_snapshot] Saved execution trace to snapshot_storage: {snapshot_storage}",
+                        )
+            except Exception as te:
+                logger.warning(f"[Orchestrator._save_agent_snapshot] Failed to save execution trace for {agent_id}: {te}")
+
         # Return the timestamp for tracking
         return timestamp if not is_final else "final"
 
@@ -3211,6 +3242,39 @@ Your answer:"""
         """Check if agent should restart and yield restart message if needed. This will always be called when exiting out of _stream_agent_execution()."""
         restart_pending = self.agent_states[agent_id].restart_pending
         return restart_pending
+
+    async def _clear_framework_mcp_state(self, agent_id: str) -> None:
+        """
+        Clear in-memory state of framework MCP servers before agent restart.
+
+        This ensures stateful MCPs like planning don't retain old data across
+        answer submissions. Currently clears:
+        - Task plans (planning MCP)
+
+        Args:
+            agent_id: ID of the agent being restarted
+        """
+        agent = self.agents.get(agent_id)
+        if not agent or not hasattr(agent.backend, "_mcp_client") or not agent.backend._mcp_client:
+            return
+
+        # Find the planning MCP tool name for this agent
+        planning_tool_name = None
+        for tool_name in agent.backend._mcp_functions.keys():
+            if "clear_task_plan" in tool_name and f"planning_{agent_id}" in tool_name:
+                planning_tool_name = tool_name
+                break
+
+        if planning_tool_name:
+            try:
+                logger.info(f"[Orchestrator] Clearing task plan for {agent_id} via {planning_tool_name}")
+                result, _ = await agent.backend._execute_mcp_function_with_retry(
+                    planning_tool_name,
+                    "{}",  # No arguments needed
+                )
+                logger.info(f"[Orchestrator] Clear task plan result for {agent_id}: {result}")
+            except Exception as e:
+                logger.warning(f"[Orchestrator] Failed to clear task plan for {agent_id}: {e}")
 
     async def _save_partial_work_on_restart(self, agent_id: str) -> Optional[str]:
         """
@@ -3275,8 +3339,7 @@ Your answer:"""
             temp_workspace_base = str(viewing_agent.backend.filesystem_manager.agent_temporary_workspace)
 
         # Create anonymous mapping (consistent with CURRENT ANSWERS format across all agents)
-        all_agent_ids = sorted(self.agents.keys())
-        agent_mapping = {aid: f"agent{i}" for i, aid in enumerate(all_agent_ids, 1)}
+        agent_mapping = self.coordination_tracker.get_reverse_agent_mapping()
 
         # Format answers with workspace paths
         lines = []
@@ -3325,6 +3388,7 @@ Your answer:"""
             "1. **ADD A TASK** to your plan: 'Evaluate agent answer(s) and decide next action'",
             "   - Use update_task_status or create a new task to track this evaluation",
             "   - Read their workspace files (paths above) to understand their solution",
+            "   - Read their execution_trace.md to see their full tool usage and reasoning",
             "   - Compare their approach to yours",
             "",
             "2. **THEN CHOOSE ONE**:",
@@ -3396,12 +3460,19 @@ Your answer:"""
             new_answers = {aid: ans for aid, ans in current_answers.items() if aid not in answers}
 
             if not new_answers:
+                # No new answers to inject - agent already has full context.
+                # Clear restart_pending since there's nothing new to show them.
+                self.agent_states[agent_id].restart_pending = False
                 return None
 
             # TIMING CONSTRAINT: Only use mid-stream injection after first traditional injection
             # This prevents premature convergence where agents immediately adopt the first answer
             if self.agent_states[agent_id].injection_count == 0:
                 return None  # Use traditional approach for first injection
+
+            # TIMING CONSTRAINT: Skip injection if too close to soft timeout
+            if self._should_skip_injection_due_to_timeout(agent_id):
+                return None  # Let restart happen instead
 
             # Copy snapshots from new answer agents to temp workspace BEFORE building injection
             # This ensures the workspace files are available when the agent tries to access them
@@ -3415,8 +3486,7 @@ Your answer:"""
             viewing_agent = self.agents.get(agent_id)
             if viewing_agent and viewing_agent.backend.filesystem_manager:
                 temp_workspace_base = str(viewing_agent.backend.filesystem_manager.agent_temporary_workspace)
-                all_agent_ids = sorted(self.agents.keys())
-                agent_mapping = {aid: f"agent{i}" for i, aid in enumerate(all_agent_ids, 1)}
+                agent_mapping = self.coordination_tracker.get_reverse_agent_mapping()
                 for aid in new_answers.keys():
                     anon_id = agent_mapping.get(aid, f"agent_{aid}")
                     workspace_path = os.path.join(temp_workspace_base, anon_id)
@@ -3466,6 +3536,9 @@ Your answer:"""
         reminder_hook = HighPriorityTaskReminderHook()
         manager.register_global_hook(HookType.POST_TOOL_USE, reminder_hook)
 
+        # Register per-round timeout hooks if configured
+        self._register_round_timeout_hooks(agent_id, manager)
+
         # Register user-configured hooks from agent backend config
         if hasattr(agent.backend, "config") and agent.backend.config:
             agent_hooks = agent.backend.config.get("hooks")
@@ -3476,6 +3549,82 @@ Your answer:"""
         # Set manager on backend
         agent.backend.set_general_hook_manager(manager)
         logger.debug(f"[Orchestrator] Set up hook manager for {agent_id} with mid-stream and reminder hooks")
+
+    def _register_round_timeout_hooks(
+        self,
+        agent_id: str,
+        manager: GeneralHookManager,
+    ) -> None:
+        """Register per-round timeout hooks if configured.
+
+        This creates two hooks:
+        1. RoundTimeoutPostHook (soft timeout) - Injects warning message after tool calls
+        2. RoundTimeoutPreHook (hard timeout) - Blocks non-terminal tools after grace period
+
+        The hooks are stored in agent_states so they can be reset when a new round starts.
+
+        Args:
+            agent_id: The agent identifier
+            manager: The GeneralHookManager to register hooks with
+        """
+        # Get timeout config
+        timeout_config = self.config.timeout_config
+        initial_timeout = timeout_config.initial_round_timeout_seconds
+        subsequent_timeout = timeout_config.subsequent_round_timeout_seconds
+        grace_seconds = timeout_config.round_timeout_grace_seconds
+
+        # Skip if no round timeouts configured
+        if initial_timeout is None and subsequent_timeout is None:
+            return
+
+        logger.info(
+            f"[Orchestrator] Registering round timeout hooks for {agent_id}: " f"initial={initial_timeout}s, subsequent={subsequent_timeout}s, grace={grace_seconds}s",
+        )
+
+        # Create closures that read from agent state
+        def get_round_start_time() -> float:
+            """Get the current round start time from agent state."""
+            start_time = self.agent_states[agent_id].round_start_time
+            if start_time is None:
+                # Fallback to current time if not set (shouldn't happen)
+                logger.warning(f"[Orchestrator] round_start_time is None for {agent_id}, using current time as fallback")
+                return time.time()
+            return start_time
+
+        def get_agent_round() -> int:
+            """Get the current round number from coordination tracker."""
+            return self.coordination_tracker.get_agent_round(agent_id)
+
+        # Create soft timeout hook (POST_TOOL_USE - injects warning)
+        post_hook = RoundTimeoutPostHook(
+            name=f"round_timeout_soft_{agent_id}",
+            get_round_start_time=get_round_start_time,
+            get_agent_round=get_agent_round,
+            initial_timeout_seconds=initial_timeout,
+            subsequent_timeout_seconds=subsequent_timeout,
+            grace_seconds=grace_seconds,
+            agent_id=agent_id,
+        )
+
+        # Create hard timeout hook (PRE_TOOL_USE - blocks non-terminal tools)
+        pre_hook = RoundTimeoutPreHook(
+            name=f"round_timeout_hard_{agent_id}",
+            get_round_start_time=get_round_start_time,
+            get_agent_round=get_agent_round,
+            initial_timeout_seconds=initial_timeout,
+            subsequent_timeout_seconds=subsequent_timeout,
+            grace_seconds=grace_seconds,
+            agent_id=agent_id,
+        )
+
+        # Register hooks
+        manager.register_global_hook(HookType.POST_TOOL_USE, post_hook)
+        manager.register_global_hook(HookType.PRE_TOOL_USE, pre_hook)
+
+        # Store hook references so we can reset them on new rounds
+        self.agent_states[agent_id].round_timeout_hooks = (post_hook, pre_hook)
+
+        logger.debug(f"[Orchestrator] Registered round timeout hooks for {agent_id}")
 
     def _setup_native_hooks_for_agent(
         self,
@@ -3524,11 +3673,18 @@ Your answer:"""
             new_answers = {aid: ans for aid, ans in current_answers.items() if aid not in answers}
 
             if not new_answers:
+                # No new answers to inject - agent already has full context.
+                # Clear restart_pending since there's nothing new to show them.
+                self.agent_states[agent_id].restart_pending = False
                 return None
 
             # TIMING CONSTRAINT: Only use mid-stream injection after first traditional injection
             if self.agent_states[agent_id].injection_count == 0:
                 return None
+
+            # TIMING CONSTRAINT: Skip injection if too close to soft timeout
+            if self._should_skip_injection_due_to_timeout(agent_id):
+                return None  # Let restart happen instead
 
             # Copy snapshots from new answer agents to temp workspace
             logger.info(f"[Orchestrator] Copying snapshots for mid-stream injection to {agent_id}")
@@ -3570,6 +3726,9 @@ Your answer:"""
         # Register high-priority task reminder hook
         reminder_hook = HighPriorityTaskReminderHook()
         manager.register_global_hook(HookType.POST_TOOL_USE, reminder_hook)
+
+        # Register per-round timeout hooks if configured
+        self._register_round_timeout_hooks(agent_id, manager)
 
         # Register user-configured hooks from agent backend config
         agent_hooks = agent.backend.config.get("hooks")
@@ -3626,10 +3785,7 @@ Your answer:"""
             if viewing_agent and viewing_agent.backend.filesystem_manager:
                 temp_workspace_base = str(viewing_agent.backend.filesystem_manager.agent_temporary_workspace)
         # Create anonymous agent mapping for consistent directory names
-        agent_mapping = {}
-        sorted_agent_ids = sorted(self.agents.keys())
-        for i, real_agent_id in enumerate(sorted_agent_ids, 1):
-            agent_mapping[real_agent_id] = f"agent{i}"
+        agent_mapping = self.coordination_tracker.get_reverse_agent_mapping()
 
         for agent_id, answer in answers.items():
             normalized_answer = answer
@@ -4090,6 +4246,16 @@ Your answer:"""
         self.agent_states[agent_id].is_killed = False
         self.agent_states[agent_id].timeout_reason = None
 
+        # Set round start time for per-round timeout tracking
+        self.agent_states[agent_id].round_start_time = time.time()
+
+        # Reset timeout hooks if they exist (for new round after restart)
+        if self.agent_states[agent_id].round_timeout_hooks:
+            post_hook, pre_hook = self.agent_states[agent_id].round_timeout_hooks
+            post_hook.reset_for_new_round()
+            pre_hook.reset_for_new_round()
+            logger.debug(f"[Orchestrator] Reset round timeout hooks for {agent_id}")
+
         # Note: Do NOT clear restart_pending here - let the injection logic inside the iteration
         # loop handle it (see line ~1969). This ensures agents receive updates via injection
         # instead of restarting from scratch, even if they haven't started streaming yet.
@@ -4193,6 +4359,7 @@ Your answer:"""
                 previous_turns=self._previous_turns,
                 human_qa_history=human_qa_history,
                 vote_only=vote_only_for_system_message,
+                agent_mapping=self.coordination_tracker.get_reverse_agent_mapping(),
             )
 
             # Inject phase-appropriate persona if enabled
@@ -4210,24 +4377,30 @@ Your answer:"""
 
             # Build conversation with context support (for user message and conversation history)
             # We pass the NEW system_message so it gets tracked in context JSONs
+            # Sort agent IDs for consistent anonymous mapping with coordination_tracker
+            sorted_answer_ids = sorted(normalized_answers.keys()) if normalized_answers else None
+            # Get global agent mapping for consistent anonymous IDs across all components
+            agent_mapping = self.coordination_tracker.get_reverse_agent_mapping()
             if conversation_context and conversation_context.get("conversation_history"):
                 # Use conversation context-aware building
                 conversation = self.message_templates.build_conversation_with_context(
                     current_task=task,
                     conversation_history=conversation_context.get("conversation_history", []),
                     agent_summaries=normalized_answers,
-                    valid_agent_ids=list(normalized_answers.keys()) if normalized_answers else None,
+                    valid_agent_ids=sorted_answer_ids,
                     base_system_message=system_message,  # Use NEW structured message
                     paraphrase=paraphrase,
+                    agent_mapping=agent_mapping,
                 )
             else:
                 # Fallback to standard conversation building
                 conversation = self.message_templates.build_initial_conversation(
                     task=task,
                     agent_summaries=normalized_answers,
-                    valid_agent_ids=list(normalized_answers.keys()) if normalized_answers else None,
+                    valid_agent_ids=sorted_answer_ids,
                     base_system_message=system_message,  # Use NEW structured message
                     paraphrase=paraphrase,
+                    agent_mapping=agent_mapping,
                 )
 
             # Inject restart context if this is a restart attempt (like multi-turn context)
@@ -4331,6 +4504,9 @@ Your answer:"""
                 if self._check_restart_pending(agent_id):
                     logger.info(f"[Orchestrator] Agent {agent_id} has restart_pending flag")
 
+                    # Clear framework MCP state before restart (e.g., task plans)
+                    await self._clear_framework_mcp_state(agent_id)
+
                     # In vote-only mode, always restart to get updated tool schemas.
                     # Mid-stream injection can't update the vote enum, so we need a full restart.
                     if self._is_vote_only_mode(agent_id):
@@ -4359,11 +4535,15 @@ Your answer:"""
                 # If agent has hit answer limit, only provide vote tool (no new_answer/broadcast)
                 vote_only = self._is_vote_only_mode(agent_id)
                 if vote_only:
+                    # Sort agent IDs for consistent anonymous mapping with coordination_tracker
+                    # Get agents with answers using global numbering for vote enum
+                    anon_ids_with_answers = self.coordination_tracker.get_agents_with_answers_anon(answers) if answers else None
                     agent_workflow_tools = get_workflow_tools(
-                        valid_agent_ids=list(self.agents.keys()),
+                        valid_agent_ids=sorted(self.agents.keys()),
                         template_overrides=getattr(self.message_templates, "_template_overrides", {}),
                         api_format="chat_completions",
                         vote_only=True,
+                        anon_agent_ids=anon_ids_with_answers,
                     )
                     logger.info(f"[Orchestrator] Agent {agent_id} in vote-only mode (answer limit reached)")
                 else:
@@ -4543,16 +4723,16 @@ Your answer:"""
                                 )  # Full reason for debug logging
 
                                 # Convert anonymous agent ID to real agent ID for display
-                                real_agent_id = agent_voted_for
-                                if answers:  # Only do mapping if answers exist
-                                    agent_mapping = {}
-                                    for i, real_id in enumerate(sorted(answers.keys()), 1):
-                                        agent_mapping[f"agent{i}"] = real_id
-                                    real_agent_id = agent_mapping.get(agent_voted_for, agent_voted_for)
+                                # Use global agent mapping (consistent with vote validation)
+                                agent_mapping = self.coordination_tracker.get_anonymous_agent_mapping()
+                                real_agent_id = agent_mapping.get(agent_voted_for, agent_voted_for)
+
+                                # Show which agents have answers using global numbering
+                                options_anon = self.coordination_tracker.get_agents_with_answers_anon(answers)
 
                                 yield (
                                     "coordination" if self.trace_classification == "strict" else "content",
-                                    f"🗳️ Voting for [{real_agent_id}] (options: {', '.join(sorted(answers.keys()))}) : {reason}",
+                                    f"🗳️ Voting for [{real_agent_id}] (options: {', '.join(options_anon)}) : {reason}",
                                 )
                             elif tool_name == "ask_others":
                                 # Broadcast tool - handled as custom tool by backend
@@ -4633,6 +4813,9 @@ Your answer:"""
                         tool_args = agent.backend.extract_tool_arguments(tool_call)
 
                         if tool_name == "vote":
+                            # Fetch fresh answers from agent_states (injection may have added new ones)
+                            answers = {aid: state.answer for aid, state in self.agent_states.items() if state.answer}
+
                             # Log which agents we are choosing from
                             logger.info(f"[Orchestrator] Agent {agent_id} voting from options: {list(answers.keys()) if answers else 'No answers available'}")
                             # Note: restart_pending is handled by mid-stream callback on next tool call
@@ -4661,19 +4844,17 @@ Your answer:"""
                             reason = tool_args.get("reason", "")
 
                             # Convert anonymous agent ID back to real agent ID
-                            agent_mapping = {}
-                            for i, real_agent_id in enumerate(sorted(answers.keys()), 1):
-                                agent_mapping[f"agent{i}"] = real_agent_id
+                            # Use global agent mapping (consistent with vote tool enum and injection)
+                            agent_mapping = self.coordination_tracker.get_anonymous_agent_mapping()
 
                             voted_agent = agent_mapping.get(voted_agent_anon, voted_agent_anon)
 
-                            # Handle invalid agent_id
+                            # Handle invalid agent_id - check if voted agent has an answer
                             if voted_agent not in answers:
                                 if attempt < max_attempts - 1:
                                     # Note: restart_pending is handled by mid-stream callback on next tool call
-                                    # Create reverse mapping for error message
-                                    reverse_mapping = {real_id: f"agent{i}" for i, real_id in enumerate(sorted(answers.keys()), 1)}
-                                    valid_anon_agents = [reverse_mapping[real_id] for real_id in answers.keys()]
+                                    # Build valid agents list using global numbering (consistent with enum)
+                                    valid_anon_agents = self.coordination_tracker.get_agents_with_answers_anon(answers)
                                     error_msg = f"Invalid agent_id '{voted_agent_anon}'. Valid agents: {', '.join(valid_anon_agents)}"
                                     # Send tool error result back to agent
                                     yield ("content", f"❌ {error_msg}")
@@ -4708,6 +4889,18 @@ Your answer:"""
                             _agent_voted_for = voted_agent
                             # Get the answer label that this voter was shown for voted-for agent
                             _agent_voted_for_label = self.coordination_tracker.get_voted_for_label(agent_id, voted_agent)
+
+                            # Record vote to execution trace (if available)
+                            if hasattr(agent.backend, "_add_vote_to_trace"):
+                                # Get available answer labels from voter's context
+                                available_options = self.coordination_tracker.get_agent_context_labels(agent_id)
+                                agent.backend._add_vote_to_trace(
+                                    voted_for_agent=voted_agent,
+                                    voted_for_label=_agent_voted_for_label,
+                                    reason=reason,
+                                    available_options=available_options,
+                                )
+
                             yield (
                                 "result",
                                 ("vote", {"agent_id": voted_agent, "reason": reason}),
@@ -5294,6 +5487,7 @@ INSTRUCTIONS FOR NEXT ATTEMPT:
             docker_mode=docker_mode,
             enable_sudo=enable_sudo,
             concurrent_tool_execution=concurrent_tool_execution,
+            agent_mapping=self.coordination_tracker.get_reverse_agent_mapping(),
         )
 
         # Change the status of all agents that were not selected to AgentStatus.COMPLETED
@@ -5768,6 +5962,46 @@ Then call either submit(confirmed=True) if the answer is satisfactory, or restar
 
         log_orchestrator_activity("handle_restart", f"State reset complete - starting attempt {self.current_attempt + 1}")
 
+    def _should_skip_injection_due_to_timeout(self, agent_id: str) -> bool:
+        """Check if mid-stream injection should be skipped due to approaching timeout.
+
+        If the agent doesn't have enough time remaining before soft timeout to properly
+        consider a new answer, it's better to skip injection and let the agent restart
+        with fresh context so they get a full round to think.
+
+        Args:
+            agent_id: The agent to check
+
+        Returns:
+            True if injection should be skipped, False otherwise
+        """
+        timeout_config = self.config.timeout_config
+        round_start = self.agent_states[agent_id].round_start_time
+
+        if round_start is None:
+            return False
+
+        current_round = self.coordination_tracker.get_agent_round(agent_id)
+        if current_round == 0:
+            soft_timeout = timeout_config.initial_round_timeout_seconds
+        else:
+            soft_timeout = timeout_config.subsequent_round_timeout_seconds
+
+        if soft_timeout is None:
+            return False
+
+        elapsed = time.time() - round_start
+        min_thinking_time = timeout_config.round_timeout_grace_seconds
+        remaining = soft_timeout - elapsed
+
+        if remaining < min_thinking_time:
+            logger.info(
+                f"[Orchestrator] Skipping mid-stream injection for {agent_id} - " f"only {remaining:.0f}s until soft timeout (need {min_thinking_time}s to think)",
+            )
+            return True
+
+        return False
+
     def _get_vote_results(self) -> Dict[str, Any]:
         """Get current vote results and statistics."""
         agent_answers = {aid: state.answer for aid, state in self.agent_states.items() if state.answer}
@@ -5808,9 +6042,8 @@ Then call either submit(confirmed=True) if the answer is satisfactory, or restar
                 winner = tied_agents[0] if tied_agents else None
 
         # Create agent mapping for anonymous display
-        agent_mapping = {}
-        for i, real_id in enumerate(sorted(agent_answers.keys()), 1):
-            agent_mapping[f"agent{i}"] = real_id
+        # Use global mapping (all agents) for consistency with vote tool and injections
+        agent_mapping = self.coordination_tracker.get_anonymous_agent_mapping()
 
         return {
             "vote_counts": vote_counts,

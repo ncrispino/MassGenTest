@@ -47,7 +47,18 @@ class ResponseFormatter(FormatterBase):
         converted_messages = []
 
         for message in cleaned_messages:
-            if message.get("type") in ("reasoning", "web_search_call"):
+            if message.get("type") == "reasoning":
+                # Sanitize reasoning messages: Response API expects 'content' to be an array, not a string
+                # When reasoning is encrypted/summarized, content may be empty string ""
+                # which causes "expected an array of unknown values, but got a string" error
+                sanitized = message.copy()
+                if isinstance(sanitized.get("content"), str):
+                    content = sanitized["content"]
+                    sanitized["content"] = [] if content == "" else [{"type": "text", "text": content}]
+                converted_messages.append(sanitized)
+                continue
+
+            if message.get("type") == "web_search_call":
                 converted_messages.append(message)
                 continue
 

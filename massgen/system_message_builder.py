@@ -94,6 +94,7 @@ class SystemMessageBuilder:
         previous_turns: List[Dict[str, Any]],
         human_qa_history: Optional[List[Dict[str, str]]] = None,
         vote_only: bool = False,
+        agent_mapping: Optional[Dict[str, str]] = None,
     ) -> str:
         """Build system message for coordination phase.
 
@@ -111,6 +112,9 @@ class SystemMessageBuilder:
             previous_turns: List of previous turn data for filesystem context
             human_qa_history: List of human Q&A pairs from broadcast channel (human mode only)
             vote_only: If True, agent has reached max answers and can only vote
+            agent_mapping: Mapping from real agent ID to anonymous ID (e.g., agent_a -> agent1).
+                          Pass from coordination_tracker.get_reverse_agent_mapping() for
+                          global consistency with vote tool and injections.
 
         Returns:
             Complete system prompt string with XML structure
@@ -249,6 +253,7 @@ class SystemMessageBuilder:
                 docker_mode=docker_mode,
                 enable_sudo=enable_sudo,
                 concurrent_tool_execution=concurrent_tool_execution,
+                agent_mapping=agent_mapping,
             )
 
             builder.add_section(fs_ops)
@@ -358,6 +363,7 @@ class SystemMessageBuilder:
         docker_mode: bool = False,
         enable_sudo: bool = False,
         concurrent_tool_execution: bool = False,
+        agent_mapping: Optional[Dict[str, str]] = None,
     ) -> str:
         """Build system message for final presentation phase.
 
@@ -377,6 +383,9 @@ class SystemMessageBuilder:
             docker_mode: Whether commands run in Docker
             enable_sudo: Whether sudo is available
             concurrent_tool_execution: Whether tools execute in parallel
+            agent_mapping: Mapping from real agent ID to anonymous ID (e.g., agent_a -> agent1).
+                          Pass from coordination_tracker.get_reverse_agent_mapping() for
+                          global consistency with vote tool and injections.
 
         Returns:
             Complete system message string
@@ -409,6 +418,7 @@ class SystemMessageBuilder:
                 docker_mode=docker_mode,
                 enable_sudo=enable_sudo,
                 concurrent_tool_execution=concurrent_tool_execution,
+                agent_mapping=agent_mapping,
             )
 
             # Build sections list
@@ -469,6 +479,7 @@ This makes the work reusable for similar future tasks."""
         agent,  # ChatAgent
         all_answers: Dict[str, str],
         previous_turns: List[Dict[str, Any]],
+        agent_mapping: Optional[Dict[str, str]] = None,
     ) -> str:
         """Build system message for post-evaluation phase.
 
@@ -479,6 +490,9 @@ This makes the work reusable for similar future tasks."""
             agent: The evaluating agent
             all_answers: All answers from coordination phase
             previous_turns: List of previous turn data for filesystem context
+            agent_mapping: Mapping from real agent ID to anonymous ID (e.g., agent_a -> agent1).
+                          Pass from coordination_tracker.get_reverse_agent_mapping() for
+                          global consistency with vote tool and injections.
 
         Returns:
             Complete system message string
@@ -504,6 +518,7 @@ This makes the work reusable for similar future tasks."""
                 enable_command_execution=False,
                 docker_mode=False,
                 enable_sudo=False,
+                agent_mapping=agent_mapping,
             )
 
             parts.append(fs_ops.build_content())
@@ -538,6 +553,7 @@ This makes the work reusable for similar future tasks."""
         docker_mode: bool = False,
         enable_sudo: bool = False,
         concurrent_tool_execution: bool = False,
+        agent_mapping: Optional[Dict[str, str]] = None,
     ) -> Tuple[Any, Any, Optional[Any]]:  # Tuple[FilesystemOperationsSection, FilesystemBestPracticesSection, Optional[CommandExecutionSection]]
         """Build filesystem-related sections.
 
@@ -552,6 +568,9 @@ This makes the work reusable for similar future tasks."""
             docker_mode: Whether commands run in Docker
             enable_sudo: Whether sudo is available
             concurrent_tool_execution: Whether tools execute in parallel
+            agent_mapping: Mapping from real agent ID to anonymous ID (e.g., agent_a -> agent1).
+                          Pass from coordination_tracker.get_reverse_agent_mapping() for
+                          global consistency with vote tool and injections.
 
         Returns:
             Tuple of (FilesystemOperationsSection, FilesystemBestPracticesSection, Optional[CommandExecutionSection])
@@ -578,6 +597,7 @@ This makes the work reusable for similar future tasks."""
             workspace_prepopulated=workspace_prepopulated,
             agent_answers=all_answers,
             enable_command_execution=enable_command_execution,
+            agent_mapping=agent_mapping,
         )
 
         # Build filesystem best practices section

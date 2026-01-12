@@ -478,10 +478,11 @@ class CoordinationUI:
         orchestrator.coordination_ui = self
 
         # Auto-detect agent IDs if not provided
+        # Sort for consistent anonymous mapping with coordination_tracker
         if agent_ids is None:
-            self.agent_ids = list(orchestrator.agents.keys())
+            self.agent_ids = sorted(orchestrator.agents.keys())
         else:
-            self.agent_ids = agent_ids
+            self.agent_ids = sorted(agent_ids)
 
         # Initialize display if not provided
         if self.display is None:
@@ -965,10 +966,11 @@ class CoordinationUI:
         orchestrator.coordination_ui = self
 
         # Auto-detect agent IDs if not provided
+        # Sort for consistent anonymous mapping with coordination_tracker
         if agent_ids is None:
-            self.agent_ids = list(orchestrator.agents.keys())
+            self.agent_ids = sorted(orchestrator.agents.keys())
         else:
-            self.agent_ids = agent_ids
+            self.agent_ids = sorted(agent_ids)
 
         # Initialize display if not provided
         if self.display is None:
