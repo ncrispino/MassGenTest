@@ -33,3 +33,10 @@ agents:
 ui:
   display_type: "rich_terminal"
   logging_enabled: true
+
+# Timeout settings to prevent agents from getting stuck
+timeout_settings:
+  orchestrator_timeout_seconds: 1800        # 30 min overall session limit
+  initial_round_timeout_seconds: 600        # 10 min for first answer
+  subsequent_round_timeout_seconds: 300     # 5 min for voting rounds
+  round_timeout_grace_seconds: 120          # 2 min grace before hard block

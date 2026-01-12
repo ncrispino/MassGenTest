@@ -23,6 +23,7 @@ import asyncio
 import fnmatch
 import importlib
 import json
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -821,6 +822,204 @@ class HighPriorityTaskReminderHook(PatternHook):
         return HookResult.allow()
 
 
+class RoundTimeoutPostHook(PatternHook):
+    """PostToolUse hook that injects soft timeout warning when round time limit is exceeded.
+
+    This hook checks elapsed time after each tool call and injects a warning message
+    telling the agent to submit an answer or vote immediately when the soft timeout
+    is reached. Different timeouts can be configured for round 0 (initial answer)
+    vs subsequent rounds (voting/refinement).
+
+    The hook fires only once per round - after injecting the warning, it won't
+    inject again until reset_for_new_round() is called.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        get_round_start_time: Callable[[], float],
+        get_agent_round: Callable[[], int],
+        initial_timeout_seconds: Optional[int],
+        subsequent_timeout_seconds: Optional[int],
+        grace_seconds: int,
+        agent_id: str,
+    ):
+        """
+        Initialize the round timeout post hook.
+
+        Args:
+            name: Hook identifier
+            get_round_start_time: Callable returning the start time of current round
+            get_agent_round: Callable returning the current round number for this agent
+            initial_timeout_seconds: Soft timeout for round 0 (None = disabled)
+            subsequent_timeout_seconds: Soft timeout for rounds 1+ (None = disabled)
+            grace_seconds: Time allowed after soft timeout before hard block
+            agent_id: Agent identifier for logging
+        """
+        super().__init__(name, matcher="*", timeout=5)
+        self.get_round_start_time = get_round_start_time
+        self.get_agent_round = get_agent_round
+        self.initial_timeout_seconds = initial_timeout_seconds
+        self.subsequent_timeout_seconds = subsequent_timeout_seconds
+        self.grace_seconds = grace_seconds
+        self.agent_id = agent_id
+        self._soft_timeout_fired = False
+
+    def _get_timeout_for_current_round(self) -> Optional[int]:
+        """Return timeout based on round number (0 = initial, 1+ = subsequent)."""
+        round_num = self.get_agent_round()
+        if round_num == 0:
+            return self.initial_timeout_seconds
+        else:
+            return self.subsequent_timeout_seconds
+
+    def reset_for_new_round(self) -> None:
+        """Reset the hook state for a new round."""
+        self._soft_timeout_fired = False
+
+    async def execute(
+        self,
+        _function_name: str,
+        _arguments: str,
+        _context: Optional[Dict[str, Any]] = None,
+        **_kwargs,
+    ) -> HookResult:
+        """Execute the soft timeout check after each tool call."""
+        if self._soft_timeout_fired:
+            return HookResult.allow()
+
+        timeout = self._get_timeout_for_current_round()
+        if timeout is None:
+            return HookResult.allow()
+
+        elapsed = time.time() - self.get_round_start_time()
+        if elapsed < timeout:
+            return HookResult.allow()
+
+        self._soft_timeout_fired = True
+        round_num = self.get_agent_round()
+        round_type = "initial answer" if round_num == 0 else "voting"
+
+        injection = f"""
+============================================================
+⏰ ROUND TIME LIMIT APPROACHING - PLEASE WRAP UP
+============================================================
+
+You have exceeded the soft time limit for this {round_type} round ({elapsed:.0f}s / {timeout}s).
+
+Please wrap up your current work and submit soon:
+1. `new_answer` - Submit your current best answer (can be a work-in-progress)
+2. `vote` - Vote for an existing answer if one is satisfactory
+
+You may finish any final touches to make your work presentable, but please
+submit within the next {self.grace_seconds} seconds. After that, tool calls
+will be blocked and you'll need to submit immediately.
+
+The next coordination round will allow further iteration if needed.
+============================================================
+"""
+
+        logger.info(f"[RoundTimeoutPostHook] Soft timeout reached for {self.agent_id} after {elapsed:.0f}s")
+        return HookResult(
+            allowed=True,
+            inject={
+                "content": injection,
+                "strategy": "tool_result",
+            },
+        )
+
+
+class RoundTimeoutPreHook(PatternHook):
+    """PreToolUse hook that blocks non-terminal tools after hard timeout.
+
+    This hook enforces a hard timeout after the soft timeout + grace period.
+    Once hard timeout is reached, only 'vote' and 'new_answer' tools are allowed.
+    All other tool calls are denied with an error message.
+
+    This ensures agents cannot continue indefinitely and must submit.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        get_round_start_time: Callable[[], float],
+        get_agent_round: Callable[[], int],
+        initial_timeout_seconds: Optional[int],
+        subsequent_timeout_seconds: Optional[int],
+        grace_seconds: int,
+        agent_id: str,
+    ):
+        """
+        Initialize the round timeout pre hook.
+
+        Args:
+            name: Hook identifier
+            get_round_start_time: Callable returning the start time of current round
+            get_agent_round: Callable returning the current round number for this agent
+            initial_timeout_seconds: Soft timeout for round 0 (None = disabled)
+            subsequent_timeout_seconds: Soft timeout for rounds 1+ (None = disabled)
+            grace_seconds: Grace period after soft timeout before blocking
+            agent_id: Agent identifier for logging
+        """
+        super().__init__(name, matcher="*", timeout=5)
+        self.get_round_start_time = get_round_start_time
+        self.get_agent_round = get_agent_round
+        self.initial_timeout_seconds = initial_timeout_seconds
+        self.subsequent_timeout_seconds = subsequent_timeout_seconds
+        self.grace_seconds = grace_seconds
+        self.agent_id = agent_id
+
+    def _get_timeout_for_current_round(self) -> Optional[int]:
+        """Return timeout based on round number (0 = initial, 1+ = subsequent)."""
+        round_num = self.get_agent_round()
+        if round_num == 0:
+            return self.initial_timeout_seconds
+        else:
+            return self.subsequent_timeout_seconds
+
+    async def execute(
+        self,
+        function_name: str,
+        arguments: str,
+        context: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ) -> HookResult:
+        """Execute the hard timeout check before each tool call."""
+        timeout = self._get_timeout_for_current_round()
+        if timeout is None:
+            return HookResult.allow()
+
+        elapsed = time.time() - self.get_round_start_time()
+        hard_timeout = timeout + self.grace_seconds
+
+        if elapsed < hard_timeout:
+            return HookResult.allow()
+
+        # Hard timeout reached - only allow vote/new_answer
+        if function_name in ("vote", "new_answer"):
+            return HookResult.allow()
+
+        # Block all other tools
+        logger.warning(
+            f"[RoundTimeoutPreHook] Blocking {function_name} for {self.agent_id} - " f"hard timeout exceeded ({elapsed:.0f}s / {hard_timeout:.0f}s)",
+        )
+        return HookResult(
+            decision="deny",
+            reason=(
+                f"⛔ HARD TIMEOUT - TOOL CALL BLOCKED\n"
+                f"You have exceeded the hard time limit ({elapsed:.0f}s / {hard_timeout:.0f}s).\n"
+                f"Only `vote` or `new_answer` tools are allowed. Submit immediately."
+            ),
+        )
+
+    def reset_for_new_round(self) -> None:
+        """Reset hook state for a new round.
+
+        Note: RoundTimeoutPreHook is stateless (checks elapsed time dynamically),
+        so this is a no-op. Method exists for interface consistency with RoundTimeoutPostHook.
+        """
+
+
 class PermissionClientSession(ClientSession):
     """
     ClientSession subclass that intercepts tool calls to apply permission hooks.
@@ -879,7 +1078,12 @@ class PermissionClientSession(ClientSession):
 
             except Exception as e:
                 logger.error(f"[PermissionClientSession] Error in permission hook: {e}")
-                # Continue with the call if hook fails - don't break functionality
+                # Fail closed: deny tool execution when permission check errors
+                # This is safer than allowing potentially dangerous operations through
+                return types.CallToolResult(
+                    content=[types.TextContent(type="text", text=f"Error: Permission check failed: {e}")],
+                    isError=True,
+                )
 
         # Call the parent's call_tool method
         try:
@@ -927,6 +1131,9 @@ __all__ = [
     # Built-in hooks
     "MidStreamInjectionHook",
     "HighPriorityTaskReminderHook",
+    # Per-round timeout hooks
+    "RoundTimeoutPostHook",
+    "RoundTimeoutPreHook",
     # Session-based hooks
     "PermissionClientSession",
     "convert_sessions_to_permission_sessions",
