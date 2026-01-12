@@ -258,6 +258,47 @@ class CoordinationTracker:
             return self.agent_ids.index(agent_id) + 1
         return None
 
+    def get_anonymous_agent_mapping(self) -> Dict[str, str]:
+        """
+        Get consistent anonymous agent ID mapping (anon → real).
+
+        Uses global agent numbering based on sorted agent IDs.
+        This ensures consistency between injections, vote tool, vote validation,
+        vote results display, and snapshots.
+
+        Returns:
+            Dict mapping anonymous IDs to real IDs, e.g.:
+            {"agent1": "agent_a", "agent2": "agent_b", "agent3": "agent_c"}
+        """
+        sorted_ids = sorted(self.agent_ids)
+        return {f"agent{i}": real_id for i, real_id in enumerate(sorted_ids, 1)}
+
+    def get_reverse_agent_mapping(self) -> Dict[str, str]:
+        """
+        Get reverse mapping from real agent ID to anonymous ID.
+
+        Returns:
+            Dict mapping real IDs to anonymous IDs, e.g.:
+            {"agent_a": "agent1", "agent_b": "agent2", "agent_c": "agent3"}
+        """
+        sorted_ids = sorted(self.agent_ids)
+        return {real_id: f"agent{i}" for i, real_id in enumerate(sorted_ids, 1)}
+
+    def get_agents_with_answers_anon(self, answers: Dict[str, Any]) -> List[str]:
+        """
+        Get list of anonymous IDs for agents that have answers.
+
+        Uses global numbering, filtered to only agents with answers.
+
+        Args:
+            answers: Dict of agent_id -> answer content
+
+        Returns:
+            List of anonymous IDs like ["agent1", "agent3"] for agents with answers
+        """
+        sorted_ids = sorted(self.agent_ids)
+        return [f"agent{i}" for i, aid in enumerate(sorted_ids, 1) if aid in answers]
+
     def get_agent_context_labels(self, agent_id: str) -> List[str]:
         """Get the answer labels this agent can currently see."""
         return self.agent_context_labels.get(agent_id, []).copy()
@@ -1115,6 +1156,17 @@ class CoordinationTracker:
                         if hasattr(backend, "get_round_token_history"):
                             round_history = backend.get_round_token_history()
 
+                # Get per-round timing info for debugging
+                round_timing = None
+                if orchestrator and hasattr(orchestrator, "agent_states"):
+                    agent_state = orchestrator.agent_states.get(agent_id)
+                    if agent_state and agent_state.round_start_time:
+                        agent_round = self.agent_rounds.get(agent_id, 0)
+                        round_timing = {
+                            "round_number": agent_round,
+                            "round_start_time": agent_state.round_start_time,
+                        }
+
                 agent_statuses[agent_id] = {
                     "status": status,
                     "answer_count": len(answers),
@@ -1127,6 +1179,7 @@ class CoordinationTracker:
                     "token_usage": token_usage,
                     "tool_metrics": tool_metrics,
                     "round_history": round_history,
+                    "round_timing": round_timing,
                 }
 
             # Aggregate vote counts by answer label

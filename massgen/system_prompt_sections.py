@@ -1040,6 +1040,7 @@ class FilesystemOperationsSection(SystemPromptSection):
         workspace_prepopulated: bool = False,
         agent_answers: Optional[Dict[str, str]] = None,
         enable_command_execution: bool = False,
+        agent_mapping: Optional[Dict[str, str]] = None,
     ):
         super().__init__(
             title="Filesystem Operations",
@@ -1053,6 +1054,7 @@ class FilesystemOperationsSection(SystemPromptSection):
         self.workspace_prepopulated = workspace_prepopulated
         self.agent_answers = agent_answers
         self.enable_command_execution = enable_command_execution
+        self.agent_mapping = agent_mapping  # Optional: from coordination_tracker.get_reverse_agent_mapping()
 
     def build_content(self) -> str:
         parts = ["## Filesystem Access"]
@@ -1082,12 +1084,18 @@ class FilesystemOperationsSection(SystemPromptSection):
 
             # Add agent subdirectories in tree format
             if self.agent_answers:
-                agent_mapping = {}
-                for i, agent_id in enumerate(sorted(self.agent_answers.keys()), 1):
-                    agent_mapping[agent_id] = f"agent{i}"
+                # Use provided mapping or create from agent_answers keys (legacy behavior)
+                if self.agent_mapping:
+                    # Filter to only agents with answers, maintain global numbering
+                    agent_mapping = {aid: self.agent_mapping[aid] for aid in self.agent_answers.keys() if aid in self.agent_mapping}
+                else:
+                    agent_mapping = {}
+                    for i, agent_id in enumerate(sorted(self.agent_answers.keys()), 1):
+                        agent_mapping[agent_id] = f"agent{i}"
 
                 workspace_tree += "   Available agent workspaces:\n"
-                agent_items = list(agent_mapping.items())
+                # Sort by anon ID to ensure consistent display order
+                agent_items = sorted(agent_mapping.items(), key=lambda x: x[1])
                 for idx, (agent_id, anon_id) in enumerate(agent_items):
                     is_last = idx == len(agent_items) - 1
                     prefix = "   └── " if is_last else "   ├── "
