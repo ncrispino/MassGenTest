@@ -1664,11 +1664,6 @@ def relocate_filesystem_paths(config: Dict[str, Any]) -> None:
             # Otherwise, relocate under .massgen/workspaces/
             backend_config["cwd"] = str(massgen_dir / "workspaces" / user_cwd)
 
-    # NOTE: Duplicate workspace paths are allowed at this stage because unique per-agent
-    # UUID suffixes are added later (see instance_id generation in main()).
-    # This allows configs to use `cwd: "workspace"` for all agents, which prevents
-    # identity leakage from numbered workspace names (see PR Item 12).
-
 
 async def handle_session_persistence(
     orchestrator,
