@@ -2228,6 +2228,20 @@ Your answer:"""
                         )
                     except Exception as e:
                         logger.debug(f"Failed to update status file in background: {e}")
+
+                # Update timeout status for each agent in the display
+                try:
+                    display = None
+                    if hasattr(self, "coordination_ui") and self.coordination_ui:
+                        display = getattr(self.coordination_ui, "display", None)
+
+                    if display and hasattr(display, "update_timeout_status"):
+                        for agent_id in self.agents.keys():
+                            timeout_state = self.get_agent_timeout_state(agent_id)
+                            if timeout_state:
+                                display.update_timeout_status(agent_id, timeout_state)
+                except Exception as e:
+                    logger.debug(f"Failed to update timeout status in display: {e}")
         except asyncio.CancelledError:
             # Task was cancelled, this is expected behavior
             pass
@@ -6374,6 +6388,71 @@ Then call either submit(confirmed=True) if the answer is satisfactory, or restar
                 )
             },
             "conversation_length": len(self.conversation_history),
+        }
+
+    def get_agent_timeout_state(self, agent_id: str) -> Optional[Dict[str, Any]]:
+        """Get timeout state for display purposes.
+
+        Returns timeout countdown and status information for a specific agent,
+        used by TUI and WebUI to show per-agent timeout progress.
+
+        Args:
+            agent_id: The agent identifier
+
+        Returns:
+            Dictionary with timeout state, or None if agent not found.
+            Contains:
+                - round_number: Current coordination round
+                - round_start_time: When current round started
+                - active_timeout: Soft timeout for current round type (initial/subsequent)
+                - grace_seconds: Grace period before hard block
+                - elapsed: Seconds elapsed since round start
+                - remaining_soft: Seconds until soft timeout
+                - remaining_hard: Seconds until hard block
+                - soft_timeout_fired: Whether soft timeout warning was injected
+                - is_hard_blocked: Whether hard timeout is active (tools blocked)
+        """
+        state = self.agent_states.get(agent_id)
+        if not state:
+            return None
+
+        timeout_config = self.config.timeout_config
+        round_num = self.coordination_tracker.get_agent_round(agent_id)
+
+        # Determine active timeout based on round
+        if round_num == 0:
+            active_timeout = timeout_config.initial_round_timeout_seconds
+        else:
+            active_timeout = timeout_config.subsequent_round_timeout_seconds
+
+        # Calculate elapsed and remaining
+        elapsed: Optional[float] = None
+        remaining_soft: Optional[float] = None
+        remaining_hard: Optional[float] = None
+
+        if state.round_start_time and active_timeout:
+            elapsed = time.time() - state.round_start_time
+            remaining_soft = max(0, active_timeout - elapsed)
+            grace = timeout_config.round_timeout_grace_seconds or 0
+            remaining_hard = max(0, active_timeout + grace - elapsed)
+
+        # Get soft timeout fired status from hook
+        soft_timeout_fired = False
+        if state.round_timeout_hooks:
+            post_hook, _ = state.round_timeout_hooks
+            # Access the private attribute that tracks if soft timeout fired
+            soft_timeout_fired = getattr(post_hook, "_soft_timeout_fired", False)
+
+        return {
+            "round_number": round_num,
+            "round_start_time": state.round_start_time,
+            "active_timeout": active_timeout,
+            "grace_seconds": timeout_config.round_timeout_grace_seconds or 0,
+            "elapsed": elapsed,
+            "remaining_soft": remaining_soft,
+            "remaining_hard": remaining_hard,
+            "soft_timeout_fired": soft_timeout_fired,
+            "is_hard_blocked": remaining_hard == 0 if remaining_hard is not None else False,
         }
 
     def get_configurable_system_message(self) -> Optional[str]:

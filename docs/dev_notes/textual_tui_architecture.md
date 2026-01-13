@@ -717,6 +717,92 @@ WebUI shows bar chart. TUI should:
 - Sorted by vote count
 - Total votes summary
 
+## Hook Visualization (Phase 6)
+
+The TUI displays hook executions attached to tool cards, providing visibility into
+the hook framework that controls tool execution flow.
+
+### Hook Display Architecture
+
+```
+Hook Execution Event
+    │
+    ▼
+GeneralHookManager.execute_hooks()
+    │
+    ├── Tracks executed hooks on HookResult
+    │
+    ▼
+AgentPanel receives tool content
+    │
+    ├── Pre-hook → ToolCallCard.add_pre_hook()
+    │       └── Renders above tool card
+    │
+    └── Post-hook → ToolCallCard.add_post_hook()
+            └── Renders below tool result
+```
+
+### Hook Types Displayed
+
+| Hook | Type | Visual | When Shown |
+|------|------|--------|------------|
+| `round_timeout_hard` | Pre | 🪝 or 🚫 | Before tool, when timeout active |
+| `round_timeout_soft` | Post | ⏰ | After tool, when soft timeout exceeded |
+| `mid_stream_injection` | Post | 🪝 📥 | After tool, when context injected |
+
+### Visual Rendering
+
+Hooks render as decorations around the ToolCallCard:
+
+```
+  🪝 timeout_hard: allowed              ← Pre-hook (compact)
+  📁 filesystem/write_file    ✓ (0.3s)  ← Tool card
+    {"path": "..."}
+    → Success
+  🪝 mid_stream: +context               ← Post-hook (compact)
+```
+
+Blocked hooks appear more prominently:
+
+```
+  🚫 timeout_hard: BLOCKED - Hard timeout exceeded
+  📁 filesystem/write_file    ✗ blocked
+    {"path": "..."}
+```
+
+### Per-Agent Timeout Display in Header
+
+The AgentPanel header shows per-agent timeout countdown:
+
+- **Normal**: `⏱ 0:45 | ⏰ 0:15` (elapsed | remaining)
+- **Warning** (<60s): `⏱ 0:45 | ⏰ 0:15` in yellow
+- **Grace period**: `⏱ 1:05 | ⚠️ Grace: 0:55` in bold yellow
+- **Hard blocked**: `⏱ 2:05 | 🚫 BLOCKED` in bold red
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `textual_widgets/tool_card.py` | ToolCallCard with hook display methods |
+| `textual_terminal_display.py` | AgentPanel with timeout display |
+| `mcp_tools/hooks.py` | HookResult with executed_hooks tracking |
+| `orchestrator.py` | get_agent_timeout_state() method |
+
+### CSS Styling (dark.tcss / light.tcss)
+
+```css
+/* Hook indicators */
+.hook-indicator.blocked { color: #f44747; }
+.hook-indicator.allowed { color: #c586c0; }
+
+/* Timeout countdown in header */
+.timeout-normal { color: #858585; }
+.timeout-warning { color: #d29922; }
+.timeout-critical { color: #f44747; font-weight: bold; }
+```
+
+---
+
 ### Remaining Implementation Priority
 
 1. **Medium Priority** (Enhanced UX)

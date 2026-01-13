@@ -223,6 +223,17 @@ class CoordinationUI:
                         self.logger.log_chunk(source, content, chunk_type)
                     continue
 
+                # Handle hook execution events - route to display
+                elif chunk_type == "hook_execution":
+                    hook_info = getattr(chunk, "hook_info", None)
+                    tool_call_id = getattr(chunk, "tool_call_id", None)
+                    if self.display and source and hook_info:
+                        if hasattr(self.display, "update_hook_execution"):
+                            self.display.update_hook_execution(source, tool_call_id, hook_info)
+                    if self.logger:
+                        self.logger.log_chunk(source, str(hook_info), chunk_type)
+                    continue
+
                 # Handle reasoning streams
                 elif chunk_type in [
                     "reasoning",

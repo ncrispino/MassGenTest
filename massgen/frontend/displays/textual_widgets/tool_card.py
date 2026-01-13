@@ -271,30 +271,56 @@ class ToolCallCard(Static):
         self.add_class(f"type-{self._category['category']}")
         self.add_class("status-running")
 
+        # Hook execution tracking (for display in TUI)
+        self._pre_hooks: list = []  # Hooks that ran before tool
+        self._post_hooks: list = []  # Hooks that ran after tool
+
     def render(self) -> Text:
         """Render the card as a single-line summary."""
         return self._render_collapsed()
 
     def _render_collapsed(self) -> Text:
-        """Render card view: 2-3 lines with name, args, result.
+        """Render card view: with pre-hooks, tool info, and post-hooks.
 
-        Design (2-3 lines per tool):
+        Design with hooks:
         ```
+        🪝 timeout_hard: allowed
         ▶ 📁 filesystem/write_file                              ⏳ running...
           {"content": "In circuits humming...", "path": "/tmp/poem.txt"}
         ```
-        or completed:
+        or completed with post-hooks:
         ```
           📁 filesystem/read_file                               ✓ (0.3s)
           {"path": "/tmp/example.txt"}
           → File contents: Hello world...
+        🪝 mid_stream: +context from agent_b
         ```
         """
+        text = Text()
+
+        # Pre-hooks (shown above tool line)
+        for hook in self._pre_hooks:
+            hook_name = hook.get("hook_name", "unknown")
+            decision = hook.get("decision", "allow")
+            reason = hook.get("reason", "")
+
+            if decision == "deny":
+                text.append("  🚫 ", style="bold red")
+                text.append(f"{hook_name}: ", style="red")
+                text.append("BLOCKED", style="bold red")
+                if reason:
+                    text.append(f" - {reason[:40]}...\n" if len(reason) > 40 else f" - {reason}\n", style="dim red")
+                else:
+                    text.append("\n")
+            else:
+                text.append("  🪝 ", style="dim magenta")
+                text.append(f"{hook_name}: ", style="dim magenta")
+                text.append("allowed\n", style="dim")
+
+        # Tool card content
         icon = self._category["icon"]
         status_icon = self.STATUS_ICONS.get(self._status, "⏳")
         elapsed = self._get_elapsed_str()
-
-        text = Text()
 
         # Line 1: Icon + name + status
         if self._status == "running":
@@ -349,6 +375,19 @@ class ToolCallCard(Static):
             if len(error_preview) > 60:
                 error_preview = error_preview[:57] + "..."
             text.append(error_preview, style="dim red")
+
+        # Post-hooks (shown below result)
+        for hook in self._post_hooks:
+            hook_name = hook.get("hook_name", "unknown")
+            injection_preview = hook.get("injection_preview", "")
+
+            text.append("\n  🪝 ", style="dim magenta")
+            text.append(f"{hook_name}", style="dim magenta")
+
+            if injection_preview:
+                preview = injection_preview[:40] + "..." if len(injection_preview) > 40 else injection_preview
+                preview = preview.replace("\n", " ")
+                text.append(f": +{preview}", style="dim")
 
         return text
 
@@ -406,6 +445,65 @@ class ToolCallCard(Static):
         self.remove_class("status-running")
         self.add_class("status-error")
         self.refresh()
+
+    def add_pre_hook(
+        self,
+        hook_name: str,
+        decision: str,
+        reason: Optional[str] = None,
+        execution_time_ms: Optional[float] = None,
+    ) -> None:
+        """Add a pre-tool hook execution to display.
+
+        Args:
+            hook_name: Name of the hook
+            decision: "allow", "deny", or "error"
+            reason: Reason for the decision (if any)
+            execution_time_ms: How long the hook took
+        """
+        self._pre_hooks.append(
+            {
+                "hook_name": hook_name,
+                "decision": decision,
+                "reason": reason,
+                "execution_time_ms": execution_time_ms,
+                "timestamp": datetime.now(),
+            },
+        )
+        self.refresh()
+
+    def add_post_hook(
+        self,
+        hook_name: str,
+        injection_preview: Optional[str] = None,
+        execution_time_ms: Optional[float] = None,
+    ) -> None:
+        """Add a post-tool hook execution to display.
+
+        Args:
+            hook_name: Name of the hook
+            injection_preview: Preview of injected content (if any)
+            execution_time_ms: How long the hook took
+        """
+        self._post_hooks.append(
+            {
+                "hook_name": hook_name,
+                "injection_preview": injection_preview,
+                "execution_time_ms": execution_time_ms,
+                "timestamp": datetime.now(),
+            },
+        )
+        self.refresh()
+
+    @property
+    def pre_hooks(self) -> list:
+        """Get list of pre-hooks for modal display."""
+        return self._pre_hooks
+
+    @property
+    def post_hooks(self) -> list:
+        """Get list of post-hooks for modal display."""
+        return self._post_hooks
 
     @property
     def status(self) -> str:

@@ -520,6 +520,48 @@ class TimelineSection(Vertical):
         """Get a tool card by ID."""
         return self._tools.get(tool_id)
 
+    def add_hook_to_tool(self, tool_call_id: Optional[str], hook_info: dict) -> None:
+        """Add hook execution info to a tool card.
+
+        Args:
+            tool_call_id: The tool call ID to attach the hook to
+            hook_info: Hook execution information dict with keys:
+                - hook_name: Name of the hook
+                - hook_type: "pre" or "post"
+                - decision: "allow", "deny", or "error"
+                - reason: Optional reason string
+                - execution_time_ms: Optional execution time
+                - injection_preview: Optional preview of injected content
+        """
+        # Find the tool card to attach the hook to
+        tool_card = None
+        if tool_call_id:
+            tool_card = self._tools.get(tool_call_id)
+
+        # If no specific tool_id, attach to the most recent tool
+        if not tool_card and self._tools:
+            # Get the most recently added tool
+            tool_card = list(self._tools.values())[-1] if self._tools else None
+
+        if tool_card:
+            hook_type = hook_info.get("hook_type", "pre")
+            hook_name = hook_info.get("hook_name", "unknown")
+            decision = hook_info.get("decision", "allow")
+            reason = hook_info.get("reason")
+            injection_preview = hook_info.get("injection_preview")
+
+            if hook_type == "pre":
+                tool_card.add_pre_hook(
+                    hook_name=hook_name,
+                    decision=decision,
+                    reason=reason,
+                )
+            else:
+                tool_card.add_post_hook(
+                    hook_name=hook_name,
+                    injection_preview=injection_preview,
+                )
+
     def add_text(self, content: str, style: str = "", text_class: str = "") -> None:
         """Add text content to the timeline.
 

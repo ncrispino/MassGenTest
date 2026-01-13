@@ -1,16 +1,15 @@
 # MassGen Three Agent Configuration
-# Gemini-3-Pro, GPT-5-nano, and Grok-4-fast with builtin tools enabled
+# Gemini-3-Pro, GPT-5-nano, and Grok-4-1-fast-reasoning with builtin tools enabled
 # uv run python -m massgen.cli --config massgen/configs/basic/multi/three_agents_default.yaml "What is 2+2?"
 agents:
-  - id: "gemini3pro"
+  - id: "agent_a"
     backend:
       type: "gemini"
-      model: "gemini-3-pro-preview"
+      model: "gemini-3-flash-preview"
       enable_web_search: true
-      # enable_code_execution: true
-    # system_message: "You are a helpful AI assistant with web search and code execution capabilities. For any question involving current events, recent information, or real-time data, ALWAYS use web search first."
+      cwd: "workspace"
 
-  - id: "gpt5nano"
+  - id: "agent_b"
     backend:
       type: "openai"
       model: "gpt-5-nano"
@@ -19,16 +18,15 @@ agents:
       reasoning:
         effort: "low"
         summary: "auto"
+      cwd: "workspace"
       enable_web_search: true
-      enable_code_interpreter: true
-    # system_message: "You are a helpful AI assistant with web search and code execution capabilities. For any question involving current events, recent information, or real-time data, ALWAYS use web search first."
 
-  - id: "grok3mini"
+  - id: "agent_c"
     backend:
       type: "grok"
-      model: "grok-4-fast-reasoning"
+      model: "grok-4-1-fast-reasoning"
       enable_web_search: true
-    # system_message: "You are a helpful AI assistant with web search capabilities. For any question involving current events, recent information, or real-time data, ALWAYS use web search first."
+      cwd: "workspace"
 
 ui:
   display_type: "rich_terminal"

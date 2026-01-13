@@ -1170,6 +1170,32 @@ class TextualTerminalDisplay(TerminalDisplay):
         status_msg = f"\n[Status Changed: {status.upper()}]\n"
         self._write_to_agent_file(agent_id, status_msg)
 
+    def update_timeout_status(self, agent_id: str, timeout_state: Dict[str, Any]) -> None:
+        """Update timeout display for an agent.
+
+        Args:
+            agent_id: The agent whose timeout status to update
+            timeout_state: Timeout state from orchestrator.get_agent_timeout_state()
+        """
+        if self._app:
+            self._call_app_method("update_agent_timeout", agent_id, timeout_state)
+
+    def update_hook_execution(
+        self,
+        agent_id: str,
+        tool_call_id: Optional[str],
+        hook_info: Dict[str, Any],
+    ) -> None:
+        """Update display with hook execution information.
+
+        Args:
+            agent_id: The agent whose tool call has hooks
+            tool_call_id: Optional ID of the tool call this hook is attached to
+            hook_info: Hook execution info dict
+        """
+        if self._app:
+            self._call_app_method("update_hook_execution", agent_id, tool_call_id, hook_info)
+
     def add_orchestrator_event(self, event: str):
         """Add an orchestrator coordination event."""
         self.orchestrator_events.append(event)
@@ -2935,6 +2961,32 @@ Type your question and press Enter to ask the agents.
                 is_working = status in ("working", "streaming", "thinking")
                 self._status_bar.set_agent_working(agent_id, is_working)
 
+        def update_agent_timeout(self, agent_id: str, timeout_state: Dict[str, Any]):
+            """Update agent timeout display.
+
+            Args:
+                agent_id: The agent whose timeout to update
+                timeout_state: Timeout state from orchestrator
+            """
+            if agent_id in self.agent_widgets:
+                self.agent_widgets[agent_id].update_timeout(timeout_state)
+
+        def update_hook_execution(
+            self,
+            agent_id: str,
+            tool_call_id: Optional[str],
+            hook_info: Dict[str, Any],
+        ):
+            """Update display with hook execution information.
+
+            Args:
+                agent_id: The agent whose tool call has hooks
+                tool_call_id: Optional ID of the tool call
+                hook_info: Hook execution info
+            """
+            if agent_id in self.agent_widgets:
+                self.agent_widgets[agent_id].add_hook_to_tool(tool_call_id, hook_info)
+
         def add_orchestrator_event(self, event: str):
             """Add orchestrator event to internal tracking."""
             timestamp = datetime.now().strftime("%H:%M:%S")
@@ -4062,6 +4114,9 @@ Type your question and press Enter to ask the agents.
             # Timer for updating elapsed time display
             self._header_timer = None
 
+            # Timeout state tracking (for per-agent timeout display)
+            self._timeout_state: Optional[Dict[str, Any]] = None
+
         def compose(self) -> ComposeResult:
             with Vertical():
                 yield Label(
@@ -4683,6 +4738,20 @@ Type your question and press Enter to ask the agents.
             except Exception:
                 pass
 
+        def update_timeout(self, timeout_state: Dict[str, Any]) -> None:
+            """Update timeout display state.
+
+            Args:
+                timeout_state: Timeout state from orchestrator.get_agent_timeout_state()
+            """
+            self._timeout_state = timeout_state
+            # Refresh header to show new timeout state
+            try:
+                header = self.query_one(f"#{self._header_dom_id}")
+                header.update(self._header_text())
+            except Exception:
+                pass
+
         def jump_to_latest(self):
             """Scroll to latest entry if supported."""
             try:
@@ -4693,8 +4762,21 @@ Type your question and press Enter to ask the agents.
                 except Exception:
                     pass
 
+        def add_hook_to_tool(self, tool_call_id: Optional[str], hook_info: Dict[str, Any]):
+            """Route hook execution info to the TimelineSection's tool card.
+
+            Args:
+                tool_call_id: The tool call ID to attach the hook to
+                hook_info: Hook execution information dict
+            """
+            try:
+                timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
+                timeline.add_hook_to_tool(tool_call_id, hook_info)
+            except Exception:
+                pass  # Timeline section not found or not available
+
         def _header_text(self) -> str:
-            """Compose header text with backend metadata, keyboard hint, and elapsed time."""
+            """Compose header text with backend metadata, keyboard hint, elapsed time, and timeout."""
             backend = self.coordination_display._get_agent_backend_name(self.agent_id)
             status_icon = self._status_icon(self.status)
 
@@ -4710,10 +4792,56 @@ Type your question and press Enter to ask the agents.
                 elapsed_str = self._format_elapsed(elapsed.total_seconds())
                 parts.append(f"  ⏱ {elapsed_str}")  # Extra spaces before timer
 
+            # Add timeout countdown if active
+            if self._timeout_state and self.status in ("working", "streaming"):
+                timeout_text = self._format_timeout_display()
+                if timeout_text:
+                    parts.append(timeout_text)
+
             # Status in brackets at the end
             parts.append(f"  [{self.status}]")
 
             return " ".join(parts)
+
+        def _format_timeout_display(self) -> Optional[str]:
+            """Format timeout countdown for display in header.
+
+            Returns:
+                Formatted timeout string or None if no timeout active.
+            """
+            if not self._timeout_state:
+                return None
+
+            active_timeout = self._timeout_state.get("active_timeout")
+            if not active_timeout:
+                return None
+
+            remaining_soft = self._timeout_state.get("remaining_soft")
+            remaining_hard = self._timeout_state.get("remaining_hard")
+            soft_timeout_fired = self._timeout_state.get("soft_timeout_fired", False)
+            is_hard_blocked = self._timeout_state.get("is_hard_blocked", False)
+
+            if remaining_soft is None:
+                return None
+
+            # Format remaining time
+            def fmt_time(secs: float) -> str:
+                mins = int(secs // 60)
+                s = int(secs % 60)
+                return f"{mins}:{s:02d}"
+
+            if is_hard_blocked:
+                # Hard timeout active - tools are blocked
+                return "| [bold red]🚫 BLOCKED[/bold red]"
+            elif soft_timeout_fired:
+                # In grace period - show remaining time until hard block
+                return f"| [bold yellow]⚠️ Grace: {fmt_time(remaining_hard or 0)}[/bold yellow]"
+            elif remaining_soft <= 60:
+                # Less than 1 minute - show warning in yellow
+                return f"| [yellow]⏰ {fmt_time(remaining_soft)}[/yellow]"
+            else:
+                # Normal countdown - show in dim
+                return f"| [dim]⏰ {fmt_time(remaining_soft)}[/dim]"
 
         def _format_elapsed(self, seconds: float) -> str:
             """Format elapsed seconds into human-readable string."""

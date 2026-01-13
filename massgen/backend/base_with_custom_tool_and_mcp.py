@@ -1496,6 +1496,15 @@ class CustomToolAndMCPBackend(LLMBackend):
                     hook_context,
                 )
 
+                # Emit hook execution events for display (pre-hooks)
+                for hook_exec in pre_result.executed_hooks:
+                    yield StreamChunk(
+                        type="hook_execution",
+                        source=self.agent_id,
+                        hook_info=hook_exec,
+                        tool_call_id=call_id,
+                    )
+
                 # Handle deny decision
                 if not pre_result.allowed or pre_result.decision == "deny":
                     error_msg = f"Hook denied tool execution: {pre_result.reason or 'No reason provided'}"
@@ -1698,6 +1707,15 @@ class CustomToolAndMCPBackend(LLMBackend):
                     hook_context,
                     tool_output=result_text_for_eviction,
                 )
+
+                # Emit hook execution events for display (post-hooks)
+                for hook_exec in post_result.executed_hooks:
+                    yield StreamChunk(
+                        type="hook_execution",
+                        source=self.agent_id,
+                        hook_info=hook_exec,
+                        tool_call_id=call_id,
+                    )
 
                 # Handle injection content from PostToolUse hooks
                 if post_result.inject:
