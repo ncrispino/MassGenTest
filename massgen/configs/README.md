@@ -231,7 +231,7 @@ Most configurations use environment variables for API keys:so
 **New Features:** Task Planning Mode, Two-Tier Workspace, Project Instructions Auto-Discovery, Batch Media Analysis, Reliability Improvements
 
 **Key Features:**
-- **Task Planning Mode**: Interactive planning with `--plan` flag and `--plan-depth` (shallow/medium/deep) for structured task decomposition before execution
+- **Task Planning Mode**: Create structured plans with `--plan` flag and `--plan-depth` (shallow/medium/deep) for future workflows (plan-only, no auto-execution)
 - **Two-Tier Workspace**: Git-backed scratch/deliverable separation keeping exploratory work separate from final outputs
 - **Project Instructions Auto-Discovery**: Automatic loading of `CLAUDE.md` and `AGENTS.md` for project context
 - **Batch Media Analysis**: Process multiple images simultaneously with unified `read_media` tool
@@ -242,13 +242,13 @@ Most configurations use environment variables for API keys:so
 # Install or upgrade
 pip install --upgrade massgen
 
-# Task planning mode - interactive planning before execution
+# Task planning mode - creates a plan (no auto-execution)
 uv run massgen --plan --plan-depth medium \
   "Build a REST API for a todo application"
 
-# Multi-agent task with automatic project context
+# Multi-agent task with project context (use @./ to include current directory)
 uv run massgen --config massgen/configs/basic/multi/three_agents_default.yaml \
-  "Explain the benefits of functional programming"
+  "Explain the current functionality of this repo @./"
 ```
 
 ### v0.1.37

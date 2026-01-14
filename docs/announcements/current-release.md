@@ -7,9 +7,9 @@ After posting, update the social links below.
 
 ## Release Summary
 
-We're excited to release MassGen v0.1.38, adding Task Planning, Two-Tier Workspaces & Project Instructions!🚀
+We're excited to release MassGen v0.1.38, adding Task Planning, Two-Tier Workspaces & Project Instructions! 🚀
 
-Agents can now plan before they execute with the new `--plan` flag. Two-tier git-backed workspaces separate work-in-progress from complete deliverables with automatic snapshot commits. CLAUDE.md and AGENTS.md files are auto-discovered following the agents.md standard. Plus: batch media analysis, timeout reliability fixes, and Docker health monitoring.
+MassGen can now create structured plans for future workflows with the new `--plan` flag (plan-only, no auto-execution). Two-tier git-backed workspaces separate work-in-progress from complete deliverables with automatic snapshot commits. CLAUDE.md and AGENTS.md files are auto-discovered following the agents.md standard. Plus: batch media analysis, timeout reliability fixes, and Docker health monitoring.
 
 ## Install
 
@@ -31,16 +31,16 @@ Copy everything below this line, then append content from `feature-highlights.md
 
 ---
 
-We're excited to release MassGen v0.1.38, adding Task Planning, Two-Tier Workspaces & Project Instructions!🚀
+We're excited to release MassGen v0.1.38, adding Task Planning, Two-Tier Workspaces & Project Instructions! 🚀
 
-Agents can now plan before they execute with the new `--plan` flag. Two-tier git-backed workspaces separate work-in-progress from complete deliverables with automatic snapshot commits. CLAUDE.md and AGENTS.md files are auto-discovered following the agents.md standard. Plus: batch media analysis, timeout reliability fixes, and Docker health monitoring.
+MassGen can now create structured plans for future workflows with the new `--plan` flag (plan-only, no auto-execution). Two-tier git-backed workspaces separate work-in-progress from complete deliverables with automatic snapshot commits. CLAUDE.md and AGENTS.md files are auto-discovered following the agents.md standard. Plus: batch media analysis, timeout reliability fixes, and Docker health monitoring.
 
 **Key Features:**
 
-**Task Planning Mode** - Structured execution with `--plan`:
-- `--plan` flag enables planning before execution
-- `--plan-depth` controls planning depth (1-3 levels)
-- Agents create task lists before executing work
+**Task Planning Mode** - Create plans for future workflows with `--plan`:
+- `--plan` flag creates structured plans (no auto-execution)
+- `--plan-depth` controls planning granularity (shallow/medium/deep)
+- Outputs `feature_list.json` with task dependencies and priorities
 
 **Two-Tier Workspaces** - Git-backed scratch/deliverable separation:
 - `scratch/` for work-in-progress, `deliverable/` for complete outputs
@@ -49,9 +49,9 @@ Agents can now plan before they execute with the new `--plan` flag. Two-tier git
 - Agents can review history with `git log`
 
 **Project Instructions Auto-Discovery** - Following agents.md standard:
-- CLAUDE.md and AGENTS.md auto-discovered from context paths
+- CLAUDE.md and AGENTS.md auto-discovered from context paths (use `@./` to include current directory)
 - Hierarchical "closest wins" for monorepo support
-- Seamless integration with `@path` syntax
+- Instructions prepended to agent system messages
 
 **Batch Media Analysis** - Multi-image support:
 - `understand_image` accepts dict for named multi-image comparison

@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Recent Releases
 
 **v0.1.38 (January 15, 2026)** - Task Planning, Two-Tier Workspaces & Project Instructions
-Interactive task planning mode with `--plan` flag for structured execution. Two-tier git-backed workspaces with scratch/deliverable separation and automatic snapshot commits. Project instruction auto-discovery (CLAUDE.md/AGENTS.md) following the agents.md standard. Batch media analysis with multi-image comparison support. Circuit breaker for timeout denial loops, soft→hard timeout race condition fix, and Docker health monitoring with log capture on MCP failures.
+Task planning mode with `--plan` flag creates structured plans for future workflows (plan-only, no auto-execution). Two-tier git-backed workspaces with scratch/deliverable separation and automatic snapshot commits. Project instruction auto-discovery (CLAUDE.md/AGENTS.md) following the agents.md standard. Batch media analysis with multi-image comparison support. Circuit breaker for timeout denial loops, soft→hard timeout race condition fix, and Docker health monitoring with log capture on MCP failures.
 
 **v0.1.37 (January 12, 2026)** - Execution Traces & Thinking Mode Improvements
 Execution trace files preserve full agent history for compression recovery and cross-agent coordination. Claude Code thinking mode support with streaming buffer integration. Gemini thinking mode fixes and standardized agent labeling across backends. OpenRouter documentation and workspace anonymization improvements.
@@ -23,11 +23,11 @@ General hook framework for agent lifecycle events with PreToolUse/PostToolUse ho
 ## [0.1.38] - 2026-01-15
 
 ### Added
-- **Task Planning Mode**: Interactive planning before execution with `--plan` flag
+- **Task Planning Mode**: Create structured plans for future workflows with `--plan` flag (plan-only, no auto-execution)
   - `--plan`: Enable task planning mode for structured work breakdown
-  - `--plan-depth`: Control planning depth (1-3 levels)
+  - `--plan-depth`: Control planning granularity (shallow/medium/deep)
   - Planning prompt prefix for configurable depth
-  - Agents create task lists before executing
+  - Outputs `feature_list.json` with task dependencies and priorities
 
 - **Two-Tier Workspace**: Git-backed scratch/deliverable separation
   - `use_two_tier_workspace: true` config option

@@ -160,7 +160,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 **🎉 Released: January 15, 2026** | **Next Update: January 17, 2026**
 
 **What's New in v0.1.38:**
-- **📋 Task Planning Mode** - Interactive planning with `--plan` flag for structured task decomposition before execution
+- **📋 Task Planning Mode** - Create structured plans with `--plan` flag for future workflows (plan-only, no auto-execution)
 - **📁 Two-Tier Workspace** - Git-backed scratch/deliverable separation keeping exploratory work separate from final outputs
 - **📖 Project Instructions Auto-Discovery** - Automatic loading of `CLAUDE.md` and `AGENTS.md` for project context
 - **🖼️ Batch Media Analysis** - Process multiple images simultaneously with unified `read_media` tool
@@ -171,13 +171,13 @@ This project started with the "threads of thought" and "iterative refinement" id
 # Install or upgrade
 pip install --upgrade massgen
 
-# Task planning mode - interactive planning before execution
+# Task planning mode - creates a plan (no auto-execution)
 uv run massgen --plan --plan-depth medium \
   "Build a REST API for a todo application"
 
-# Multi-agent task with automatic project context
+# Multi-agent task with project context (use @./ to include current directory)
 uv run massgen --config massgen/configs/basic/multi/three_agents_default.yaml \
-  "Explain the benefits of functional programming"
+  "Explain the current functionality of this repo @./"
 ```
 
 → [See full release history and examples](massgen/configs/README.md#release-history--examples)
@@ -1217,7 +1217,7 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 **🎉 Released: January 15, 2026**
 
 #### Task Planning Mode
-- **Interactive Planning**: New `--plan` flag enables structured task decomposition with `--plan-depth` options (shallow/medium/deep) for different granularity levels
+- **Plan-Only Mode**: New `--plan` flag creates structured plans for future workflows (no auto-execution) with `--plan-depth` options (shallow/medium/deep)
 - **Codebase Exploration**: Auto-adds current directory to context paths for planning agents to explore existing code
 - **User Q&A**: Interactive clarifying questions via `ask_others` tool during planning process
 
