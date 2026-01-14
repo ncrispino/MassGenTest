@@ -157,17 +157,17 @@ Key Features
 Recent Releases
 ---------------
 
+**v0.1.38 (January 15, 2026)** - Task Planning Mode & Two-Tier Workspace
+
+Create structured plans with ``--plan`` flag and ``--plan-depth`` (shallow/medium/deep) for future workflows (plan-only, no auto-execution). Git-backed two-tier workspace separates scratch exploration from final deliverables. Automatic ``CLAUDE.md`` and ``AGENTS.md`` discovery for project context. Batch image analysis with ``read_media`` tool. Reliability fixes: circuit breaker for infinite loops, timeout race conditions, MCP tool restoration.
+
 **v0.1.37 (January 12, 2026)** - Execution Traces & Thinking Mode Improvements
 
-Full execution history preserved as searchable ``execution_trace.md`` files alongside agent snapshots. Agents can read trace files to recover detailed history after context compression. Other agents can access execution traces in temp workspaces. Claude Code and Gemini thinking mode streaming buffer integration. Standardized agent labeling across all backends.
+Full execution history preserved as searchable ``execution_trace.md`` files alongside agent snapshots. Agents can read trace files to recover detailed history after context compression. Claude Code and Gemini thinking mode streaming buffer integration. Standardized agent labeling across all backends.
 
 **v0.1.36 (January 9, 2026)** - @path Context Handling & Hook Framework
 
-Reference files inline with ``@path`` syntax - just type ``@`` to trigger an autocomplete file picker (like Claude Code). Extend agent behavior with PreToolUse/PostToolUse hooks for permission validation, content injection, and custom processing. Built-in ``MidStreamInjectionHook`` and ``HighPriorityTaskReminderHook``. Plus: Claude Code native hooks integration and improved Docker resource management.
-
-**v0.1.35 (January 7, 2026)** - Log Analysis & Workflow Observability
-
-New ``massgen logs analyze`` command generates analysis prompts or launches multi-agent self-analysis using MassGen. Logfire workflow attributes capture round intent, vote reasoning, and local file references. ``direct_mcp_servers`` config option for code-based tools mode to keep specific MCPs as protocol tools. Tool handling fixes for Grok, Gemini, unknown tools, and vote-only mode.
+Reference files inline with ``@path`` syntax - just type ``@`` to trigger an autocomplete file picker. PreToolUse/PostToolUse hooks for permission validation, content injection, and custom processing. Built-in ``MidStreamInjectionHook`` and ``HighPriorityTaskReminderHook``. Claude Code native hooks integration and improved Docker resource management.
 
 :doc:`Full changelog → <changelog>`
 

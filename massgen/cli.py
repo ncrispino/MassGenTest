@@ -33,7 +33,7 @@ import threading
 import webbrowser
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Union
 
 import questionary
 import yaml
@@ -214,6 +214,302 @@ def _restore_terminal_for_input() -> None:
         pass  # Best effort
 
 
+def get_task_planning_prompt_prefix(
+    plan_depth: str = "medium",
+    enable_subagents: bool = False,
+    broadcast_mode: Union[Literal["human", "agents"], bool] = "human",
+) -> str:
+    """Generate the user prompt prefix for task planning mode.
+
+    This prefix is prepended to the user's question when --plan mode is active.
+    It instructs agents to interactively create structured feature lists.
+
+    Args:
+        plan_depth: One of "shallow", "medium", or "deep" controlling task granularity.
+        enable_subagents: Whether subagents are enabled for research tasks.
+        broadcast_mode: One of "human", "agents", or False. Controls whether ask_others() is available.
+
+    Returns:
+        The prompt prefix string to prepend to the user's question.
+    """
+    depth_config = {
+        "shallow": {"target": "5-10", "detail": "high-level phases only"},
+        "medium": {"target": "20-50", "detail": "sections with tasks"},
+        "deep": {"target": "100-200+", "detail": "granular step-by-step"},
+    }
+    cfg = depth_config.get(plan_depth, depth_config["medium"])
+
+    # Subagent research section (only if enabled)
+    subagent_section = ""
+    if enable_subagents:
+        subagent_section = """
+## Research with Subagents
+
+You have subagents available for research. Use them to:
+- Investigate specific areas of the codebase in parallel
+- Research technical options or dependencies
+- Explore integration points with existing code
+- Gather information to inform scope decisions
+
+Spawn subagents for research tasks before finalizing your plan.
+"""
+
+    # Conditional scope confirmation section based on broadcast mode
+    if broadcast_mode == "human":
+        scope_section = """### 1. Scope Confirmation (REQUIRED FIRST)
+
+Before any deep research, analyze the request and verify scope with the user.
+
+**Step 1: Categorize requirements and assumptions**
+
+Parse the user's request into three categories:
+
+1. **Explicitly Stated** - Things the user directly mentioned
+   - Example: "Build a REST API" → User said "REST API"
+
+2. **Critical Assumptions** - High-level decisions that affect scope/direction (NEED HUMAN VERIFICATION)
+   - User intent or business logic
+   - Major architectural choices (monolith vs microservices, SQL vs NoSQL)
+   - Security/compliance requirements
+   - Feature scope boundaries
+   - Example: "Build a REST API" → Is this for internal use or public? What data sensitivity?
+
+3. **Technical/Implementation Assumptions** - Lower-level choices (AGENT CONSENSUS via voting)
+   - Specific technologies/frameworks
+   - Code organization patterns
+   - Standard practices (error handling, logging, validation)
+   - Example: "Build a REST API" → Express vs FastAPI, JWT details, specific DB choice
+
+**Step 2: Verify ONLY THE MOST CRITICAL assumptions with human**
+
+Be selective - only ask about assumptions where you truly cannot make a good decision without human input.
+
+**When to ask the human**:
+- User intent is ambiguous (internal tool vs public product?)
+- Business/domain knowledge required (compliance, data sensitivity)
+- Major scope decisions (which features are in/out?)
+- Trade-offs that depend on user priorities (speed vs security vs cost)
+
+**When NOT to ask the human** (let consensus decide):
+- Technical implementation details (framework, database, auth method)
+- Standard practices (error handling, logging, testing approach)
+- Scope refinements that you can revisit after initial consensus
+- Decisions where you can make a reasonable recommendation
+
+**IMPORTANT**: When you DO ask, offer recommendations with reasoning:
+
+GOOD (selective + recommendations):
+```
+I need to clarify scope before planning this REST API:
+
+1. **Usage context**: Is this for internal use or public-facing?
+   - Recommendation: I'll assume internal unless you specify, which means simpler auth and fewer rate limits
+
+2. **Data sensitivity**: What type of data will this handle?
+   - Recommendation: I'll plan for standard business data (not public, not highly sensitive) unless you need HIPAA/PCI compliance
+
+3. **Integration needs**: Do you have existing systems this must integrate with?
+   - If yes, please specify - this affects the approach significantly
+
+Let me know if my assumptions are wrong or if there are other critical requirements.
+```
+
+BAD (asking everything):
+```
+Should I use Express or FastAPI?
+Should I use JWT or OAuth?
+Should I use PostgreSQL or MongoDB?
+Which testing framework?
+How should I structure the code?
+```
+
+**Step 3: Document technical assumptions and recommendations for consensus**
+
+For technical/implementation assumptions, present your recommendations with reasoning in your answer.
+
+**Be opinionated**: Make specific technical recommendations based on:
+- The user's explicit requirements
+- Industry best practices
+- Your analysis of the codebase (if extending existing project)
+- Trade-offs you've considered
+
+Other agents will:
+- Propose alternative approaches if they disagree
+- Challenge your technical choices with their reasoning
+- Refine scope to keep tasks focused and useful
+- Vote when they're happy with the combination of choices
+
+**Benefits of consensus**:
+- Explores wider design space through agent debate
+- Ensures all tasks are critical and actively useful
+- Prevents scope divergence through multi-agent validation
+- Catches assumptions one agent might miss
+
+**Note**: You can always ask the human for clarification in later rounds after seeing consensus. Start with your best recommendations, refine through voting, then verify critical decisions if needed.
+
+**Step 4: Feature scope (with recommendations)**
+
+If the request contains **multiple distinct features**, recommend which to prioritize:
+
+GOOD (scoped recommendation):
+```
+I see this request involves three main features:
+1. User authentication (CORE - needed for everything else)
+2. Todo CRUD operations (CORE - primary functionality)
+3. Email notifications (NICE-TO-HAVE - can add later)
+
+Recommendation: Let's scope this planning session to features 1-2, then add notifications in a follow-up. Does that work?
+```
+
+BAD (asking without recommendation):
+```
+This has multiple features. Which ones do you want?
+```
+
+**After critical verification (minimal ask_others calls), proceed to research. Technical assumptions and scope refinements will be refined through voting.**"""
+    else:
+        # No human interaction - agents make all decisions through consensus
+        scope_section = """### 1. Scope Analysis (REQUIRED FIRST)
+
+Before any deep research, analyze the request and make decisions through agent consensus.
+
+**Step 1: Categorize requirements and assumptions**
+
+Parse the user's request into three categories:
+
+1. **Explicitly Stated** - Things the user directly mentioned
+   - Example: "Build a REST API" → User said "REST API"
+
+2. **Critical Assumptions** - High-level decisions that affect scope/direction
+   - User intent or business logic
+   - Major architectural choices (monolith vs microservices, SQL vs NoSQL)
+   - Security/compliance requirements
+   - Feature scope boundaries
+   - Example: "Build a REST API" → Assume internal use or public-facing?
+
+3. **Technical/Implementation Assumptions** - Lower-level choices
+   - Specific technologies/frameworks
+   - Code organization patterns
+   - Standard practices (error handling, logging, validation)
+   - Example: "Build a REST API" → Express vs FastAPI, JWT details, specific DB choice
+
+**Step 2: Make opinionated recommendations for ALL assumptions**
+
+Since you don't have human interaction, you MUST make decisions autonomously.
+
+**Be opinionated**: Make specific recommendations for ALL assumptions based on:
+- The user's explicit requirements
+- Industry best practices
+- Your analysis of the codebase (if extending existing project)
+- Trade-offs you've considered
+- Reasonable defaults when ambiguous
+
+**Document your reasoning**: For each assumption, explain WHY you chose that approach.
+
+Example:
+```
+I'm making these decisions for this REST API:
+
+1. **Usage context**: Internal use (simpler auth, no rate limiting needed)
+   - Reasoning: No mention of public users, so assuming internal tooling
+
+2. **Data sensitivity**: Standard business data (moderate security)
+   - Reasoning: No compliance requirements mentioned, so standard practices
+
+3. **Tech stack**: FastAPI + PostgreSQL + JWT
+   - Reasoning: FastAPI for async support, PostgreSQL for reliability, JWT for stateless auth
+
+4. **Scope**: Core features only (auth + CRUD), no notifications yet
+   - Reasoning: Start with MVP, can add features later
+```
+
+**Step 3: Refine through consensus**
+
+Other agents will:
+- Propose alternative approaches if they disagree
+- Challenge your assumptions with their reasoning
+- Suggest different scope boundaries
+- Vote when they're happy with the combination of choices
+
+**Benefits of consensus**:
+- Explores wider design space through agent debate
+- Ensures all tasks are critical and actively useful
+- Prevents scope divergence through multi-agent validation
+- Catches assumptions one agent might miss
+
+**Critical**: ALL decisions must be made through consensus. No human will verify them, so agents must carefully debate and validate each choice.
+
+**After consensus is reached, proceed to research. All assumptions and scope will be refined through voting.**"""
+
+    return f"""# TASK PLANNING MODE
+
+You are in task planning mode. Your goal is to **interactively** create a comprehensive task plan.
+
+## Planning Process
+
+Follow this process in order:
+
+{scope_section}
+
+### 2. Research & Exploration
+Once scope is confirmed:
+- Explore the codebase to understand existing structure
+- Investigate integration points
+- Identify potential technical challenges{subagent_section}
+
+### 3. Clarifying Questions
+As you research, ask follow-up questions about:
+- Edge cases and error handling expectations
+- Performance or security requirements
+- User experience preferences
+- Anything ambiguous you discovered
+
+### 4. Plan Creation
+Only after scope confirmation and sufficient research:
+- Create the feature list at the specified depth
+- Organize features by logical grouping
+- If multiple distinct features exist, consider separate spec files
+
+## Output Requirements
+
+1. **Primary artifact**: `feature_list.json` - structured feature list
+2. **Supporting docs**: Create additional markdown docs as needed:
+   - User stories or requirements docs
+   - Technical approach / design decisions
+   - Separate spec files if request contains multiple distinct features
+
+## Feature List Format
+```json
+{{
+  "features": [
+    {{
+      "id": "F001",
+      "name": "Feature Name",
+      "description": "What this feature does",
+      "status": "pending",
+      "dependencies": ["F000"],
+      "priority": "high|medium|low"
+    }}
+  ]
+}}
+```
+
+## Depth: {plan_depth.upper()}
+- Target: {cfg["target"]} features/tasks
+- Detail level: {cfg["detail"]}
+
+## Quality Criteria
+- Each feature should be independently verifiable
+- Dependencies should form a valid DAG (no cycles)
+- Descriptions should be specific enough to implement
+- Scope should be confirmed with user before detailed planning
+
+---
+
+USER'S REQUEST:
+"""
+
+
 # Global PromptSession instance (reused across prompts for better terminal handling)
 _prompt_session: Optional[PromptSession] = None
 
@@ -262,7 +558,10 @@ async def read_multiline_input_async(
         loop = asyncio.get_running_loop()
         # Strip ANSI codes for fallback
         plain_prompt = prompt if not use_ansi_prompt else "User: "
-        first_line = await loop.run_in_executor(None, lambda: input(plain_prompt).strip())
+        first_line = await loop.run_in_executor(
+            None,
+            lambda: input(plain_prompt).strip(),
+        )
 
     # Check for multi-line delimiters
     if first_line.startswith('"""'):
@@ -1007,6 +1306,15 @@ def create_agents_from_config(
         # Inject rate limiting flag from CLI
         backend_config["enable_rate_limit"] = enable_rate_limit
 
+        # Inject two-tier workspace setting from coordination config
+        orchestrator_section = orchestrator_config or {}
+        coordination_settings_for_injection = orchestrator_section.get(
+            "coordination",
+            {},
+        )
+        if coordination_settings_for_injection.get("use_two_tier_workspace", False):
+            backend_config["use_two_tier_workspace"] = True
+
         # Inject session mount parameters for multi-turn Docker support
         # This enables the session directory to be pre-mounted so all turn
         # workspaces are automatically visible without container recreation
@@ -1206,7 +1514,7 @@ def create_agents_from_config(
                 enabled=True,
             )
             logger.info(
-                f"📊 Context monitor created for {agent_config.agent_id}: " f"{context_monitor.context_window:,} tokens, " f"trigger={trigger_threshold*100:.0f}%, target={target_ratio*100:.0f}%",
+                f"📊 Context monitor created for {agent_config.agent_id}: " f"{context_monitor.context_window:,} tokens, " f"trigger={trigger_threshold * 100:.0f}%, target={target_ratio * 100:.0f}%",
             )
 
         # Enable NLIP per-agent if configured in YAML
@@ -1922,6 +2230,7 @@ async def run_question_with_history(
             subagent_default_timeout=coord_cfg.get("subagent_default_timeout", 300),
             subagent_max_concurrent=coord_cfg.get("subagent_max_concurrent", 3),
             subagent_orchestrator=subagent_orchestrator_config,
+            use_two_tier_workspace=coord_cfg.get("use_two_tier_workspace", False),
         )
 
     # Get session_id from session_info (will be generated in save_final_state if not exists)
@@ -2071,12 +2380,16 @@ async def run_question_with_history(
                     3,
                 ),
                 subagent_orchestrator=subagent_orchestrator_config,
+                use_two_tier_workspace=coordination_settings.get(
+                    "use_two_tier_workspace",
+                    False,
+                ),
             )
 
     print(f"\n🤖 {BRIGHT_CYAN}{mode_text}{RESET}", flush=True)
     print(f"Agents: {', '.join(agents.keys())}", flush=True)
     if history:
-        print(f"History: {len(history)//2} previous exchanges", flush=True)
+        print(f"History: {len(history) // 2} previous exchanges", flush=True)
     print(f"Question: {question}", flush=True)
     print("\n" + "=" * 60, flush=True)
 
@@ -2139,11 +2452,11 @@ async def run_question_with_history(
             # Check if restart is needed
             if hasattr(orchestrator, "restart_pending") and orchestrator.restart_pending:
                 # Restart needed - create fresh UI for next attempt
-                print(f"\n{'='*80}")
+                print(f"\n{'=' * 80}")
                 print(
                     f"🔄 Restarting coordination - Attempt {orchestrator.current_attempt + 1}/{orchestrator.max_attempts}",
                 )
-                print(f"{'='*80}\n")
+                print(f"{'=' * 80}\n")
 
                 # Reset all agent backends to ensure clean state for next attempt
                 for agent_id, agent in orchestrator.agents.items():
@@ -2218,9 +2531,9 @@ async def run_question_with_history(
             agent_state = orchestrator.agent_states.get(selected_agent_id)
             if agent_state and agent_state.answer:
                 print(f"\n{BRIGHT_CYAN}📋 Selected winner: {selected_agent_id}{RESET}")
-                print(f"{BRIGHT_WHITE}{'-'*60}{RESET}")
+                print(f"{BRIGHT_WHITE}{'-' * 60}{RESET}")
                 print(agent_state.answer)
-                print(f"{BRIGHT_WHITE}{'-'*60}{RESET}")
+                print(f"{BRIGHT_WHITE}{'-' * 60}{RESET}")
 
         logger.info("Turn cancelled by user in multi-turn mode")
     finally:
@@ -2269,7 +2582,11 @@ async def run_question_with_history(
     log_dir = get_log_session_root()
     log_dir_name = log_dir.name  # Get log_YYYYMMDD_HHMMSS from path
 
-    session_id_to_use, updated_turn, normalized_response = await handle_session_persistence(
+    (
+        session_id_to_use,
+        updated_turn,
+        normalized_response,
+    ) = await handle_session_persistence(
         orchestrator,
         question,
         session_info,
@@ -2654,11 +2971,11 @@ async def run_single_question(
             if hasattr(orchestrator, "restart_pending") and orchestrator.restart_pending:
                 # Restart needed - create fresh UI for next attempt
                 if display_type not in ("none", "silent"):
-                    print(f"\n{'='*80}")
+                    print(f"\n{'=' * 80}")
                     print(
                         f"🔄 Restarting coordination - Attempt {orchestrator.current_attempt + 1}/{orchestrator.max_attempts}",
                     )
-                    print(f"{'='*80}\n")
+                    print(f"{'=' * 80}\n")
 
                 # Set log attempt BEFORE creating new UI so display gets correct path
                 # orchestrator.current_attempt was already incremented by _reset_for_restart()
@@ -4624,7 +4941,10 @@ async def run_interactive_mode(
             mode = f"Multi-Agent ({num_agents} agents)"
             mode_icon = "🤝"
         config_table.add_row(f"{mode_icon} Mode:", f"[bold]{mode}[/bold]")
-        config_table.add_row("  └─ Status:", "[dim]Agents will be created after first prompt[/dim]")
+        config_table.add_row(
+            "  └─ Status:",
+            "[dim]Agents will be created after first prompt[/dim]",
+        )
     elif len(agents) == 1:
         mode = "Single Agent"
         mode_icon = "🤖"
@@ -5047,7 +5367,7 @@ async def run_interactive_mode(
                             )
                             print("   Mode: Deferred creation", flush=True)
                         print(
-                            f"   History: {len(conversation_history)//2} exchanges",
+                            f"   History: {len(conversation_history) // 2} exchanges",
                             flush=True,
                         )
                         if config_path:
@@ -5212,7 +5532,9 @@ async def run_interactive_mode(
                                 original_config["orchestrator"]["context_paths"] = []
 
                             for ctx in new_paths:
-                                original_config["orchestrator"]["context_paths"].append(ctx)
+                                original_config["orchestrator"]["context_paths"].append(
+                                    ctx,
+                                )
                                 existing_paths.add(ctx["path"])
 
                             # Update orchestrator_cfg reference
@@ -5232,12 +5554,17 @@ async def run_interactive_mode(
                             session_storage_base=session_storage_base or SESSION_STORAGE,
                         )
                         if not agents:
-                            print(f"{BRIGHT_RED}❌ Failed to create agents{RESET}", flush=True)
+                            print(
+                                f"{BRIGHT_RED}❌ Failed to create agents{RESET}",
+                                flush=True,
+                            )
                             continue
                         print(f"{BRIGHT_GREEN}✅ Agents ready{RESET}")
                     elif new_paths:
                         # Agents exist but we have new paths - need to recreate
-                        print(f"   {BRIGHT_YELLOW}🔄 Updating agents with new context paths...{RESET}")
+                        print(
+                            f"   {BRIGHT_YELLOW}🔄 Updating agents with new context paths...{RESET}",
+                        )
 
                         # Clean up existing agents before recreating to avoid resource leaks
                         for agent_id, agent in agents.items():
@@ -5246,7 +5573,9 @@ async def run_interactive_mode(
                                     try:
                                         agent.backend.filesystem_manager.cleanup()
                                     except Exception as e:
-                                        logger.warning(f"[CLI] Cleanup failed for agent {agent_id}: {e}")
+                                        logger.warning(
+                                            f"[CLI] Cleanup failed for agent {agent_id}: {e}",
+                                        )
                                 if hasattr(agent.backend, "__aexit__"):
                                     await agent.backend.__aexit__(None, None, None)
 
@@ -5260,7 +5589,9 @@ async def run_interactive_mode(
                             filesystem_session_id=memory_session_id,
                             session_storage_base=session_storage_base or SESSION_STORAGE,
                         )
-                        print(f"   {BRIGHT_GREEN}✅ Agents updated with new context paths{RESET}")
+                        print(
+                            f"   {BRIGHT_GREEN}✅ Agents updated with new context paths{RESET}",
+                        )
                     if parsed.context_paths:
                         print()  # Add spacing after context path info
                 except PromptParserError as e:
@@ -5300,7 +5631,12 @@ async def run_interactive_mode(
                     "winning_agents_history": winning_agents_history,
                     "multi_turn": True,  # Enable soft cancellation (return to prompt instead of exit)
                 }
-                response, updated_session_id, updated_turn, was_cancelled = await run_question_with_history(
+                (
+                    response,
+                    updated_session_id,
+                    updated_turn,
+                    was_cancelled,
+                ) = await run_question_with_history(
                     question,
                     agents,
                     ui_config,
@@ -5332,7 +5668,7 @@ async def run_interactive_mode(
                     )
 
                     rich_console.print(
-                        f"\n[green]✅ Complete![/green] [cyan]💭 History: {len(conversation_history)//2} exchanges[/cyan]",
+                        f"\n[green]✅ Complete![/green] [cyan]💭 History: {len(conversation_history) // 2} exchanges[/cyan]",
                     )
                     rich_console.print(
                         "[dim]Tip: Use /inspect to view agent outputs[/dim]",
@@ -5607,6 +5943,51 @@ async def main(args):
         # Update config with timeout settings
         config["timeout_settings"] = timeout_settings
 
+        # Handle --plan mode: auto-configure for task planning
+        if getattr(args, "plan", False):
+            # Ensure orchestrator section exists
+            if "orchestrator" not in config:
+                config["orchestrator"] = {}
+            orchestrator_cfg_plan = config["orchestrator"]
+
+            # Ensure coordination section exists
+            if "coordination" not in orchestrator_cfg_plan:
+                orchestrator_cfg_plan["coordination"] = {}
+
+            # Broadcast mode: CLI flag wins; otherwise default to "human"
+            broadcast_arg = getattr(args, "broadcast", None)
+            if broadcast_arg == "false":
+                orchestrator_cfg_plan["coordination"]["broadcast"] = False
+            elif broadcast_arg is not None:
+                orchestrator_cfg_plan["coordination"]["broadcast"] = broadcast_arg
+            else:
+                orchestrator_cfg_plan["coordination"].setdefault("broadcast", "human")
+
+            # Set plan_depth
+            orchestrator_cfg_plan["coordination"]["plan_depth"] = getattr(
+                args,
+                "plan_depth",
+                "medium",
+            )
+
+            # Auto-add cwd to context_paths if not already present
+            if "context_paths" not in orchestrator_cfg_plan:
+                orchestrator_cfg_plan["context_paths"] = []
+
+            cwd_str = str(Path.cwd())
+            existing_paths = {p.get("path") if isinstance(p, dict) else p for p in orchestrator_cfg_plan["context_paths"]}
+            if cwd_str not in existing_paths:
+                orchestrator_cfg_plan["context_paths"].append(
+                    {"path": cwd_str, "permission": "write"},
+                )
+                logger.info(f"[Plan Mode] Auto-added cwd to context_paths: {cwd_str}")
+
+            logger.info(
+                "[Plan Mode] Enabled with depth=%s, broadcast=%s",
+                args.plan_depth,
+                orchestrator_cfg_plan["coordination"].get("broadcast"),
+            )
+
         # Check for prompt in config if not provided via CLI
         if not args.question and "prompt" in config:
             args.question = config["prompt"]
@@ -5725,9 +6106,39 @@ async def main(args):
             # Update orchestrator_cfg with any new context_paths
             orchestrator_cfg = config.get("orchestrator", {})
 
+        # Prepend task planning instructions if --plan mode is active
+        if args.question and getattr(args, "plan", False):
+            plan_depth = getattr(args, "plan_depth", "medium")
+            # Check if subagents are enabled in config
+            coordination_cfg = config.get("orchestrator", {}).get("coordination", {})
+            enable_subagents = coordination_cfg.get("enable_subagents", False)
+
+            # Broadcast mode priority: CLI arg > config > default "human"
+            cli_broadcast = getattr(args, "broadcast", None)
+            if cli_broadcast == "false":
+                broadcast_mode = False
+            elif cli_broadcast is not None:
+                broadcast_mode = cli_broadcast
+            else:
+                broadcast_mode = coordination_cfg.get("broadcast", "human")
+
+            planning_prefix = get_task_planning_prompt_prefix(
+                plan_depth,
+                enable_subagents=enable_subagents,
+                broadcast_mode=broadcast_mode,
+            )
+            args.question = planning_prefix + args.question
+            logger.info(
+                f"[Plan Mode] Prepended task planning instructions (depth={plan_depth}, subagents={enable_subagents}, broadcast={broadcast_mode})",
+            )
+
         # For interactive mode without initial question, defer agent creation until first prompt
         # This allows @path references in the first prompt to be included in Docker mounts
-        is_interactive_without_question = not args.question and not getattr(args, "interactive_with_initial_question", None)
+        is_interactive_without_question = not args.question and not getattr(
+            args,
+            "interactive_with_initial_question",
+            None,
+        )
 
         if is_interactive_without_question:
             # Defer agent creation - will be done in run_interactive_mode after first prompt
@@ -5870,7 +6281,14 @@ async def main(args):
                         with ThreadPoolExecutor(
                             max_workers=len(agents_with_docker),
                         ) as executor:
-                            futures = {executor.submit(cleanup_agent, agent_id, agent): agent_id for agent_id, agent in agents_with_docker}
+                            futures = {
+                                executor.submit(
+                                    cleanup_agent,
+                                    agent_id,
+                                    agent,
+                                ): agent_id
+                                for agent_id, agent in agents_with_docker
+                            }
                             for future in as_completed(futures):
                                 agent_id, error = future.result()
                                 if error:
@@ -6086,10 +6504,29 @@ def cli_main():
             prog="massgen serve",
             description="Run MassGen OpenAI-compatible server (FastAPI + Uvicorn)",
         )
-        serve_parser.add_argument("--host", type=str, default=None, help="Host to bind (default: 0.0.0.0)")
-        serve_parser.add_argument("--port", type=int, default=None, help="Port to bind (default: 4000)")
-        serve_parser.add_argument("--config", type=str, default=None, help="Default MassGen config file path")
-        serve_parser.add_argument("--reload", action="store_true", help="Enable auto-reload (dev only)")
+        serve_parser.add_argument(
+            "--host",
+            type=str,
+            default=None,
+            help="Host to bind (default: 0.0.0.0)",
+        )
+        serve_parser.add_argument(
+            "--port",
+            type=int,
+            default=None,
+            help="Port to bind (default: 4000)",
+        )
+        serve_parser.add_argument(
+            "--config",
+            type=str,
+            default=None,
+            help="Default MassGen config file path",
+        )
+        serve_parser.add_argument(
+            "--reload",
+            action="store_true",
+            help="Enable auto-reload (dev only)",
+        )
 
         serve_args = serve_parser.parse_args(sys.argv[2:])
 
@@ -6127,7 +6564,12 @@ def cli_main():
             settings = replace(settings, **overrides)
 
         app = create_app(settings=settings)
-        uvicorn.run(app, host=settings.host, port=settings.port, reload=serve_args.reload)
+        uvicorn.run(
+            app,
+            host=settings.host,
+            port=settings.port,
+            reload=serve_args.reload,
+        )
         return
 
     # Handle 'export' subcommand specially before main argument parsing
@@ -6374,6 +6816,24 @@ Environment Variables:
         action="store_true",
         help="Enable automation mode: silent output (~10 lines), status.json tracking, meaningful exit codes. "
         "REQUIRED for LLM agents and background execution. Automatically isolates workspaces for parallel runs.",
+    )
+    parser.add_argument(
+        "--plan",
+        action="store_true",
+        help="Task planning mode. Agents interactively create structured feature lists and planning documents. " "Auto-adds cwd to context paths and enables user questions via ask_others.",
+    )
+    parser.add_argument(
+        "--plan-depth",
+        choices=["shallow", "medium", "deep"],
+        default="medium",
+        help="Plan granularity for --plan mode: shallow (5-10 tasks), medium (20-50 tasks), deep (100-200+ tasks). Default: medium.",
+    )
+    parser.add_argument(
+        "--broadcast",
+        choices=["human", "agents", "false"],
+        default=None,
+        help="Broadcast mode for --plan mode: 'human' (agents ask critical questions), 'agents' (agents debate), 'false' (fully autonomous). "
+        "If not specified, uses config file value or defaults to 'human'.",
     )
     parser.add_argument(
         "--no-session-registry",
