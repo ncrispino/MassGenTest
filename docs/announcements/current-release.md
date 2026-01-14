@@ -53,9 +53,9 @@ MassGen can now create structured plans for future workflows with the new `--pla
 - Hierarchical "closest wins" for monorepo support
 - Instructions prepended to agent system messages
 
-**Batch Media Analysis** - Multi-image support:
+**Batch Image Analysis** - Multi-image support:
 - `understand_image` accepts dict for named multi-image comparison
-- `read_media` accepts list for batch parallel processing
+- `read_media` accepts list for batch image processing
 - Dict keys become reference names in prompts
 
 **Timeout & Reliability Fixes:**

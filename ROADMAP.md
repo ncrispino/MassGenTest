@@ -73,9 +73,9 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
   - Automatic discovery from context paths (via `@path` syntax)
   - Hierarchical "closest wins" algorithm for monorepo support
 
-- **Batch Media Analysis**: Multi-image support in media tools
-  - `understand_image` accepts `images` dict for named multi-image analysis
-  - `read_media` accepts `inputs` list for batch parallel processing
+- **Batch Image Analysis**: Multi-image support in media tools
+  - `understand_image` accepts `images` dict for named multi-image comparison
+  - `read_media` accepts `inputs` list for batch image processing
 
 - **Docker Health Monitoring**: Container diagnostics on MCP failures
   - Health status checking and automatic log capture

@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## Recent Releases
 
 **v0.1.38 (January 15, 2026)** - Task Planning, Two-Tier Workspaces & Project Instructions
-Task planning mode with `--plan` flag creates structured plans for future workflows (plan-only, no auto-execution). Two-tier git-backed workspaces with scratch/deliverable separation and automatic snapshot commits. Project instruction auto-discovery (CLAUDE.md/AGENTS.md) following the agents.md standard. Batch media analysis with multi-image comparison support. Circuit breaker for timeout denial loops, soft→hard timeout race condition fix, and Docker health monitoring with log capture on MCP failures.
+Task planning mode with `--plan` flag creates structured plans for future workflows (plan-only, no auto-execution). Two-tier git-backed workspaces with scratch/deliverable separation and automatic snapshot commits. Project instruction auto-discovery (CLAUDE.md/AGENTS.md) following the agents.md standard. Batch image analysis with multi-image comparison support. Circuit breaker for timeout denial loops, soft→hard timeout race condition fix, and Docker health monitoring with log capture on MCP failures.
 
 **v0.1.37 (January 12, 2026)** - Execution Traces & Thinking Mode Improvements
 Execution trace files preserve full agent history for compression recovery and cross-agent coordination. Claude Code thinking mode support with streaming buffer integration. Gemini thinking mode fixes and standardized agent labeling across backends. OpenRouter documentation and workspace anonymization improvements.
@@ -43,9 +43,9 @@ General hook framework for agent lifecycle events with PreToolUse/PostToolUse ho
   - CLAUDE.md takes precedence over AGENTS.md at same level
   - Contents injected into system prompts with softer framing
 
-- **Batch Media Analysis**: Multi-image support in media tools
-  - `understand_image` accepts `images` dict for named multi-image analysis
-  - `read_media` accepts `inputs` list for batch parallel processing
+- **Batch Image Analysis**: Multi-image support in media tools
+  - `understand_image` accepts `images` dict for named multi-image comparison
+  - `read_media` accepts `inputs` list for batch image processing
   - Dict keys become reference names in prompts for image identification
   - `max_concurrent` parameter for concurrency control
 

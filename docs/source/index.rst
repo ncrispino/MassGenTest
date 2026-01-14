@@ -159,7 +159,7 @@ Recent Releases
 
 **v0.1.38 (January 15, 2026)** - Task Planning Mode & Two-Tier Workspace
 
-Create structured plans with ``--plan`` flag and ``--plan-depth`` (shallow/medium/deep) for future workflows (plan-only, no auto-execution). Git-backed two-tier workspace separates scratch exploration from final deliverables. Automatic ``CLAUDE.md`` and ``AGENTS.md`` discovery for project context. Batch media analysis with unified ``read_media`` tool. Reliability fixes: circuit breaker for infinite loops, timeout race conditions, MCP tool restoration.
+Create structured plans with ``--plan`` flag and ``--plan-depth`` (shallow/medium/deep) for future workflows (plan-only, no auto-execution). Git-backed two-tier workspace separates scratch exploration from final deliverables. Automatic ``CLAUDE.md`` and ``AGENTS.md`` discovery for project context. Batch image analysis with ``read_media`` tool. Reliability fixes: circuit breaker for infinite loops, timeout race conditions, MCP tool restoration.
 
 **v0.1.37 (January 12, 2026)** - Execution Traces & Thinking Mode Improvements
 

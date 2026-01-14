@@ -228,13 +228,13 @@ Most configurations use environment variables for API keys:so
 ## Release History & Examples
 
 ### v0.1.38 - Latest
-**New Features:** Task Planning Mode, Two-Tier Workspace, Project Instructions Auto-Discovery, Batch Media Analysis, Reliability Improvements
+**New Features:** Task Planning Mode, Two-Tier Workspace, Project Instructions Auto-Discovery, Batch Image Analysis, Reliability Improvements
 
 **Key Features:**
 - **Task Planning Mode**: Create structured plans with `--plan` flag and `--plan-depth` (shallow/medium/deep) for future workflows (plan-only, no auto-execution)
 - **Two-Tier Workspace**: Git-backed scratch/deliverable separation keeping exploratory work separate from final outputs
 - **Project Instructions Auto-Discovery**: Automatic loading of `CLAUDE.md` and `AGENTS.md` for project context
-- **Batch Media Analysis**: Process multiple images simultaneously with unified `read_media` tool
+- **Batch Image Analysis**: Process multiple images simultaneously with `read_media` tool for comparison and batch analysis
 - **Reliability Fixes**: Circuit breaker prevents infinite loops, fixed soft-to-hard timeout race conditions, MCP tools properly restored after hard timeout restarts
 
 **Try It:**
@@ -246,7 +246,7 @@ pip install --upgrade massgen
 uv run massgen --plan --plan-depth medium \
   "Build a REST API for a todo application"
 
-# Multi-agent task with project context (use @./ to include current directory)
+# Will read from CLAUDE.md/AGENTS.md in cwd, if it exists
 uv run massgen --config massgen/configs/basic/multi/three_agents_default.yaml \
   "Explain the current functionality of this repo @./"
 ```

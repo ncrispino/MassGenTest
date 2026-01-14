@@ -163,7 +163,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 - **📋 Task Planning Mode** - Create structured plans with `--plan` flag for future workflows (plan-only, no auto-execution)
 - **📁 Two-Tier Workspace** - Git-backed scratch/deliverable separation keeping exploratory work separate from final outputs
 - **📖 Project Instructions Auto-Discovery** - Automatic loading of `CLAUDE.md` and `AGENTS.md` for project context
-- **🖼️ Batch Media Analysis** - Process multiple images simultaneously with unified `read_media` tool
+- **🖼️ Batch Image Analysis** - Process multiple images simultaneously with `read_media` tool
 - **🔧 Timeout & Reliability Fixes** - Circuit breaker prevents infinite loops, fixed soft-to-hard timeout race conditions
 
 **Try v0.1.38 Features:**
@@ -175,7 +175,7 @@ pip install --upgrade massgen
 uv run massgen --plan --plan-depth medium \
   "Build a REST API for a todo application"
 
-# Multi-agent task with project context (use @./ to include current directory)
+# Will read from CLAUDE.md/AGENTS.md in cwd, if it exists
 uv run massgen --config massgen/configs/basic/multi/three_agents_default.yaml \
   "Explain the current functionality of this repo @./"
 ```
@@ -1229,9 +1229,8 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 - **CLAUDE.md/AGENTS.md Support**: Automatically loads project-specific instructions from standard locations
 - **Context Injection**: Project instructions prepended to agent system messages
 
-#### Batch Media Analysis
-- **Multi-Image Support**: Process multiple images in single `read_media` call
-- **Unified Interface**: Consistent API across image, audio, and video analysis
+#### Batch Image Analysis
+- **Multi-Image Support**: Process multiple images in single `read_media` call for comparison and batch analysis
 
 #### Reliability Improvements
 - **Circuit Breaker**: Prevents infinite tool denial loops with configurable retry limits
