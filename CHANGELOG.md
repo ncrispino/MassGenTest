@@ -9,16 +9,101 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Recent Releases
 
+**v0.1.38 (January 15, 2026)** - Task Planning, Two-Tier Workspaces & Project Instructions
+Task planning mode with `--plan` flag creates structured plans for future workflows (plan-only, no auto-execution). Two-tier git-backed workspaces with scratch/deliverable separation and automatic snapshot commits. Project instruction auto-discovery (CLAUDE.md/AGENTS.md) following the agents.md standard. Batch image analysis with multi-image comparison support. Circuit breaker for timeout denial loops, soft→hard timeout race condition fix, and Docker health monitoring with log capture on MCP failures.
+
 **v0.1.37 (January 12, 2026)** - Execution Traces & Thinking Mode Improvements
 Execution trace files preserve full agent history for compression recovery and cross-agent coordination. Claude Code thinking mode support with streaming buffer integration. Gemini thinking mode fixes and standardized agent labeling across backends. OpenRouter documentation and workspace anonymization improvements.
 
 **v0.1.36 (January 9, 2026)** - Hook Framework & Unified @path Context Handling
 General hook framework for agent lifecycle events with PreToolUse/PostToolUse hooks, content injection strategies, and custom hook support. Unified `@path` syntax for inline context path references in CLI and Web UI with autocomplete file picker. Claude Code native hooks integration. Docker resource cleanup improvements when recreating agents for new path references.
 
-**v0.1.35 (January 7, 2026)** - Enhanced Log Analysis & Workflow Observability
-New `massgen logs analyze` command generates analysis prompts or launches multi-agent self-analysis using MassGen. Comprehensive Logfire attributes for workflow explanation including round context, vote context, and local file references. New `direct_mcp_servers` config option for code-based tools mode to keep specific MCP servers as direct protocol tools. Grok and Gemini tool fixes, vote-only mode improvements.
-
 ---
+
+## [0.1.38] - 2026-01-15
+
+### Added
+- **Task Planning Mode**: Create structured plans for future workflows with `--plan` flag (plan-only, no auto-execution)
+  - `--plan`: Enable task planning mode for structured work breakdown
+  - `--plan-depth`: Control planning granularity (shallow/medium/deep)
+  - Planning prompt prefix for configurable depth
+  - Outputs `feature_list.json` with task dependencies and priorities
+
+- **Two-Tier Workspace**: Git-backed scratch/deliverable separation
+  - `use_two_tier_workspace: true` config option
+  - `scratch/` directory for work-in-progress
+  - `deliverable/` directory for complete, self-contained outputs
+  - Automatic `[INIT]`, `[SNAPSHOT]`, `[TASK]` git commits
+  - Task completion triggers git commit with completion notes
+  - Agents can use `git log` to review work history
+
+- **Project Instructions Auto-Discovery**: CLAUDE.md/AGENTS.md support following [agents.md](https://agents.md/) standard
+  - Automatic discovery from context paths (via `@path` syntax)
+  - Hierarchical "closest wins" algorithm for monorepo support
+  - CLAUDE.md takes precedence over AGENTS.md at same level
+  - Contents injected into system prompts with softer framing
+
+- **Batch Image Analysis**: Multi-image support in media tools
+  - `understand_image` accepts `images` dict for named multi-image comparison
+  - `read_media` accepts `inputs` list for batch image processing
+  - Dict keys become reference names in prompts for image identification
+  - `max_concurrent` parameter for concurrency control
+
+- **Docker Health Monitoring**: Container diagnostics on MCP failures
+  - `get_container_health()` for health status checking
+  - `get_container_logs()` and `save_container_logs()` for log retrieval
+  - Automatic log capture when MCP disconnections occur
+  - Health info tracked in enforcement events
+
+- **Enhanced Enforcement Tracking**: Improved status.json visibility
+  - `finish_reason`: `"timeout"`, `"completed"`, `"error"`, or `"in_progress"`
+  - `finish_reason_details`: Human-readable explanation
+  - `is_complete`: Boolean completion status
+  - Fields appear at top of status.json for immediate visibility
+
+### Changed
+- **Improved Deliverable Guidance**: System prompts emphasize self-contained packages
+  - Checklist: all required files, dependencies, assets, README
+  - Explicit examples for different artifact types
+  - Soft timeout message reinforces complete deliverables
+
+- **Git History in System Prompt**: Agents aware of version control
+  - Commit prefix documentation: `[INIT]`, `[SNAPSHOT]`, `[TASK]`
+  - Guidance to use `git log` for reviewing work history
+
+### Fixed
+- **Vote Tracking Bug**: Ignored votes no longer leak into final results
+  - Clear `agent_states[agent_id].votes` when vote ignored due to restart
+  - Sync between `agent_states` and `coordination_tracker.votes`
+
+- **Soft→Hard Timeout Race Condition**: Guaranteed progression
+  - Hard timeout now calculated from soft timeout injection time
+  - Soft timeout must fire before hard timeout can trigger
+  - `RoundTimeoutState` class for shared state between hooks
+
+- **MCP Reset on Restart**: Full tools restored after hard timeout restart
+  - Reset `_mcp_initialized = False` in `handle_restart()`
+  - Forces MCP re-initialization (17 tools vs 2)
+
+- **Circuit Breaker for Hard Timeout**: Prevents infinite denial loops
+  - Tracks consecutive denied tool calls
+  - Warning after 3+ consecutive denials
+  - Force terminate after 10 blocked tool calls
+
+- **`use_two_tier_workspace` Config Pass-Through**: Flag now reaches orchestrator
+  - Added to `CoordinationConfig` creation in cli.py
+  - Planning MCP server receives `--use-two-tier-workspace` flag
+
+### Documentations, Configurations and Resources
+- **Project Integration Guide**: New `docs/source/user_guide/files/project_integration.rst`
+- **Debugging Assumptions**: Added guidance to `CLAUDE.md` for log analysis
+- **OpenSpec Proposals**: New `openspec/changes/add-enforcement-observability/` and `openspec/changes/add-task-planning-mode/`
+- **Skills**: New `massgen/skills/massgen-log-analyzer/SKILL.md`
+- **Roadmap**: Renamed `ROADMAP_v0.1.38.md` to `ROADMAP_v0.1.39.md`
+
+### Technical Details
+- **Major Focus**: Task planning, two-tier workspaces, project instructions, timeout reliability
+- **Contributors**: @ncrispino, @chiwang, @HenryQi and the MassGen team
 
 ## [0.1.37] - 2026-01-12
 
