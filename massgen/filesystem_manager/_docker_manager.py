@@ -1045,6 +1045,8 @@ class DockerManager:
             - error: str or None
             - started_at: str or None
             - finished_at: str or None
+            - oom_killed: bool indicating whether the container was OOM-killed
+            - pid: int or None for the container's main process ID
         """
         container = self.containers.get(agent_id)
         if not container:
@@ -1160,7 +1162,7 @@ class DockerManager:
             # Add container health info as header
             health = self.get_container_health(agent_id)
 
-            with open(log_path, "w") as f:
+            with open(log_path, "w", encoding="utf-8") as f:
                 f.write(f"# Docker Container Logs for agent: {agent_id}\n")
                 f.write(f"# Container Status: {health.get('status', 'unknown')}\n")
                 f.write(f"# Running: {health.get('running', 'unknown')}\n")

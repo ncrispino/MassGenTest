@@ -33,9 +33,9 @@ def _error_result(error: str) -> ExecutionResult:
 
 # Supported media types and their extensions
 MEDIA_TYPE_EXTENSIONS = {
-    "image": {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"},
+    "image": {".png", ".jpg", ".jpeg", ".webp", ".bmp"},
     "audio": {".mp3", ".wav", ".m4a", ".ogg", ".flac", ".aac"},
-    "video": {".mp4", ".mov", ".avi", ".mkv", ".webm"},
+    "video": {".mp4", ".mov", ".avi", ".mkv", ".webm", ".gif"},
 }
 
 
@@ -228,7 +228,7 @@ async def read_media(
             media_type = _detect_media_type(file_path)
             if not media_type:
                 return _error_result(
-                    f"Unsupported file type: {media_path.suffix}. " "Supported: images (png, jpg, gif, webp), audio (mp3, wav, m4a, ogg), video (mp4, mov, avi, mkv, webm)",
+                    f"Unsupported file type: {media_path.suffix}. " "Supported: images (png, jpg, webp), audio (mp3, wav, m4a, ogg), video (mp4, mov, avi, mkv, webm, gif)",
                 )
 
             logger.info(f"Using understand_{media_type} for {media_type} analysis")
@@ -355,9 +355,15 @@ async def read_media(
                         # Parse result
                         for block in result.output_blocks:
                             if isinstance(block, TextContent):
-                                data = json.loads(block.data)
-                                data["input_index"] = idx
-                                return data
+                                try:
+                                    data = json.loads(block.data)
+                                    data["input_index"] = idx
+                                    return data
+                                except json.JSONDecodeError as e:
+                                    logger.error(
+                                        f"[read_media] Failed to parse image result JSON at index {idx}: {e}. " f"Block data: {block.data[:200]}",
+                                    )
+                                    continue
 
                     elif media_type == "audio":
                         from massgen.tool._multimodal_tools.understand_audio import (
@@ -377,9 +383,15 @@ async def read_media(
                         )
                         for block in result.output_blocks:
                             if isinstance(block, TextContent):
-                                data = json.loads(block.data)
-                                data["input_index"] = idx
-                                return data
+                                try:
+                                    data = json.loads(block.data)
+                                    data["input_index"] = idx
+                                    return data
+                                except json.JSONDecodeError as e:
+                                    logger.error(
+                                        f"[read_media] Failed to parse audio result JSON at index {idx}: {e}. " f"Block data: {block.data[:200]}",
+                                    )
+                                    continue
 
                     elif media_type == "video":
                         from massgen.tool._multimodal_tools.understand_video import (
@@ -398,9 +410,15 @@ async def read_media(
                         )
                         for block in result.output_blocks:
                             if isinstance(block, TextContent):
-                                data = json.loads(block.data)
-                                data["input_index"] = idx
-                                return data
+                                try:
+                                    data = json.loads(block.data)
+                                    data["input_index"] = idx
+                                    return data
+                                except json.JSONDecodeError as e:
+                                    logger.error(
+                                        f"[read_media] Failed to parse video result JSON at index {idx}: {e}. " f"Block data: {block.data[:200]}",
+                                    )
+                                    continue
 
                     return {"input_index": idx, "success": False, "error": "No result returned"}
 

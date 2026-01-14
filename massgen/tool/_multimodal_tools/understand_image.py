@@ -88,8 +88,8 @@ def _load_and_process_image(
         raise ValueError(f"Image file does not exist: {img_path}")
 
     # Check file format
-    if img_path.suffix.lower() not in [".png", ".jpg", ".jpeg", ".gif", ".webp"]:
-        raise ValueError(f"Image must be PNG, JPEG, JPG, GIF, or WebP format: {img_path}")
+    if img_path.suffix.lower() not in [".png", ".jpg", ".jpeg", ".webp"]:
+        raise ValueError(f"Image must be PNG, JPEG, JPG, or WebP format: {img_path}")
 
     # OpenAI Vision API limits:
     # - Up to 20MB per image
@@ -114,7 +114,18 @@ def _load_and_process_image(
         with open(img_path, "rb") as image_file:
             image_data = image_file.read()
         base64_image = base64.b64encode(image_data).decode("utf-8")
-        mime_type = "image/jpeg" if img_path.suffix.lower() in [".jpg", ".jpeg"] else "image/png"
+
+        # Map file extension to MIME type
+        suffix = img_path.suffix.lower()
+        if suffix in [".jpg", ".jpeg"]:
+            mime_type = "image/jpeg"
+        elif suffix == ".png":
+            mime_type = "image/png"
+        elif suffix == ".webp":
+            mime_type = "image/webp"
+        else:
+            mime_type = "image/jpeg"  # Fallback
+
         logger.info(f"Read image without dimension check (PIL not available): {img_path.name}")
         return LoadedImage(path=img_path, base64_data=base64_image, mime_type=mime_type, name=name)
 
@@ -178,7 +189,18 @@ def _load_and_process_image(
         with open(img_path, "rb") as image_file:
             image_data = image_file.read()
         base64_image = base64.b64encode(image_data).decode("utf-8")
-        mime_type = "image/jpeg" if img_path.suffix.lower() in [".jpg", ".jpeg"] else "image/png"
+
+        # Map file extension to MIME type
+        suffix = img_path.suffix.lower()
+        if suffix in [".jpg", ".jpeg"]:
+            mime_type = "image/jpeg"
+        elif suffix == ".png":
+            mime_type = "image/png"
+        elif suffix == ".webp":
+            mime_type = "image/webp"
+        else:
+            mime_type = "image/jpeg"  # Fallback
+
         logger.info(f"Image within limits: {original_width}x{original_height} ({file_size/1024/1024:.1f}MB)")
 
     return LoadedImage(path=img_path, base64_data=base64_image, mime_type=mime_type, name=name)

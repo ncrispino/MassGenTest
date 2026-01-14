@@ -1300,7 +1300,7 @@ def create_agents_from_config(
         backend_config["enable_rate_limit"] = enable_rate_limit
 
         # Inject two-tier workspace setting from coordination config
-        orchestrator_section = config.get("orchestrator", {})
+        orchestrator_section = orchestrator_config or {}
         coordination_settings_for_injection = orchestrator_section.get("coordination", {})
         if coordination_settings_for_injection.get("use_two_tier_workspace", False):
             backend_config["use_two_tier_workspace"] = True

@@ -4043,9 +4043,9 @@ Your answer:"""
         container state and logs at the time of failure.
 
         Args:
-            agent: The ChatAgent instance
-            agent_id: Agent identifier
-            mcp_status: The MCP status that triggered this (e.g., 'mcp_tools_failed')
+            agent: The ChatAgent instance.
+            agent_id: Agent identifier.
+            mcp_status: The MCP status that triggered this (e.g., 'mcp_tools_failed').
         """
         try:
             # Check if agent uses Docker mode
@@ -4084,7 +4084,10 @@ Your answer:"""
                 log_path = log_dir / log_filename
                 docker_manager.save_container_logs(agent_id, log_path, tail=500)
 
-        except Exception as e:
+        except (OSError, AttributeError, KeyError) as e:
+            # OSError: File I/O errors when saving logs
+            # AttributeError: Missing attributes on agent/backend/manager objects
+            # KeyError: Missing dict keys in health info
             logger.warning(f"[Docker] Failed to save container logs on MCP failure: {e}")
 
     def _get_docker_health(
@@ -4095,11 +4098,11 @@ Your answer:"""
         """Get Docker container health info for reliability metrics.
 
         Args:
-            agent: The ChatAgent instance
-            agent_id: Agent identifier
+            agent: The ChatAgent instance.
+            agent_id: Agent identifier.
 
         Returns:
-            Docker health dict or None if not using Docker
+            Docker health dict or None if not using Docker.
         """
         try:
             if not hasattr(agent, "backend") or not hasattr(agent.backend, "filesystem_manager"):
@@ -4110,7 +4113,9 @@ Your answer:"""
                 return None
 
             return fm.docker_manager.get_container_health(agent_id)
-        except Exception as e:
+        except (AttributeError, KeyError) as e:
+            # AttributeError: Missing attributes on agent/backend/manager objects
+            # KeyError: Missing dict keys when accessing container state
             logger.debug(f"[Docker] Failed to get container health: {e}")
             return None
 
@@ -4804,8 +4809,12 @@ Your answer:"""
                         if mcp_status in ("mcp_tools_failed", "mcp_unavailable", "mcp_error"):
                             buffer_preview, buffer_chars = self._get_buffer_content(agent)
 
-                            # Get Docker health info for reliability metrics
-                            docker_health = self._get_docker_health(agent, agent_id)
+                            # Get Docker health info for reliability metrics (non-blocking)
+                            docker_health = await asyncio.to_thread(
+                                self._get_docker_health,
+                                agent,
+                                agent_id,
+                            )
 
                             self.coordination_tracker.track_enforcement_event(
                                 agent_id=agent_id,
@@ -4819,8 +4828,15 @@ Your answer:"""
                                 docker_health=docker_health,
                             )
 
-                            # Save Docker container logs on MCP failure for debugging
-                            self._save_docker_logs_on_mcp_failure(agent, agent_id, mcp_status)
+                            # Save Docker container logs on MCP failure for debugging (fire-and-forget)
+                            asyncio.create_task(
+                                asyncio.to_thread(
+                                    self._save_docker_logs_on_mcp_failure,
+                                    agent,
+                                    agent_id,
+                                    mcp_status,
+                                ),
+                            )
                     elif chunk_type == "custom_tool_status":
                         # Forward custom tool status messages with proper formatting
                         custom_tool_content = f"🔧 Custom Tool: {chunk.content}"
@@ -6285,10 +6301,10 @@ Then call either submit(confirmed=True) if the answer is satisfactory, or restar
 
         # Reset MCP initialization flag to force tool re-setup on next agent.chat()
         # This ensures agents get full tool set after restart (not limited set from timeout)
-        for agent in self.agents.values():
+        for agent_key, agent in self.agents.items():
             if hasattr(agent.backend, "_mcp_initialized"):
                 agent.backend._mcp_initialized = False
-                logger.info(f"[Orchestrator] Reset MCP initialized flag for agent {agent.agent_id}")
+                logger.info(f"[Orchestrator] Reset MCP initialized flag for agent {agent_key}")
 
         # Reset workflow phase to idle so next coordinate() call starts fresh
         self.workflow_phase = "idle"
