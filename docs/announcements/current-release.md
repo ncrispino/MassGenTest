@@ -1,4 +1,4 @@
-# MassGen v0.1.37 Release Announcement
+# MassGen v0.1.38 Release Announcement
 
 <!--
 This is the current release announcement. Copy this + feature-highlights.md to LinkedIn/X.
@@ -7,19 +7,19 @@ After posting, update the social links below.
 
 ## Release Summary
 
-We're excited to release MassGen v0.1.37, adding Execution Traces & Thinking Mode Improvements!🚀
+We're excited to release MassGen v0.1.38, adding Task Planning, Two-Tier Workspaces & Project Instructions!
 
-Agents now preserve their full execution history as searchable markdown files, enabling compression recovery and cross-agent coordination. When context gets compressed, agents can read their trace files to recover details. Other agents can access execution traces to understand how solutions were reached. Plus: Claude Code and Gemini thinking mode improvements, standardized agent labeling, and OpenRouter documentation.
+Agents can now plan before they execute with the new `--plan` flag. Two-tier git-backed workspaces separate work-in-progress from complete deliverables with automatic snapshot commits. CLAUDE.md and AGENTS.md files are auto-discovered following the agents.md standard. Plus: batch media analysis, timeout reliability fixes, and Docker health monitoring.
 
 ## Install
 
 ```bash
-pip install massgen==0.1.37
+pip install massgen==0.1.38
 ```
 
 ## Links
 
-- **Release notes:** https://github.com/massgen/MassGen/releases/tag/v0.1.37
+- **Release notes:** https://github.com/massgen/MassGen/releases/tag/v0.1.38
 - **X post:** [TO BE ADDED AFTER POSTING]
 - **LinkedIn post:** [TO BE ADDED AFTER POSTING]
 
@@ -31,29 +31,40 @@ Copy everything below this line, then append content from `feature-highlights.md
 
 ---
 
-We're excited to release MassGen v0.1.37, adding Execution Traces & Thinking Mode Improvements!🚀
+We're excited to release MassGen v0.1.38, adding Task Planning, Two-Tier Workspaces & Project Instructions!
 
-Agents now preserve their full execution history as searchable markdown files, enabling compression recovery and cross-agent coordination. When context gets compressed, agents can read their trace files to recover details. Other agents can access execution traces to understand how solutions were reached. Plus: Claude Code and Gemini thinking mode improvements, standardized agent labeling, and OpenRouter documentation.
+Agents can now plan before they execute with the new `--plan` flag. Two-tier git-backed workspaces separate work-in-progress from complete deliverables with automatic snapshot commits. CLAUDE.md and AGENTS.md files are auto-discovered following the agents.md standard. Plus: batch media analysis, timeout reliability fixes, and Docker health monitoring.
 
 **Key Features:**
 
-**Execution Traces** - Full execution history preservation:
-- Human-readable `execution_trace.md` saved alongside agent snapshots
-- Compression recovery - agents read trace files to recover detailed history
-- Cross-agent access - other agents can see how solutions were reached
-- Full tool calls, results, and reasoning blocks without truncation
-- Grep-friendly searchable format for debugging
+**Task Planning Mode** - Structured execution with `--plan`:
+- `--plan` flag enables planning before execution
+- `--plan-depth` controls planning depth (1-3 levels)
+- Agents create task lists before executing work
 
-**Thinking Mode Improvements** - Enhanced reasoning support:
-- Claude Code thinking mode with streaming buffer integration
-- Gemini thinking mode fixes for proper reasoning capture
-- Voting execution traces with full vote context
+**Two-Tier Workspaces** - Git-backed scratch/deliverable separation:
+- `scratch/` for work-in-progress, `deliverable/` for complete outputs
+- Automatic `[INIT]`, `[SNAPSHOT]`, `[TASK]` git commits
+- Task completion triggers commits with completion notes
+- Agents can review history with `git log`
 
-**Standardized Agent Labeling** - Consistent identification:
-- Unified labeling format across all backends
-- Improved workspace anonymization for cross-agent sharing
+**Project Instructions Auto-Discovery** - Following agents.md standard:
+- CLAUDE.md and AGENTS.md auto-discovered from context paths
+- Hierarchical "closest wins" for monorepo support
+- Seamless integration with `@path` syntax
 
-Release notes: https://github.com/massgen/MassGen/releases/tag/v0.1.37
+**Batch Media Analysis** - Multi-image support:
+- `understand_image` accepts dict for named multi-image comparison
+- `read_media` accepts list for batch parallel processing
+- Dict keys become reference names in prompts
+
+**Timeout & Reliability Fixes:**
+- Circuit breaker prevents infinite tool denial loops
+- Soft->hard timeout race condition fixed
+- MCP tools properly restored after restart
+- Docker health monitoring with log capture on failures
+
+Release notes: https://github.com/massgen/MassGen/releases/tag/v0.1.38
 
 Feature highlights:
 
