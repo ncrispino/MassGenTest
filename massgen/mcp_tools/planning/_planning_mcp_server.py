@@ -37,6 +37,36 @@ _task_plans: Dict[str, TaskPlan] = {}
 # Optional workspace path for filesystem-based task storage
 _workspace_path: Optional[Path] = None
 
+# Whether two-tier workspace with git versioning is enabled
+_use_two_tier_workspace: bool = False
+
+
+def _git_commit_on_task_completion(task_id: str, completion_notes: Optional[str]) -> bool:
+    """
+    Create a git commit when a task is completed (if two-tier workspace is enabled).
+
+    Args:
+        task_id: The ID of the completed task
+        completion_notes: Optional notes about the completion
+
+    Returns:
+        True if a commit was made, False otherwise
+    """
+    if not _use_two_tier_workspace or _workspace_path is None:
+        return False
+
+    try:
+        from massgen.filesystem_manager import git_commit_if_changed
+
+        msg = f"[TASK] Completed: {task_id}"
+        if completion_notes:
+            msg += f"\n\n{completion_notes}"
+
+        return git_commit_if_changed(_workspace_path, msg)
+    except Exception as e:
+        logger.warning(f"[PlanningMCP] Git commit error for task {task_id}: {e}")
+        return False
+
 
 def _save_plan_to_filesystem(plan: TaskPlan) -> None:
     """
@@ -209,6 +239,11 @@ async def create_server() -> fastmcp.FastMCP:
         action="store_true",
         help="Enable memory discovery and saving task reminders",
     )
+    parser.add_argument(
+        "--use-two-tier-workspace",
+        action="store_true",
+        help="Enable git commits on task completion (requires two-tier workspace)",
+    )
     args = parser.parse_args()
 
     # Configure logging to stderr so it appears in MCP server output
@@ -220,8 +255,12 @@ async def create_server() -> fastmcp.FastMCP:
     logger.debug(f"[PlanningMCP] Server starting for agent_id={args.agent_id}, orchestrator_id={args.orchestrator_id}")
 
     # Set workspace path if provided
+    global _workspace_path, _use_two_tier_workspace
     if args.workspace_path:
         _workspace_path = Path(args.workspace_path)
+
+    # Set two-tier workspace flag for git commits on task completion
+    _use_two_tier_workspace = args.use_two_tier_workspace
 
     # Create the FastMCP server
     mcp = fastmcp.FastMCP("Agent Task Planning")
@@ -505,11 +544,23 @@ async def create_server() -> fastmcp.FastMCP:
             # Save to filesystem if configured
             _save_plan_to_filesystem(plan)
 
-            return {
+            # Git commit on task completion (if two-tier workspace enabled)
+            git_committed = False
+            if status == "completed":
+                git_committed = _git_commit_on_task_completion(task_id, completion_notes)
+
+            response = {
                 "success": True,
                 "operation": "update_task_status",
                 **result,
             }
+
+            # Include git commit info in response so agent knows what happened
+            if git_committed:
+                response["git_committed"] = True
+                response["git_message"] = f"[TASK] Completed: {task_id}"
+
+            return response
 
         except Exception as e:
             return {

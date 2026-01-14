@@ -892,6 +892,7 @@ class RoundTimeoutPostHook(PatternHook):
         grace_seconds: int,
         agent_id: str,
         shared_state: Optional["RoundTimeoutState"] = None,
+        use_two_tier_workspace: bool = False,
     ):
         """
         Initialize the round timeout post hook.
@@ -905,6 +906,7 @@ class RoundTimeoutPostHook(PatternHook):
             grace_seconds: Time allowed after soft timeout before hard block
             agent_id: Agent identifier for logging
             shared_state: Optional shared state for coordinating with hard timeout hook
+            use_two_tier_workspace: If True, include guidance about deliverable/ directory
         """
         super().__init__(name, matcher="*", timeout=5)
         self.get_round_start_time = get_round_start_time
@@ -915,6 +917,7 @@ class RoundTimeoutPostHook(PatternHook):
         self.agent_id = agent_id
         self._soft_timeout_fired = False
         self._shared_state = shared_state
+        self.use_two_tier_workspace = use_two_tier_workspace
 
     def _get_timeout_for_current_round(self) -> Optional[int]:
         """Return timeout based on round number (0 = initial, 1+ = subsequent)."""
@@ -959,13 +962,26 @@ class RoundTimeoutPostHook(PatternHook):
         round_num = self.get_agent_round()
         round_type = "initial answer" if round_num == 0 else "voting"
 
+        # Add deliverable guidance if two-tier workspace is enabled
+        deliverable_guidance = ""
+        if self.use_two_tier_workspace:
+            deliverable_guidance = """
+IMPORTANT: Before submitting, ensure your `deliverable/` directory is COMPLETE and SELF-CONTAINED.
+Voters will evaluate `deliverable/` as a standalone package. It must include:
+- ALL files needed to use your output (not just one component)
+- Any assets, dependencies, or supporting files
+- A README if helpful for understanding how to run/use it
+
+Do NOT leave partial work in deliverable/ - include everything needed or nothing.
+"""
+
         injection = f"""
 ============================================================
 ⏰ ROUND TIME LIMIT APPROACHING - PLEASE WRAP UP
 ============================================================
 
 You have exceeded the soft time limit for this {round_type} round ({elapsed:.0f}s / {timeout}s).
-
+{deliverable_guidance}
 Please wrap up your current work and submit soon:
 1. `new_answer` - Submit your current best answer (can be a work-in-progress)
 2. `vote` - Vote for an existing answer if one is satisfactory

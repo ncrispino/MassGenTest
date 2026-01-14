@@ -30,6 +30,76 @@ from ._constants import FRAMEWORK_MCPS
 from ._path_permission_manager import PathPermissionManager
 
 
+def git_commit_if_changed(workspace: Path, message: str) -> bool:
+    """Commit any uncommitted changes in the workspace.
+
+    This is a standalone function that can be called from anywhere to create
+    a git commit in an agent workspace. It's isolated from parent git repos
+    using explicit GIT_DIR and GIT_WORK_TREE environment variables.
+
+    Args:
+        workspace: The workspace root path (must contain a .git directory)
+        message: Commit message (should use semantic prefixes like [TASK], [SNAPSHOT], etc.)
+
+    Returns:
+        True if a commit was made, False otherwise (no changes or not a git repo)
+    """
+    import subprocess
+
+    # Check if this is a git repo
+    git_dir = workspace / ".git"
+    if not git_dir.exists():
+        return False
+
+    try:
+        # Sandboxed git environment to isolate from parent repos
+        git_env = {
+            "GIT_DIR": str(git_dir),
+            "GIT_WORK_TREE": str(workspace),
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_TEMPLATE_DIR": "",
+            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+            "HOME": str(workspace),
+        }
+
+        # Check if there are any changes
+        result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=workspace,
+            capture_output=True,
+            check=True,
+            env=git_env,
+        )
+
+        if not result.stdout.strip():
+            return False  # No changes to commit
+
+        # Stage all changes
+        subprocess.run(
+            ["git", "add", "-A"],
+            cwd=workspace,
+            capture_output=True,
+            check=True,
+            env=git_env,
+        )
+
+        # Commit with --no-verify to skip any hooks
+        subprocess.run(
+            ["git", "commit", "--no-verify", "-m", message],
+            cwd=workspace,
+            capture_output=True,
+            check=True,
+            env=git_env,
+        )
+
+        logger.info(f"[git_commit_if_changed] Committed: {message}")
+        return True
+
+    except subprocess.CalledProcessError as e:
+        logger.warning(f"[git_commit_if_changed] Git commit failed: {e.stderr.decode() if e.stderr else e}")
+        return False
+
+
 class FilesystemManager:
     """
     Manages filesystem operations for backends with MCP filesystem support.
@@ -1158,55 +1228,8 @@ class FilesystemManager:
         Returns:
             True if a commit was made, False otherwise
         """
-        import subprocess
-
-        # Check if this is a git repo
-        git_dir = workspace / ".git"
-        if not git_dir.exists():
-            return False
-
-        try:
-            # Explicitly set GIT_DIR to isolate from any parent git repos
-            # This prevents git from walking up directories to find a .git
-            git_env = {**os.environ, "GIT_DIR": str(git_dir), "GIT_WORK_TREE": str(workspace)}
-
-            # Check if there are any changes
-            result = subprocess.run(
-                ["git", "status", "--porcelain"],
-                cwd=workspace,
-                capture_output=True,
-                check=True,
-                env=git_env,
-            )
-
-            if not result.stdout.strip():
-                # No changes to commit
-                return False
-
-            # Stage all changes
-            subprocess.run(
-                ["git", "add", "-A"],
-                cwd=workspace,
-                capture_output=True,
-                check=True,
-                env=git_env,
-            )
-
-            # Commit with --no-verify to skip any hooks that might be inherited
-            subprocess.run(
-                ["git", "commit", "--no-verify", "-m", message],
-                cwd=workspace,
-                capture_output=True,
-                check=True,
-                env=git_env,
-            )
-
-            logger.info(f"[FilesystemManager] Git commit: {message}")
-            return True
-
-        except subprocess.CalledProcessError as e:
-            logger.warning(f"[FilesystemManager] Git commit failed: {e.stderr.decode() if e.stderr else e}")
-            return False
+        # Delegate to standalone function for single source of truth
+        return git_commit_if_changed(workspace, message)
 
     def get_mcp_filesystem_config(
         self,

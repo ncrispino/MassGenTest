@@ -784,6 +784,11 @@ class Orchestrator(ChatAgent):
         if memory_enabled:
             args.append("--memory-enabled")
 
+        # Enable git commits on task completion if two-tier workspace is enabled
+        use_two_tier_workspace = self.config.coordination_config.use_two_tier_workspace
+        if use_two_tier_workspace:
+            args.append("--use-two-tier-workspace")
+
         config = {
             "name": f"planning_{agent_id}",
             "type": "stdio",
@@ -3613,6 +3618,9 @@ Your answer:"""
         # This ensures hard timeout only fires AFTER soft timeout has been injected
         timeout_state = RoundTimeoutState()
 
+        # Get two-tier workspace setting from coordination config
+        use_two_tier_workspace = self.config.coordination_config.use_two_tier_workspace
+
         # Create soft timeout hook (POST_TOOL_USE - injects warning)
         post_hook = RoundTimeoutPostHook(
             name=f"round_timeout_soft_{agent_id}",
@@ -3623,6 +3631,7 @@ Your answer:"""
             grace_seconds=grace_seconds,
             agent_id=agent_id,
             shared_state=timeout_state,
+            use_two_tier_workspace=use_two_tier_workspace,
         )
 
         # Create hard timeout hook (PRE_TOOL_USE - blocks non-terminal tools)
