@@ -261,9 +261,9 @@ uv run massgen --config massgen/configs/basic/multi/three_agents_default.yaml \
 
 **Try It:**
 ```bash
-# Run a multi-agent task - execution traces are saved automatically
+# Will read from CLAUDE.md/AGENTS.md in cwd, if it exists
 uv run massgen --config massgen/configs/basic/multi/three_agents_default.yaml \
-  "Explain the benefits of functional programming"
+  "Explain the current functionality of this repo @./"
 ```
 
 ### v0.1.36
