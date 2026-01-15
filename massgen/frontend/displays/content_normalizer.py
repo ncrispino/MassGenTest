@@ -48,6 +48,16 @@ STRIP_PATTERNS = [
 
 # Patterns for stripping markers that can appear anywhere in content (not just start)
 GLOBAL_STRIP_PATTERNS = [
+    # Full injection block with === delimiters and content (multiline)
+    # Matches: ===...===\n⚠️IMPORTANT: NEW ANSWER...\n===...===\n[UPDATE:...]...(until double newline or end)
+    (
+        r"={10,}\s*\n\s*⚠️?\s*IMPORTANT:\s*NEW ANSWER[^\n]*\n\s*={10,}\s*\n" r"(?:\[UPDATE:[^\]]*\][^\n]*\n(?:.*?\n)*?(?=\n\n|\Z))?",
+        "",
+    ),
+    # Simpler injection block pattern (just the header and delimiter lines)
+    (r"={10,}\s*\n\s*⚠️?\s*IMPORTANT:[^\n]*\n\s*={10,}\s*\n?", ""),
+    # [UPDATE: ...] blocks that appear after injection headers
+    (r"\[UPDATE:\s*[^\]]*\](?:\s*\([^)]*\))?:?\s*\n?", ""),
     # [INJECTION] marker with optional preceding backslash/whitespace
     (r"\\?\s*\[INJECTION\]\s*", " "),
     # [REMINDER] marker anywhere
@@ -62,7 +72,7 @@ GLOBAL_STRIP_PATTERNS = [
     (r"\s*✅?\s*mcp__\S+\s+completed\s*", ""),
 ]
 
-COMPILED_GLOBAL_STRIP_PATTERNS = [(re.compile(p), r) for p, r in GLOBAL_STRIP_PATTERNS]
+COMPILED_GLOBAL_STRIP_PATTERNS = [(re.compile(p, re.DOTALL | re.MULTILINE), r) for p, r in GLOBAL_STRIP_PATTERNS]
 
 # Compiled regex patterns for performance
 COMPILED_STRIP_PATTERNS = [(re.compile(p), r) for p, r in STRIP_PATTERNS]

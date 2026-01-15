@@ -8,7 +8,7 @@ Optional vim mode for vim-style editing.
 Supports @ path autocomplete integration.
 """
 
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 from textual import events
 from textual.binding import Binding
@@ -44,6 +44,7 @@ class MultiLineInput(TextArea):
         Binding("enter", "submit", "Submit", priority=True),
         Binding("shift+enter", "newline", "New Line", priority=True),
         Binding("ctrl+j", "newline", "New Line", show=False),
+        Binding("ctrl+u", "clear_input", "Clear", show=False),
     ]
 
     class Submitted(Message, bubble=True):
@@ -126,6 +127,14 @@ class MultiLineInput(TextArea):
         self._at_position: Optional[int] = None  # Character position of @ in text
         self._autocomplete_active = False  # Whether autocomplete dropdown is showing
 
+        # Paste summarization state
+        self._pasted_blocks: List[Tuple[int, str, int]] = []  # (paste_id, full_text, line_count)
+        self._paste_counter: int = 0
+
+        # Thresholds for paste summarization
+        self.PASTE_LINE_THRESHOLD = 10
+        self.PASTE_CHAR_THRESHOLD = 500
+
     @property
     def vim_mode(self) -> bool:
         """Whether vim mode is enabled."""
@@ -156,9 +165,86 @@ class MultiLineInput(TextArea):
         self._show_placeholder = not value
 
     def clear(self) -> None:
-        """Clear the input text."""
+        """Clear the input text and paste state."""
         self.load_text("")
         self._show_placeholder = True
+        self._pasted_blocks = []  # Reset paste tracking
+        # Note: Don't reset _paste_counter to maintain unique IDs across clears
+
+    async def _on_paste(self, event: events.Paste) -> None:
+        """Intercept paste to show placeholder for large text.
+
+        When a large paste is detected (exceeds line or character thresholds),
+        the pasted content is stored and replaced with a placeholder like
+        '[Pasted text #1 +15 lines]'. The full text is expanded on submission.
+        """
+        pasted_text = event.text
+        # Normalize line endings and count lines properly
+        # Handle \r\n (Windows), \r (old Mac), and \n (Unix)
+        normalized_text = pasted_text.replace("\r\n", "\n").replace("\r", "\n")
+        line_count = normalized_text.count("\n") + 1
+        char_count = len(pasted_text)
+
+        # DEBUG: Log paste event
+        with open("/tmp/paste_debug.log", "a") as f:
+            f.write(f"[PASTE] lines={line_count}, chars={char_count}, threshold_lines={self.PASTE_LINE_THRESHOLD}, threshold_chars={self.PASTE_CHAR_THRESHOLD}\n")
+            f.write(f"[PASTE] text preview: {repr(pasted_text[:100])}\n")
+            f.write(f"[PASTE] newline chars: \\n={pasted_text.count(chr(10))}, \\r={pasted_text.count(chr(13))}\n")
+
+        # Check if paste exceeds thresholds
+        is_large = line_count >= self.PASTE_LINE_THRESHOLD or char_count >= self.PASTE_CHAR_THRESHOLD
+
+        with open("/tmp/paste_debug.log", "a") as f:
+            f.write(f"[PASTE] is_large={is_large}\n")
+
+        if is_large:
+            # Store full text for later submission, along with the line count used in placeholder
+            self._paste_counter += 1
+            paste_id = self._paste_counter
+            self._pasted_blocks.append((paste_id, pasted_text, line_count))
+
+            # Create placeholder
+            placeholder = f"[Pasted text #{paste_id} +{line_count} lines]"
+
+            with open("/tmp/paste_debug.log", "a") as f:
+                f.write(f"[PASTE] Creating placeholder: {placeholder}\n")
+                f.write(f"[PASTE] read_only={self.read_only}, selection={self.selection}\n")
+
+            # Insert placeholder instead of full text
+            if not self.read_only:
+                result = self._replace_via_keyboard(placeholder, *self.selection)
+                with open("/tmp/paste_debug.log", "a") as f:
+                    f.write(f"[PASTE] _replace_via_keyboard result={result}\n")
+                if result:
+                    self.move_cursor(result.end_location)
+                    self.focus()
+
+            # Stop event - don't let parent TextArea insert the full text
+            event.stop()
+            event.prevent_default()
+            with open("/tmp/paste_debug.log", "a") as f:
+                f.write("[PASTE] Event stopped and prevented\n")
+        else:
+            # Small paste - let TextArea handle normally
+            await super()._on_paste(event)
+
+    def get_full_text_for_submission(self) -> str:
+        """Get the full text, expanding any paste placeholders.
+
+        Returns:
+            The complete text with all paste placeholders replaced by their
+            original content.
+        """
+        text = self.text
+        for paste_id, full_text, line_count in self._pasted_blocks:
+            placeholder = f"[Pasted text #{paste_id} +{line_count} lines]"
+            text = text.replace(placeholder, full_text, 1)
+        return text
+
+    def _cleanup_deleted_placeholders(self) -> None:
+        """Remove stored paste data for placeholders that no longer exist in text."""
+        current_text = self.text
+        self._pasted_blocks = [(pid, txt, lc) for pid, txt, lc in self._pasted_blocks if f"[Pasted text #{pid} +" in current_text]
 
     def action_submit(self) -> None:
         """Submit the current text when Enter is pressed."""
@@ -166,7 +252,9 @@ class MultiLineInput(TextArea):
         if self.vim_normal:
             self.action_cursor_down()
             return
-        text = self.text.strip()
+
+        # Get full text with paste placeholders expanded
+        text = self.get_full_text_for_submission().strip()
         if text:
             self.post_message(self.Submitted(self, text))
 
@@ -175,6 +263,10 @@ class MultiLineInput(TextArea):
         if self.vim_normal:
             return
         self.insert("\n")
+
+    def action_clear_input(self) -> None:
+        """Clear the input text (Ctrl+U)."""
+        self.clear()
 
     def _enter_normal_mode(self) -> None:
         """Enter vim normal mode."""
@@ -206,16 +298,26 @@ class MultiLineInput(TextArea):
             event.stop()
             return
 
-        if not self._vim_mode:
-            # Vim mode disabled - don't intercept any keys
+        # Handle Escape key
+        if event.key == "escape":
+            if self._vim_mode:
+                # Vim mode: enter normal mode from insert mode
+                if not self._vim_normal:
+                    self._enter_normal_mode()
+            else:
+                # Non-vim mode: clear input if there's text
+                if self.text.strip():
+                    self.clear()
+            event.prevent_default()
+            event.stop()
             return
 
-        # In insert mode, only Escape switches to normal mode
+        if not self._vim_mode:
+            # Vim mode disabled - don't intercept any other keys
+            return
+
+        # In vim insert mode, don't intercept other keys
         if not self._vim_normal:
-            if event.key == "escape":
-                self._enter_normal_mode()
-                event.prevent_default()
-                event.stop()
             return
 
         # In normal mode, handle vim keys
@@ -715,11 +817,14 @@ class MultiLineInput(TextArea):
             self.post_message(self.AtDismissed(self))
 
     def on_text_area_changed(self, event: TextArea.Changed) -> None:
-        """Handle text changes to detect @ triggers."""
+        """Handle text changes to detect @ triggers and cleanup deleted placeholders."""
         # DEBUG: Log that this handler was called
         with open("/tmp/at_debug.log", "a") as f:
             f.write(f"[DEBUG MLI] on_text_area_changed called, text={repr(self.text[:50] if self.text else '')}\n")
         self._check_at_trigger()
+
+        # Cleanup any paste placeholders that were deleted
+        self._cleanup_deleted_placeholders()
 
     def insert_completion(self, path: str, with_write: bool = False) -> None:
         """Insert a completed path at the @ position.

@@ -411,9 +411,69 @@ class TimelineScrollContainer(ScrollableContainer):
         super().__init__(*args, **kwargs)
         self._user_scrolled_up = False
         self._auto_scrolling = False
+        self._scroll_pending = False
+        self._debug_scroll = True  # Debug flag
+
+    def _log(self, msg: str) -> None:
+        """Debug logging helper."""
+        if self._debug_scroll:
+            from datetime import datetime
+
+            with open("/tmp/scroll_debug.log", "a") as f:
+                f.write(f"[{datetime.now().strftime('%H:%M:%S.%f')[:-3]}] {msg}\n")
+
+    def on_mount(self) -> None:
+        """Log container info on mount."""
+        self._log(f"MOUNT: id={self.id} size={self.size} content_size={self.content_size}")
+        self._log(f"MOUNT: virtual_size={self.virtual_size} container_size={self.container_size}")
+        self._log(f"MOUNT: scrollbar_gutter={self.scrollbar_gutter} show_vertical_scrollbar={self.show_vertical_scrollbar}")
+        # Log parent chain and check for other scrollable containers
+        parent = self.parent
+        chain = []
+        while parent:
+            pinfo = f"{parent.__class__.__name__}(id={getattr(parent, 'id', None)})"
+            # Check if parent has scrolling
+            if hasattr(parent, "scroll_y"):
+                pinfo += f" scroll_y={parent.scroll_y}"
+            if hasattr(parent, "max_scroll_y"):
+                pinfo += f" max_scroll_y={parent.max_scroll_y}"
+            if hasattr(parent, "vertical_scrollbar"):
+                try:
+                    vs = parent.vertical_scrollbar
+                    if vs:
+                        pinfo += f" HAS_SCROLLBAR(pos={vs.position},display={vs.display})"
+                except Exception:
+                    pass
+            chain.append(pinfo)
+            parent = getattr(parent, "parent", None)
+        self._log(f"MOUNT: parent_chain={' -> '.join(chain)}")
+        # Log scrollbar info
+        try:
+            vscroll = self.vertical_scrollbar
+            self._log(f"MOUNT: vertical_scrollbar={vscroll} visible={vscroll.display if vscroll else 'N/A'}")
+        except Exception as e:
+            self._log(f"MOUNT: vertical_scrollbar error: {e}")
+
+    def on_resize(self, event) -> None:
+        """Log resize events to see size changes."""
+        self._log(f"RESIZE: size={self.size} content_size={self.content_size} max_scroll_y={self.max_scroll_y}")
+        try:
+            vscroll = self.vertical_scrollbar
+            if vscroll:
+                self._log(f"RESIZE: scrollbar size={vscroll.size} visible={vscroll.display}")
+        except Exception as e:
+            self._log(f"RESIZE: scrollbar error: {e}")
 
     def watch_scroll_y(self, old_value: float, new_value: float) -> None:
         """Detect when user scrolls away from bottom."""
+        try:
+            vscroll = self.vertical_scrollbar
+            scrollbar_pos = vscroll.position if vscroll else "N/A"
+            scrollbar_size = vscroll.size if vscroll else "N/A"
+            self._log(f"watch_scroll_y: old={old_value:.1f} new={new_value:.1f} max={self.max_scroll_y:.1f} auto={self._auto_scrolling} scrollbar_pos={scrollbar_pos} scrollbar_size={scrollbar_size}")
+        except Exception as e:
+            self._log(f"watch_scroll_y: old={old_value:.1f} new={new_value:.1f} max={self.max_scroll_y:.1f} auto={self._auto_scrolling} (scrollbar error: {e})")
+
         if self._auto_scrolling:
             return  # Ignore programmatic scrolls
 
@@ -436,8 +496,31 @@ class TimelineScrollContainer(ScrollableContainer):
 
     def scroll_end(self, animate: bool = False) -> None:
         """Auto-scroll to end, marking it as programmatic."""
-        self._auto_scrolling = True
-        super().scroll_end(animate=animate)
+        self._log(f"scroll_end called: pending={self._scroll_pending} max_scroll_y={self.max_scroll_y:.1f} current_scroll_y={self.scroll_y:.1f}")
+
+        # Debounce: if scroll is already pending, don't queue another
+        if self._scroll_pending:
+            self._log("scroll_end: SKIPPED (pending)")
+            return
+
+        self._scroll_pending = True
+
+        def do_scroll() -> None:
+            self._log(f"do_scroll executing: max_scroll_y={self.max_scroll_y:.1f} scroll_y before={self.scroll_y:.1f}")
+            self._scroll_pending = False
+            # Set flag BEFORE scroll - it stays set until reset_auto_scroll is called
+            self._auto_scrolling = True
+            super(TimelineScrollContainer, self).scroll_end(animate=animate)
+            self._log(f"do_scroll after super().scroll_end: scroll_y={self.scroll_y:.1f}")
+            # Reset flag after a brief delay to allow scroll events to be processed
+            self.set_timer(0.1, self._reset_auto_scroll)
+
+        # Defer scroll until after layout is complete
+        self.call_after_refresh(do_scroll)
+
+    def _reset_auto_scroll(self) -> None:
+        """Reset auto-scrolling flag after scroll completes."""
+        self._log(f"_reset_auto_scroll: scroll_y={self.scroll_y:.1f}")
         self._auto_scrolling = False
 
     def reset_scroll_mode(self) -> None:
@@ -864,6 +947,23 @@ class TimelineSection(Vertical):
             self._auto_scroll()
         except Exception:
             pass
+
+    def add_widget(self, widget) -> None:
+        """Add a generic widget to the timeline.
+
+        Args:
+            widget: Any Textual widget to add to the timeline
+        """
+        self._item_count += 1
+
+        try:
+            container = self.query_one("#timeline_container", TimelineScrollContainer)
+            container.mount(widget)
+            self._auto_scroll()
+        except Exception as e:
+            import sys
+
+            print(f"[ERROR] add_widget failed: {e}", file=sys.stderr)
 
     def clear(self) -> None:
         """Clear all timeline content."""

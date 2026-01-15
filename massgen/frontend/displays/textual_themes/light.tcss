@@ -18,7 +18,7 @@ Screen {
     background: #ffffff;
 }
 
-#welcome_screen Label {
+#welcome_screen Label, #welcome_screen Static {
     width: auto;
     text-align: center;
 }
@@ -46,6 +46,12 @@ Screen {
 }
 
 #welcome_shortcuts_hint {
+    color: #999999;
+    text-style: italic;
+    margin-top: 1;
+}
+
+#cwd_hint {
     color: #999999;
     text-style: italic;
     margin-top: 1;
@@ -233,14 +239,16 @@ AgentPanel {
     padding: 0;
     width: 100%;
     height: 100%;
-    scrollbar-size: 1 1;
+    overflow: hidden;  /* Disable scrolling on AgentPanel - scrolling happens in TimelineScrollContainer */
 }
 
-/* Vertical container inside AgentPanel - full width */
+/* Vertical container inside AgentPanel - full width, full height */
 AgentPanel > Vertical {
     width: 100%;
+    height: 100%;
     padding: 0;
     margin: 0;
+    overflow: hidden;  /* Scrolling happens in TimelineScrollContainer, not here */
 }
 
 /* Agent panel header label - first line with agent name, backend, timer */
@@ -652,6 +660,20 @@ RichLog {
 
 .thinking {
     color: #333333;
+}
+
+.injection {
+    color: #7c3aed;
+    background: #ede9fe;
+    padding: 0 1;
+    margin: 1 0;
+}
+
+.reminder {
+    color: #d97706;
+    background: #fef3c7;
+    padding: 0 1;
+    margin: 1 0;
 }
 
 .presentation {
@@ -1530,6 +1552,7 @@ TimelineSection {
     height: 1fr;
     padding: 0;
     margin: 0;
+    overflow: hidden;  /* Scrolling happens in TimelineScrollContainer, not here */
 }
 
 TimelineSection #timeline_container,
@@ -1539,7 +1562,7 @@ TimelineSection TimelineScrollContainer {
     padding: 0;
     background: #ffffff;
     overflow-y: auto;
-    scrollbar-size: 1 1;
+    scrollbar-size: 2 2;
 }
 
 /* Hide legacy RichLog in AgentPanel - using TimelineSection now */
@@ -1570,6 +1593,22 @@ TimelineSection .timeline-text.thinking {
     margin-left: 1;
 }
 
+TimelineSection .timeline-text.injection {
+    color: #7c3aed;
+    background: #ede9fe;
+    border-left: thick #a855f7;
+    padding-left: 1;
+    margin: 1 0;
+}
+
+TimelineSection .timeline-text.reminder {
+    color: #d97706;
+    background: #fef3c7;
+    border-left: thick #f59e0b;
+    padding-left: 1;
+    margin: 1 0;
+}
+
 TimelineSection .timeline-text.response {
     color: #4caf50;
     border-left: solid #4caf50;
@@ -1584,6 +1623,50 @@ TimelineSection .timeline-text.answer {
     padding-left: 1;
     margin-left: 1;
     background: #fff3e0;
+}
+
+/* Task Plan Card - Visual todo list from Planning MCP */
+TaskPlanCard {
+    width: 100%;
+    height: auto;
+    min-height: 3;
+    padding: 0 1;
+    margin: 1 0;
+    background: #f5f0ff;
+    border-left: thick #a855f7;
+}
+
+TaskPlanCard .task-header {
+    text-style: bold;
+    color: #7c3aed;
+    margin-bottom: 1;
+}
+
+TaskPlanCard .task-completed {
+    color: #9ca3af;
+}
+
+TaskPlanCard .task-in-progress {
+    color: #2563eb;
+    text-style: bold;
+}
+
+TaskPlanCard .task-pending {
+    color: #6b7280;
+}
+
+TaskPlanCard .task-blocked {
+    color: #9ca3af;
+    text-style: italic;
+}
+
+TaskPlanCard .task-focused {
+    background: #ede9fe;
+}
+
+TaskPlanCard .task-count {
+    color: #9ca3af;
+    text-style: italic;
 }
 
 TimelineSection .timeline-text.vote {

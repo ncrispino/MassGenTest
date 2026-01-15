@@ -1900,9 +1900,10 @@ if TEXTUAL_AVAILABLE:
     class StatusBarCwdClicked(Message):
         """Message emitted when the CWD display in StatusBar is clicked."""
 
-        def __init__(self, cwd: str) -> None:
+        def __init__(self, cwd: str, mode: str = "off") -> None:
             super().__init__()
             self.cwd = cwd
+            self.mode = mode  # "off", "read", or "write"
 
     class StatusBar(Widget):
         """Persistent status bar showing orchestration state at the bottom of the TUI."""
@@ -1926,6 +1927,8 @@ if TEXTUAL_AVAILABLE:
             self._working_agents: Set[str] = set()
             self._spinner_frame = 0
             self._spinner_interval = None
+            # CWD context mode: "off", "read", or "write"
+            self._cwd_context_mode = "off"
             # Initialize vote counts to 0 for all agents
             for agent_id in self._agent_ids:
                 self._vote_counts[agent_id] = 0
@@ -1945,10 +1948,10 @@ if TEXTUAL_AVAILABLE:
             yield Static("", id="status_spacer")
             # Right-aligned items
             yield Static("", id="status_mcp")
-            # CWD display - clickable to add as context
+            # CWD display - clickable to toggle auto-include as context
             cwd = Path.cwd()
             cwd_short = f"~/{cwd.name}" if len(str(cwd)) > 30 else str(cwd)
-            yield Static(f"📁 {cwd_short}", id="status_cwd", classes="clickable")
+            yield Static(f"[dim]📁[/] {cwd_short}", id="status_cwd", classes="clickable")
             yield Static("📋 0 events", id="status_events", classes="clickable")
             yield Static("[dim]?:help[/]", id="status_hints")  # Always visible, shows q:cancel during coordination
             yield Static("⏱️ 0:00", id="status_timer")
@@ -1963,7 +1966,29 @@ if TEXTUAL_AVAILABLE:
                 elif target.id == "status_cancel":
                     self.post_message(StatusBarCancelClicked())
                 elif target.id == "status_cwd":
-                    self.post_message(StatusBarCwdClicked(str(Path.cwd())))
+                    self.toggle_cwd_auto_include()
+
+        def toggle_cwd_auto_include(self) -> None:
+            """Cycle CWD context mode and update display."""
+            # Cycle through modes
+            modes = ["off", "read", "write"]
+            current_idx = modes.index(self._cwd_context_mode)
+            self._cwd_context_mode = modes[(current_idx + 1) % len(modes)]
+
+            cwd = Path.cwd()
+            cwd_short = f"~/{cwd.name}" if len(str(cwd)) > 30 else str(cwd)
+            try:
+                cwd_widget = self.query_one("#status_cwd", Static)
+                if self._cwd_context_mode == "read":
+                    cwd_widget.update(f"[green]📁 {cwd_short} \\[read][/]")
+                elif self._cwd_context_mode == "write":
+                    cwd_widget.update(f"[green]📁 {cwd_short} \\[read+write][/]")
+                else:
+                    cwd_widget.update(f"[dim]📁[/] {cwd_short}")
+            except Exception:
+                pass
+            # Post message to notify app of the toggle
+            self.post_message(StatusBarCwdClicked(str(cwd), self._cwd_context_mode))
 
         def update_phase(self, phase: str) -> None:
             """Update the phase indicator."""
@@ -2345,6 +2370,10 @@ if TEXTUAL_AVAILABLE:
             # Quit - canonical shortcuts
             Binding("ctrl+c", "quit", "Quit", priority=True),
             Binding("ctrl+d", "quit", "Quit", show=False),
+            # CWD context toggle - priority so it works even when input focused
+            Binding("ctrl+p", "toggle_cwd", "Toggle CWD", priority=True, show=False),
+            # Help - Ctrl+G for guide/help
+            Binding("ctrl+g", "show_help", "Help", priority=True, show=False),
         ]
 
         def __init__(
@@ -2398,6 +2427,9 @@ if TEXTUAL_AVAILABLE:
             self._current_restart: Dict[str, Any] = {}  # Current restart info
             self._context_per_agent: Dict[str, List[str]] = {}  # Which answers each agent has seen
 
+            # CWD context mode: "off", "read", or "write"
+            self._cwd_context_mode: str = "off"
+
             if not self._keyboard_interactive_mode:
                 self.BINDINGS = []
 
@@ -2441,7 +2473,7 @@ if TEXTUAL_AVAILABLE:
                 # Input header with hint and vim mode indicator (above input)
                 with Horizontal(id="input_header"):
                     # Hint for submission (updated dynamically for vim mode)
-                    self._input_hint = Static("Enter to submit • Shift+Enter for new line • ? for help", id="input_hint")
+                    self._input_hint = Static("Enter to submit • Shift+Enter for new line • Ctrl+G help", id="input_hint")
                     yield self._input_hint
                     # Vim mode indicator (hidden by default)
                     self._vim_indicator = Static("", id="vim_indicator")
@@ -2722,7 +2754,8 @@ if TEXTUAL_AVAILABLE:
         def on_multi_line_input_submitted(self, event: MultiLineInput.Submitted) -> None:
             """Handle Enter in the multi-line input."""
             if event.input.id == "question_input":
-                self._submit_question()
+                # Pass the submitted value which has paste placeholders expanded
+                self._submit_question(event.value)
 
         @on(TextArea.Changed, "#question_input")
         def handle_question_input_changed(self, event: TextArea.Changed) -> None:
@@ -2768,15 +2801,31 @@ if TEXTUAL_AVAILABLE:
             if hasattr(self, "question_input"):
                 self.question_input.autocomplete_active = False
 
-        def _submit_question(self) -> None:
-            """Submit the current question text."""
-            text = self.question_input.text.strip()
+        def _submit_question(self, submitted_text: str | None = None) -> None:
+            """Submit the current question text.
+
+            Args:
+                submitted_text: Pre-processed text from Submitted event (with paste
+                    placeholders expanded). If None, reads from widget directly.
+            """
+            text = submitted_text.strip() if submitted_text else self.question_input.text.strip()
             tui_log(f"_submit_question called with text: '{text[:50]}...' (len={len(text)})")
             if not text:
                 tui_log("  Empty text, returning")
                 return
 
             self.question_input.clear()
+
+            # Auto-include CWD as context based on mode
+            if self._cwd_context_mode != "off" and not text.startswith("/"):
+                cwd = str(Path.cwd())
+                # Add @cwd with appropriate permission suffix
+                suffix = ":w" if self._cwd_context_mode == "write" else ""
+                cwd_ref = f"@{cwd}{suffix}"
+                # Prepend if not already present
+                if f"@{cwd}" not in text:
+                    text = f"{cwd_ref} {text}"
+                    tui_log(f"  Auto-prepended CWD context: {cwd_ref}")
 
             # Dismiss welcome screen on first real input
             if self._showing_welcome and not text.startswith("/"):
@@ -2992,7 +3041,7 @@ if TEXTUAL_AVAILABLE:
                 self._vim_indicator.remove_class("vim-normal-indicator")
                 self._vim_indicator.remove_class("vim-insert-indicator")
                 if hasattr(self, "_input_hint"):
-                    self._input_hint.update("Enter to submit • Shift+Enter for new line • ? for help")
+                    self._input_hint.update("Enter to submit • Shift+Enter for new line • Ctrl+G help")
             elif vim_normal:
                 # Normal mode
                 self._vim_indicator.update(" NORMAL ")
@@ -3468,6 +3517,14 @@ Type your question and press Enter to ask the agents.
             """Quit the application."""
             self.exit()
 
+        def action_toggle_cwd(self) -> None:
+            """Toggle CWD auto-include (Ctrl+P binding)."""
+            self._toggle_cwd_auto_include()
+
+        def action_show_help(self) -> None:
+            """Show help modal (Ctrl+/ binding)."""
+            self._show_help_modal()
+
         @keyboard_action
         def action_open_vote_results(self):
             """Open vote results modal."""
@@ -3666,18 +3723,50 @@ Type your question and press Enter to ask the agents.
             self._show_orchestrator_modal()
 
         def on_status_bar_cwd_clicked(self, event: StatusBarCwdClicked) -> None:
-            """Handle click on CWD in status bar - inserts path as context reference."""
-            # Insert @cwd_path into the input
-            cwd_context = f"@{event.cwd}"
+            """Handle CWD mode change from status bar click."""
+            self._cwd_context_mode = event.mode
+            # No toast - the visual update in the hint/status bar is enough
+
+        def _toggle_cwd_auto_include(self) -> None:
+            """Cycle CWD context mode: off → read → write → off (Ctrl+P)."""
+            # Cycle through modes
+            modes = ["off", "read", "write"]
+            current_idx = modes.index(self._cwd_context_mode)
+            self._cwd_context_mode = modes[(current_idx + 1) % len(modes)]
+
+            cwd = Path.cwd()
+            cwd_short = f"~/{cwd.name}" if len(str(cwd)) > 30 else str(cwd)
+
+            # Update status bar display if available
+            if self._status_bar:
+                self._status_bar._cwd_context_mode = self._cwd_context_mode
+                try:
+                    cwd_widget = self._status_bar.query_one("#status_cwd", Static)
+                    if self._cwd_context_mode == "read":
+                        cwd_widget.update(f"[green]📁 {cwd_short} \\[read][/]")
+                    elif self._cwd_context_mode == "write":
+                        cwd_widget.update(f"[green]📁 {cwd_short} \\[read+write][/]")
+                    else:
+                        cwd_widget.update(f"[dim]📁[/] {cwd_short}")
+                except Exception:
+                    pass
+
+            # Update welcome screen hint if showing
+            self._update_cwd_hint()
+
+        def _update_cwd_hint(self) -> None:
+            """Update the CWD hint display on welcome screen."""
             try:
-                input_area = self.query_one("#user_input", TextArea)
-                current = input_area.text
-                # If there's text, add a space before the path
-                if current and not current.endswith(" "):
-                    cwd_context = " " + cwd_context
-                input_area.text = current + cwd_context
-                input_area.focus()
-                self.notify(f"Added CWD as context: {event.cwd}", severity="information")
+                cwd = Path.cwd()
+                cwd_short = f"~/{cwd.name}" if len(str(cwd)) > 30 else str(cwd)
+                hint_widget = self.query_one("#cwd_hint", Static)
+                at_hint = "  •  @ for other paths"
+                if self._cwd_context_mode == "read":
+                    hint_widget.update(f"[green]● Ctrl+P: File access to {cwd_short} \\[r][/][dim]{at_hint}[/]")
+                elif self._cwd_context_mode == "write":
+                    hint_widget.update(f"[green]● Ctrl+P: File access to {cwd_short} \\[rw][/][dim]{at_hint}[/]")
+                else:
+                    hint_widget.update(f"[dim]○ Ctrl+P: File access to {cwd_short}{at_hint}[/]")
             except Exception:
                 pass
 
@@ -4320,7 +4409,12 @@ Type your question and press Enter to ask the agents.
             else:
                 yield Label(f"Ready with {len(self.agents_info)} agents", id="welcome_agents")
             yield Label("Type your question below to begin...", id="welcome_hint")
-            yield Label("Type /help for commands  •  Ctrl+C to quit", id="welcome_shortcuts_hint")
+            # CWD context hint - shows current mode, explains what it does
+            cwd = Path.cwd()
+            cwd_short = f"~/{cwd.name}" if len(str(cwd)) > 30 else str(cwd)
+            # Use fixed-width format: ○/● indicator + consistent text
+            yield Static(f"[dim]○ Ctrl+P: File access to {cwd_short}  •  @ for other paths[/]", id="cwd_hint")
+            yield Static("[dim]Ctrl+G help  •  Ctrl+C quit[/]", id="shortcuts_hint")
 
     class HeaderWidget(Static):
         """Compact header widget showing minimal branding and session info."""
@@ -4380,8 +4474,12 @@ Type your question and press Enter to ask the agents.
             """Show restart context - handled via status line."""
             pass  # Restart info shown via show_restart_banner  # Restart info shown via show_restart_banner
 
-    class AgentPanel(ScrollableContainer):
-        """Panel for individual agent output."""
+    class AgentPanel(Container):
+        """Panel for individual agent output.
+
+        Note: This is a Container, not ScrollableContainer. Scrolling happens
+        in the inner TimelineScrollContainer widget.
+        """
 
         def __init__(self, agent_id: str, display: TextualTerminalDisplay, key_index: int = 0):
             self.agent_id = agent_id
@@ -4798,6 +4896,10 @@ Type your question and press Enter to ask the agents.
                 self._add_presentation_content(normalized)
             elif content_type == "restart":
                 self._add_restart_content(content)
+            elif normalized.content_type == "injection":
+                self._add_injection_content(normalized)
+            elif normalized.content_type == "reminder":
+                self._add_reminder_content(normalized)
             elif normalized.content_type in ("thinking", "text"):
                 self._add_thinking_content(normalized, content_type)
             else:
@@ -4841,6 +4943,10 @@ Type your question and press Enter to ask the agents.
                 else:
                     # Tool completed/failed - update existing card
                     timeline.update_tool(tool_data.tool_id, tool_data)
+
+                    # Check if this is a Planning MCP tool and display TaskPlanCard
+                    if tool_data.status == "success":
+                        self._check_and_display_task_plan(tool_data, timeline)
 
                 # Update running tools count in status bar
                 self._update_running_tools_count()
@@ -4987,6 +5093,128 @@ Type your question and press Enter to ask the agents.
                         lambda line: self.content_log.write(Text(line)),
                     )
                     self.current_line_label.update(Text(self._line_buffer))
+
+        def _add_injection_content(self, normalized):
+            """Add injection content (cross-agent context sharing) to timeline.
+
+            Displays as a styled purple bar in the timeline.
+            """
+            if not normalized.should_display:
+                return
+
+            content = normalized.cleaned_content
+            # Truncate preview if very long
+            preview = content[:100] + "..." if len(content) > 100 else content
+            preview = preview.replace("\n", " ")
+
+            try:
+                timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
+                # Add as styled text with injection class
+                timeline.add_text(
+                    f"📥 Context Update: {preview}",
+                    style="bold",
+                    text_class="injection",
+                )
+            except Exception:
+                # Fallback to legacy RichLog
+                self.content_log.write(Text(f"📥 Context Update: {preview}", style="bold magenta"))
+
+        def _add_reminder_content(self, normalized):
+            """Add reminder content (high priority task reminders) to timeline.
+
+            Displays as a styled orange bar in the timeline.
+            """
+            if not normalized.should_display:
+                return
+
+            content = normalized.cleaned_content
+            # Truncate preview if very long
+            preview = content[:100] + "..." if len(content) > 100 else content
+            preview = preview.replace("\n", " ")
+
+            try:
+                timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
+                # Add as styled text with reminder class
+                timeline.add_text(
+                    f"💡 Reminder: {preview}",
+                    style="bold",
+                    text_class="reminder",
+                )
+            except Exception:
+                # Fallback to legacy RichLog
+                self.content_log.write(Text(f"💡 Reminder: {preview}", style="bold yellow"))
+
+        def _check_and_display_task_plan(self, tool_data, timeline) -> None:
+            """Check if tool result is from Planning MCP and display TaskPlanCard.
+
+            Planning MCP tools include:
+            - create_task_plan
+            - update_task_status
+            - add_task
+            - edit_task
+            - get_task_plan
+            """
+            import json
+
+            # Planning MCP tool names
+            PLANNING_TOOLS = {
+                "create_task_plan": "create",
+                "update_task_status": "update",
+                "add_task": "add",
+                "edit_task": "edit",
+                "get_task_plan": "get",
+            }
+
+            # Check if tool name matches a planning tool
+            tool_name = tool_data.tool_name.lower()
+            operation = None
+            for planning_tool, op in PLANNING_TOOLS.items():
+                if planning_tool in tool_name:
+                    operation = op
+                    break
+
+            if not operation:
+                return
+
+            # Try to parse the result as JSON to extract tasks
+            result = tool_data.result_full
+            if not result:
+                return
+
+            try:
+                result_data = json.loads(result)
+            except (json.JSONDecodeError, TypeError):
+                return
+
+            # Check if the result has task data
+            if not isinstance(result_data, dict):
+                return
+
+            # Extract tasks list
+            tasks = []
+            if "tasks" in result_data:
+                tasks = result_data["tasks"]
+            elif "plan" in result_data and isinstance(result_data["plan"], dict):
+                tasks = result_data["plan"].get("tasks", [])
+
+            if not tasks:
+                return
+
+            # Get focused task ID for update operations
+            focused_task_id = None
+            if operation in ("update", "edit") and "task" in result_data:
+                focused_task_id = result_data["task"].get("id")
+
+            # Create and add TaskPlanCard to timeline
+            from massgen.frontend.displays.textual_widgets import TaskPlanCard
+
+            card = TaskPlanCard(
+                tasks=tasks,
+                focused_task_id=focused_task_id,
+                operation=operation,
+                id=f"task_plan_{tool_data.tool_id}",
+            )
+            timeline.add_widget(card)
 
         def _clear_timeline(self):
             """Clear the timeline for a new session."""
@@ -5273,6 +5501,7 @@ Type your question and press Enter to ask the agents.
                             "[bold cyan]Input[/]\n"
                             "  [yellow]Enter[/]       Submit question\n"
                             "  [yellow]Shift+Enter[/] New line\n"
+                            "  [yellow]Ctrl+P[/]      File access (off→read→write)\n"
                             "  [yellow]Tab[/]         Next agent\n"
                             "  [yellow]Shift+Tab[/]   Previous agent\n"
                             "\n"

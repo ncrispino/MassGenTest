@@ -4927,6 +4927,21 @@ async def run_textual_interactive_mode(
             turn_num = session_info.get("current_turn", 0) + 1
             display.begin_turn(turn_num, question)
 
+            # Reconfigure logging for the turn (same as Rich mode)
+            setup_logging(debug=_DEBUG_MODE, turn=turn_num)
+
+            # Save execution metadata for this turn (same as Rich mode)
+            save_execution_metadata(
+                query=question,
+                config_path=config_path,
+                config_content=original_config,
+                cli_args={
+                    "mode": "textual_interactive",
+                    "turn": turn_num,
+                    "session_id": sess_id,
+                },
+            )
+
             # Run orchestration (won't call display.run_async due to interactive_mode)
             # Use coordinate_with_context if we have conversation history for multi-turn
             if conversation_history:
