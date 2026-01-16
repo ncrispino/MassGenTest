@@ -159,7 +159,7 @@ Recent Releases
 
 **v0.1.39 (January 16, 2026)** - Plan and Execute Workflow
 
-Complete plan-then-execute workflow with ``--plan-and-execute`` for autonomous planning and execution, ``--execute-plan`` to run existing plans, and ``--plan-depth`` control (shallow/medium/deep). Task verification workflow with ``verified`` status and verification groups for batch validation. Plan storage system in ``.massgen/plans/`` with frozen snapshots and execution tracking. Response API function call message sanitization fixes.
+Complete plan-then-execute workflow with ``--plan-and-execute`` for autonomous planning and execution, ``--execute-plan`` to run existing plans. Task verification workflow with ``verified`` status and verification groups for batch validation. Plan storage system in ``.massgen/plans/`` with frozen snapshots and execution tracking. Response API function call message sanitization fixes.
 
 **v0.1.38 (January 15, 2026)** - Task Planning Mode & Two-Tier Workspace
 

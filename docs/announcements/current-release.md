@@ -9,7 +9,7 @@ After posting, update the social links below.
 
 We're excited to release MassGen v0.1.39, adding Plan and Execute Workflow! 🚀
 
-MassGen now supports a complete plan-then-execute workflow that separates "what to build" from "how to build it". Use `--plan-and-execute` to create a plan then immediately execute it, `--execute-plan` to run existing plans, and `--plan-depth` to control granularity. Task verification workflow distinguishes completed from verified work with batch verification groups. Plans are stored in `.massgen/plans/` with frozen snapshots and execution tracking.
+MassGen now supports a complete plan-then-execute workflow that separates "what to build" from "how to build it". Use `--plan-and-execute` to create a plan then immediately execute it, or `--execute-plan` to run existing plans. Task verification workflow distinguishes completed from verified work with batch verification groups. Plans are stored in `.massgen/plans/` with frozen snapshots and execution tracking.
 
 ## Install
 
@@ -33,14 +33,13 @@ Copy everything below this line, then append content from `feature-highlights.md
 
 We're excited to release MassGen v0.1.39, adding Plan and Execute Workflow! 🚀
 
-MassGen now supports a complete plan-then-execute workflow that separates "what to build" from "how to build it". Use `--plan-and-execute` to create a plan then immediately execute it, `--execute-plan` to run existing plans, and `--plan-depth` to control granularity. Task verification workflow distinguishes completed from verified work with batch verification groups. Plans are stored in `.massgen/plans/` with frozen snapshots and execution tracking.
+MassGen now supports a complete plan-then-execute workflow that separates "what to build" from "how to build it". Use `--plan-and-execute` to create a plan then immediately execute it, or `--execute-plan` to run existing plans. Task verification workflow distinguishes completed from verified work with batch verification groups. Plans are stored in `.massgen/plans/` with frozen snapshots and execution tracking.
 
 **Key Features:**
 
-**Plan and Execute Workflow** - Three planning modes for flexible execution:
+**Plan and Execute Workflow** - Flexible planning and execution modes:
 - `--plan-and-execute`: Create plan then immediately execute it
 - `--execute-plan <id|path|latest>`: Execute existing plans without re-planning
-- `--plan-depth <shallow|medium|deep>`: Control granularity (5-10, 20-50, or 100-200+ tasks)
 - `--broadcast <human|agents|false>`: Control planning collaboration
 
 **Task Verification Workflow** - Distinguish implementation from validation:

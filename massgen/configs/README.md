@@ -245,12 +245,8 @@ pip install --upgrade massgen
 uv run massgen --plan-and-execute --plan-depth medium \
   "Build a REST API for a todo application"
 
-# Execute an existing plan without re-planning
-uv run massgen --execute-plan latest "Continue with the implementation"
-
-# Plan only (review before running)
-uv run massgen --plan --plan-depth deep \
-  "Create a user authentication system with OAuth support"
+# Execute an existing plan (prompt auto-fills from plan)
+uv run massgen --execute-plan latest
 ```
 
 ### v0.1.38

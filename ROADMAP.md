@@ -43,7 +43,7 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 | Release | Target | Feature | Owner | Use Case |
 |---------|--------|---------|-------|----------|
 | **v0.1.40** | 01/19/26 | OpenAI Responses /compact Endpoint | @ncrispino | Use OpenAI's native compact endpoint instead of custom summarization |
-| | | @filename Syntax for Inline Context Paths | @ncrispino | Include files/directories as context using `@path` in prompts |
+| | | TUI Production Upgrade | @ncrispino | Migrate to Textual as primary terminal interface |
 | **v0.1.41** | 01/21/26 | Integrate Smart Semantic Search | @ncrispino | Advanced semantic search capabilities for improved retrieval |
 | | | Add Model Selector for Log Analysis | @ncrispino | Choose model for `massgen logs analyze` self-analysis mode |
 | **v0.1.42** | 01/24/26 | Improve Log Sharing and Analysis | @ncrispino | Enhanced log sharing workflows and analysis tools |
@@ -90,7 +90,7 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 
 ---
 
-## 📋 v0.1.40 - OpenAI Compact Endpoint & @filename Syntax
+## 📋 v0.1.40 - OpenAI Compact Endpoint & TUI Production Upgrade
 
 ### Features
 
@@ -100,16 +100,16 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
 - Leverage API-level context compression for better efficiency
 - **Use Case**: Reduce token usage and improve response quality with native compression
 
-**2. @filename Syntax for Inline Context Paths** (@ncrispino)
-- Issue: [#767](https://github.com/massgen/MassGen/issues/767)
-- Add `@path/to/file` syntax to include files/directories as read-only context
-- Smart directory consolidation when 3+ sibling files referenced
-- Works with both CLI and programmatic API
-- **Use Case**: Easily include context files in prompts without modifying YAML config
+**2. TUI Production Upgrade** (@ncrispino)
+- Issue: [#778](https://github.com/massgen/MassGen/issues/778)
+- Migrate to Textual as primary terminal interface
+- Replace rich_terminal with production-ready Textual TUI
+- Improved stability, layout, and user experience
+- **Use Case**: Professional-grade terminal interface for daily use
 
 ### Success Criteria
 - ✅ OpenAI compact endpoint integration working
-- ✅ @filename syntax parsing and context path inclusion working
+- ✅ Textual TUI as default terminal interface
 
 ---
 
@@ -698,7 +698,7 @@ These features are being actively developed on **separate parallel tracks** and 
 ### Track: Plan and Execute Workflow (@ncrispino, nickcrispino)
 - PR: [#794](https://github.com/massgen/MassGen/pull/794)
 - Complete plan-then-execute workflow separating "what to build" from "how to build it"
-- `--plan-and-execute`, `--execute-plan`, and `--plan-depth` CLI options
+- `--plan-and-execute` and `--execute-plan` CLI options
 - Task verification workflow with `verified` status and verification groups
 - Plan storage system in `.massgen/plans/` with frozen snapshots
 - **Status:** ✅ Completed in v0.1.39

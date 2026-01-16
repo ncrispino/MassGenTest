@@ -174,12 +174,8 @@ pip install --upgrade massgen
 uv run massgen --plan-and-execute --plan-depth medium \
   "Build a REST API for a todo application"
 
-# Execute an existing plan (from previous --plan or --plan-and-execute run)
-uv run massgen --execute-plan latest "Continue with the implementation"
-
-# Plan only (no execution) - review before running
-uv run massgen --plan --plan-depth deep \
-  "Create a user authentication system with OAuth support"
+# Execute an existing plan (prompt auto-fills from plan)
+uv run massgen --execute-plan latest
 ```
 
 → [See full release history and examples](massgen/configs/README.md#release-history--examples)
@@ -1221,7 +1217,6 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 #### Plan and Execute Workflow
 - **Autonomous Execution**: `--plan-and-execute` creates a structured plan then immediately executes it
 - **Execute Existing Plans**: `--execute-plan <id|path|latest>` runs saved plans without re-planning
-- **Plan Depth Control**: `--plan-depth` options (shallow/medium/deep) for 5-10, 20-50, or 100-200+ tasks
 
 #### Task Verification System
 - **Verified Status**: New `verified` status distinguishing implementation from validation
@@ -1460,15 +1455,15 @@ We welcome community contributions to achieve these goals.
 
 ### v0.1.40 Roadmap
 
-Version 0.1.40 focuses on OpenAI Responses API improvements and inline context syntax:
+Version 0.1.40 focuses on OpenAI Responses API improvements and TUI production upgrade:
 
 #### Planned Features
 - **OpenAI Responses /compact Endpoint** (@ncrispino): Use OpenAI's native `/compact` endpoint for context compression instead of custom summarization
-- **@filename Syntax for Inline Context Paths** (@ncrispino): Add `@path/to/file` syntax to include files/directories as read-only context in prompts
+- **TUI Production Upgrade** (@ncrispino): Migrate to Textual as primary terminal interface for improved stability and UX
 
 Key technical approach:
 - **Native Context Compression**: Leverage OpenAI's API-level compression for better token efficiency
-- **Inline File References**: Parse `@path` patterns from prompts, validate paths, merge with YAML config
+- **Textual TUI**: Professional-grade terminal interface with improved layout and streaming display
 
 For detailed milestones and technical specifications, see the [full v0.1.40 roadmap](ROADMAP_v0.1.40.md).
 

@@ -2,18 +2,18 @@
 
 ## Overview
 
-Version 0.1.40 focuses on OpenAI Responses API improvements and inline context path syntax.
+Version 0.1.40 focuses on OpenAI Responses API improvements and TUI production upgrade.
 
 - **OpenAI Responses /compact Endpoint** (Required): Use OpenAI's native `/compact` endpoint instead of custom summarization
-- **@filename Syntax for Inline Context Paths** (Required): Add `@path/to/file` syntax to include files/directories as read-only context in prompts
+- **TUI Production Upgrade** (Required): Migrate to Textual as primary terminal interface
 
 ## Key Technical Priorities
 
 1. **OpenAI Responses /compact Endpoint**: Leverage API-level context compression for better efficiency
    **Use Case**: Reduce token usage and improve response quality with native compression
 
-2. **@filename Syntax for Inline Context Paths**: Include files/directories as context using `@path` in prompts
-   **Use Case**: Easily include context files in prompts without modifying YAML config
+2. **TUI Production Upgrade**: Migrate to Textual as primary terminal interface
+   **Use Case**: Professional-grade terminal interface for daily use
 
 ## Key Milestones
 
@@ -51,45 +51,43 @@ Version 0.1.40 focuses on OpenAI Responses API improvements and inline context p
 
 ---
 
-### Milestone 2: @filename Syntax for Inline Context Paths (REQUIRED)
+### Milestone 2: TUI Production Upgrade (REQUIRED)
 
-**Goal**: Add `@path/to/file` syntax to include files/directories as read-only context in prompts
+**Goal**: Migrate to Textual as primary terminal interface
 
 **Owner**: @ncrispino (nickcrispino on Discord)
 
-**Issue**: [#767](https://github.com/massgen/MassGen/issues/767)
+**Issue**: [#778](https://github.com/massgen/MassGen/issues/778)
 
-#### 2.1 Parser Implementation
-- [ ] Extract `@path` patterns from prompt text
-- [ ] Remove `@path` from prompt before sending to agents
-- [ ] Validate paths exist
-- [ ] Support relative and absolute paths
-- [ ] Handle escaped `@` with `\@`
+#### 2.1 Textual Migration
+- [ ] Set Textual TUI as default display type
+- [ ] Replace rich_terminal with Textual implementation
+- [ ] Ensure feature parity with existing terminal display
+- [ ] Handle graceful fallback for unsupported terminals
 
-#### 2.2 Context Path Builder
-- [ ] Convert `@` references to `context_paths` format
-- [ ] Merge with existing YAML config paths
-- [ ] Apply smart consolidation suggestions (3+ sibling files)
-- [ ] Support `@path/to/file.py` (file) and `@path/to/dir/` (directory)
+#### 2.2 Layout & UX Improvements
+- [ ] Optimize panel layouts for different screen sizes
+- [ ] Improve agent status visibility
+- [ ] Enhance streaming output display
+- [ ] Add keyboard shortcuts documentation
 
-#### 2.3 CLI Integration
-- [ ] Tab completion for `@` paths in interactive mode
-- [ ] Path existence feedback
-- [ ] Error messages for non-existent paths
+#### 2.3 Stability & Performance
+- [ ] Fix known Textual rendering issues
+- [ ] Optimize refresh rates for streaming
+- [ ] Handle terminal resize events
+- [ ] Reduce memory usage for long sessions
 
 #### 2.4 Testing & Documentation
-- [ ] Unit tests for path parsing
-- [ ] Integration tests with CLI and programmatic API
-- [ ] Update documentation with examples
-- [ ] Add edge case handling (email addresses, escaped @)
+- [ ] Unit tests for TUI components
+- [ ] Integration tests across terminal types
+- [ ] Update documentation with TUI usage
+- [ ] Add troubleshooting guide
 
 **Success Criteria**:
-- `@path/to/file` adds file as read-only context
-- `@path/to/dir/` adds directory as read-only context
-- Multiple `@` references work in single prompt
-- Paths validated before execution
-- Smart consolidation suggestion for 3+ sibling files
-- Works with both CLI and programmatic API
+- Textual TUI is default terminal interface
+- No regression in functionality from rich_terminal
+- Improved stability and user experience
+- Works across common terminal emulators
 
 ---
 
@@ -103,16 +101,16 @@ Version 0.1.40 focuses on OpenAI Responses API improvements and inline context p
 - [ ] Fallback for non-OpenAI backends works
 - [ ] No regression in response quality
 
-**@filename Syntax for Inline Context Paths:**
-- [ ] Path parsing works correctly
-- [ ] Context paths merged with YAML config
-- [ ] Smart directory consolidation implemented
-- [ ] Documentation complete with examples
+**TUI Production Upgrade:**
+- [ ] Textual TUI is default display type
+- [ ] Feature parity with rich_terminal
+- [ ] Stable across terminal emulators
+- [ ] Documentation complete
 
 ### Performance Requirements
 - [ ] Token usage reduced with compact endpoint
 - [ ] No performance degradation in existing workflows
-- [ ] Path parsing is fast and efficient
+- [ ] TUI responsive during heavy streaming
 
 ### Quality Requirements
 - [ ] All tests passing
@@ -126,11 +124,11 @@ Version 0.1.40 focuses on OpenAI Responses API improvements and inline context p
 
 ### Dependencies
 - **OpenAI Compact Endpoint**: OpenAI API access, Responses API support
-- **@filename Syntax**: Existing `context_paths` infrastructure
+- **TUI Production Upgrade**: Textual library, terminal compatibility
 
 ### Risks & Mitigations
 1. **API Changes**: *Mitigation*: Monitor OpenAI API updates, implement version checks
-2. **Path Edge Cases**: *Mitigation*: Handle email addresses, escaped @, and special characters
+2. **Terminal Compatibility**: *Mitigation*: Test across common terminals, provide fallback
 3. **Backend Compatibility**: *Mitigation*: Implement proper fallback for non-OpenAI backends
 
 ---
@@ -158,7 +156,7 @@ Version 0.1.40 focuses on OpenAI Responses API improvements and inline context p
 | Phase | Focus | Key Deliverables | Owner | Priority |
 |-------|-------|------------------|-------|----------|
 | Phase 1 | OpenAI Compact Endpoint | API integration, token savings | @ncrispino | **REQUIRED** |
-| Phase 2 | @filename Syntax | Path parsing, context inclusion | @ncrispino | **REQUIRED** |
+| Phase 2 | TUI Production Upgrade | Textual migration, stability | @ncrispino | **REQUIRED** |
 
 **Target Release**: January 19, 2026 (Sunday @ 9am PT)
 
@@ -175,27 +173,26 @@ Version 0.1.40 focuses on OpenAI Responses API improvements and inline context p
 4. Test with various conversation lengths
 5. Benchmark token savings
 
-**@filename Syntax for Inline Context Paths:**
-1. Review existing `context_paths` implementation
-2. Implement path parser in `cli.py` or new module
-3. Add path validation and error handling
-4. Implement smart directory consolidation
-5. Update documentation with examples
+**TUI Production Upgrade:**
+1. Review existing Textual TUI implementation
+2. Set Textual as default display type
+3. Test across terminal emulators
+4. Fix stability issues
+5. Update documentation
 
 ### For Users
 
-- v0.1.40 brings API improvements and new prompt syntax:
+- v0.1.40 brings API improvements and TUI upgrade:
 
   **OpenAI Responses /compact Endpoint:**
   - Native context compression via OpenAI API
   - Reduced token usage
   - Better response quality
 
-  **@filename Syntax:**
-  - Include files in prompts: `massgen "Analyze @src/utils.py"`
-  - Include directories: `massgen "Review @src/"`
-  - Multiple files: `massgen "Compare @old.py with @new.py"`
-  - Smart consolidation for 3+ sibling files
+  **TUI Production Upgrade:**
+  - Professional Textual-based terminal interface
+  - Improved stability and layout
+  - Better streaming display
 
 ---
 
@@ -209,11 +206,11 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for:
 
 **Contact Track Owner:**
 - OpenAI Compact Endpoint: @ncrispino on Discord (nickcrispino)
-- @filename Syntax: @ncrispino on Discord (nickcrispino)
+- TUI Production Upgrade: @ncrispino on Discord (nickcrispino)
 
 ---
 
-*This roadmap reflects v0.1.40 priorities focusing on OpenAI compact endpoint and @filename syntax for inline context paths.*
+*This roadmap reflects v0.1.40 priorities focusing on OpenAI compact endpoint and TUI production upgrade.*
 
-**Last Updated:** January 16, 2026
+**Last Updated:** January 17, 2026
 **Maintained By:** MassGen Team
