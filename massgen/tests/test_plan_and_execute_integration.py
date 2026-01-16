@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from massgen.plan_storage import PlanSession, PlanStorage
+from massgen.plan_storage import PlanStorage
 
 
 class TestWorkspaceCopying:
@@ -271,61 +271,6 @@ class TestPlanAndExecuteWorkflow:
         assert "tasks/plan.json" in prompt  # References task plan location
         assert "AUTO-LOADED" in prompt  # Plan is auto-loaded
         assert "planning_docs" in prompt  # References supporting docs
-
-
-class TestPlanReportCommand:
-    """Test --plan-report CLI command."""
-
-    @pytest.fixture
-    def temp_plans_dir(self, monkeypatch, tmp_path):
-        """Create temporary plans directory for testing."""
-        temp_path = tmp_path / ".massgen" / "plans"
-        temp_path.mkdir(parents=True)
-        monkeypatch.setattr("massgen.plan_storage.PLANS_DIR", temp_path)
-        return temp_path
-
-    def test_plan_report_latest(self, temp_plans_dir):
-        """Test --plan-report latest retrieves most recent plan."""
-        storage = PlanStorage()
-
-        # Create a plan with all required files
-        session = storage.create_plan("test_sess", "/tmp/logs")
-
-        # Add required plan files (plan.json - as it would be after finalize rename)
-        plan_data = {"tasks": [{"id": "T001", "description": "Test", "status": "completed"}]}
-        (session.workspace_dir / "plan.json").write_text(json.dumps(plan_data))
-        (session.frozen_dir / "plan.json").write_text(json.dumps(plan_data))
-
-        # Compute and save diff
-        diff = session.compute_plan_diff()
-        session.diff_file.write_text(json.dumps(diff, indent=2))
-
-        # Get latest plan
-        latest = storage.get_latest_plan()
-        assert latest is not None
-        assert latest.plan_id == session.plan_id
-
-        # Generate report
-        report = latest.generate_adherence_report()
-        assert "Plan Adherence Report" in report
-
-    def test_plan_report_specific_id(self, temp_plans_dir):
-        """Test --plan-report with specific plan ID."""
-        storage = PlanStorage()
-
-        # Create plan
-        session = storage.create_plan("specific_test", "/tmp/logs")
-        plan_id = session.plan_id
-
-        # Retrieve by ID
-        retrieved = PlanSession(plan_id)
-        assert retrieved.plan_dir.exists()
-        assert retrieved.plan_id == plan_id
-
-    def test_plan_report_not_found(self, temp_plans_dir):
-        """Test --plan-report with non-existent plan ID."""
-        session = PlanSession("nonexistent_plan_id")
-        assert not session.plan_dir.exists()
 
 
 @pytest.mark.asyncio

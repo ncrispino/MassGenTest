@@ -536,9 +536,7 @@ Write `project_plan.json` with this structure:
 
 ### Metadata Fields (Optional but Recommended)
 - **verification**: What to check - testable completion criteria (e.g., "Homepage displays correctly", "API returns 200")
-- **verification_method**: How to verify **automatically** - must be executable without human intervention:
-  - GOOD: "run `npm run build` and check exit code", "capture screenshot and analyze for layout errors", "run `pytest` and verify all pass"
-  - BAD: "open browser and visually inspect", "manually check the UI", "ask user to verify"
+- **verification_method**: Automated verification approach (no manual human steps). Can check both correctness (builds, tests, API responses) and quality (visual analysis, output review).
 - **verification_group**: Group related tasks for batch verification (e.g., "foundation", "frontend_ui", "api_endpoints").
   During execution, tasks are marked `completed` then later `verified` in groups.
 
@@ -5995,8 +5993,13 @@ If you see a CURRENT_ANSWER that's excellent and you want to build on it:
 If no agent is fully complete with quality work, continue your own implementation rather than voting for incomplete work.
 """
 
-    # Append guidance to each agent's system message
-    for agent_cfg in exec_config.get("agents", []):
+    # Append guidance to each agent's system message (handle both single and multi-agent configs)
+    if "agents" in exec_config:
+        for agent_cfg in exec_config["agents"]:
+            existing_msg = agent_cfg.get("system_message", "")
+            agent_cfg["system_message"] = existing_msg + plan_execution_guidance
+    elif "agent" in exec_config:
+        agent_cfg = exec_config["agent"]
         existing_msg = agent_cfg.get("system_message", "")
         agent_cfg["system_message"] = existing_msg + plan_execution_guidance
 
@@ -6065,13 +6068,19 @@ If no agent is fully complete with quality work, continue your own implementatio
             winning_agent = agents[winning_agent_id]
             if hasattr(winning_agent.backend, "filesystem_manager") and winning_agent.backend.filesystem_manager:
                 winner_workspace = Path(winning_agent.backend.filesystem_manager.cwd)
-                winner_plan = winner_workspace / "plan"
 
-                if winner_plan.exists():
-                    # Overwrite workspace with winning agent's modified plan
-                    if plan_session.workspace_dir.exists():
-                        shutil.rmtree(plan_session.workspace_dir)
-                    shutil.copytree(winner_plan, plan_session.workspace_dir)
+                # Look for plan.json: agents work with tasks/plan.json during execution
+                winner_plan_file = winner_workspace / "tasks" / "plan.json"
+                if not winner_plan_file.exists():
+                    # Fallback to workspace root
+                    winner_plan_file = winner_workspace / "plan.json"
+
+                if winner_plan_file.exists():
+                    # Copy winning agent's modified plan.json to workspace_dir/plan.json
+                    # This is needed for compute_plan_diff() which compares workspace/plan.json vs frozen/plan.json
+                    plan_session.workspace_dir.mkdir(parents=True, exist_ok=True)
+                    dest_plan_file = plan_session.workspace_dir / "plan.json"
+                    shutil.copy2(winner_plan_file, dest_plan_file)
                     logger.info(f"[ExecutePlan] Collected modified plan from {winning_agent_id}")
 
     # Compute plan diff
@@ -6144,15 +6153,10 @@ async def run_execute_plan(
 
     # Build question if not provided
     if question is None:
-        # Try to get context from planning docs
-        requirements_file = plan_session.frozen_dir / "requirements.md"
-        if requirements_file.exists():
-            question = "Execute the plan. See planning_docs/requirements.md for context."
-        else:
-            question = "Execute the plan in tasks/plan.json."
+        question = "Execute the plan in tasks/plan.json."
 
     # Run execution phase
-    final_answer, diff = await _execute_plan_phase(
+    final_answer, _ = await _execute_plan_phase(
         config=config,
         plan_session=plan_session,
         question=question,
@@ -6207,13 +6211,13 @@ async def run_plan_and_execute(
 
     # Handle broadcast mode for automation
     # In automation mode, "human" broadcast doesn't work (no human to respond)
-    # Auto-switch to "agents" so agents can still clarify with each other
+    # Auto-switch to "false" for fully autonomous planning
     effective_broadcast_mode = broadcast_mode
     if automation and broadcast_mode == "human":
         console.print(
-            "[yellow]Note: Switching broadcast mode from 'human' to 'agents' for automation mode[/yellow]",
+            "[yellow]Note: Switching broadcast mode from 'human' to 'false' for automation mode[/yellow]",
         )
-        effective_broadcast_mode = "agents"
+        effective_broadcast_mode = "false"
 
     # Build planning subprocess command
     # Write config to temp file if not provided
@@ -6236,11 +6240,13 @@ async def run_plan_and_execute(
         effective_broadcast_mode,
         "--config",
         config_path,
-        question,
     ]
 
     if debug:
         cmd.append("--debug")
+
+    # Add end-of-options marker and question last, so question starting with '-' is treated as data
+    cmd.extend(["--", question])
 
     # Run planning subprocess
     logger.info(f"[PlanAndExecute] Starting planning subprocess: {' '.join(cmd)}")
@@ -6249,7 +6255,7 @@ async def run_plan_and_execute(
         process = subprocess.Popen(
             cmd,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=subprocess.STDOUT,  # Merge stderr into stdout to avoid deadlock
             text=True,
             bufsize=1,  # Line buffered
         )
@@ -6273,8 +6279,9 @@ async def run_plan_and_execute(
         process.wait()
 
         if process.returncode != 0:
-            stderr = process.stderr.read()
-            raise RuntimeError(f"Planning subprocess failed: {stderr}")
+            # stderr is merged into stdout, so show captured output
+            output = "".join(stdout_lines)
+            raise RuntimeError(f"Planning subprocess failed:\n{output}")
 
         if not log_dir:
             raise RuntimeError("Planning subprocess did not provide LOG_DIR")
@@ -6335,7 +6342,7 @@ async def run_plan_and_execute(
     console.print("\n[bold blue]═══ PHASE 2: EXECUTION ═══[/bold blue]")
 
     # Use shared execution phase implementation
-    final_answer, diff = await _execute_plan_phase(
+    final_answer, _ = await _execute_plan_phase(
         config=config,
         plan_session=plan_session,
         question=question,
@@ -6357,34 +6364,6 @@ async def main(args):
     if args.debug:
         logger.info("Debug mode enabled")
         logger.debug(f"Command line arguments: {vars(args)}")
-
-    # Handle --plan-report command (standalone, exits early)
-    if getattr(args, "plan_report", None):
-        from .plan_storage import PlanSession, PlanStorage
-
-        storage = PlanStorage()
-
-        if args.plan_report == "latest":
-            session = storage.get_latest_plan()
-            if not session:
-                print("No plans found in .massgen/plans/")
-                sys.exit(1)
-        else:
-            session = PlanSession(args.plan_report)
-            if not session.plan_dir.exists():
-                print(f"Plan not found: {args.plan_report}")
-                plans_dir = Path(".massgen/plans")
-                if plans_dir.exists():
-                    plan_dirs = list(plans_dir.glob("plan_*"))
-                    if plan_dirs:
-                        print("\nAvailable plans:")
-                        for plan_dir in sorted(plan_dirs, reverse=True)[:10]:
-                            print(f"  - {plan_dir.name.replace('plan_', '')}")
-                sys.exit(1)
-
-        report = session.generate_adherence_report()
-        print(report)
-        sys.exit(0)
 
     # Initialize streaming buffer saving if requested
     if args.save_streaming_buffers:
@@ -7595,12 +7574,6 @@ Environment Variables:
         help="Execute an existing plan. Provide the plan directory path (e.g., .massgen/plans/plan_20260115_173113_836955) "
         "or plan ID (e.g., 20260115_173113_836955) or 'latest' for most recent plan. "
         "Skips planning phase and runs execution directly from the frozen plan.",
-    )
-    parser.add_argument(
-        "--plan-report",
-        type=str,
-        metavar="PLAN_ID",
-        help="Generate adherence report for a completed plan session. " "Use 'latest' to get the most recent plan, or provide a specific plan ID (timestamp).",
     )
     parser.add_argument(
         "--no-session-registry",

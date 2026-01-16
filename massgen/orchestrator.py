@@ -3927,8 +3927,8 @@ Your answer:"""
             if total_tasks == 0:
                 return None
 
-            # Count by status
-            completed = sum(1 for t in tasks if t.get("status") == "completed")
+            # Count by status (verified tasks count as completed for progress)
+            completed = sum(1 for t in tasks if t.get("status") in ("completed", "verified"))
             in_progress = sum(1 for t in tasks if t.get("status") == "in_progress")
             pending = sum(1 for t in tasks if t.get("status") == "pending")
 

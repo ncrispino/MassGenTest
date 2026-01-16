@@ -107,38 +107,6 @@ class PlanSession:
 
         return diff
 
-    def generate_adherence_report(self) -> str:
-        """Generate human-readable plan adherence report."""
-        diff = json.loads(self.diff_file.read_text()) if self.diff_file.exists() else {}
-        metadata = self.load_metadata()
-
-        report = f"""# Plan Adherence Report
-
-## Plan Session: {self.plan_id}
-- Created: {metadata.created_at}
-- Status: {metadata.status}
-- Planning Session: {metadata.planning_session_id}
-- Execution Session: {metadata.execution_session_id or 'N/A'}
-
-## Divergence Analysis
-Overall Adherence: {100 - diff.get('divergence_score', 0) * 100:.1f}%
-
-### Tasks Added ({len(diff.get('tasks_added', []))})
-{"No tasks added" if not diff.get('tasks_added') else chr(10).join(f"- {t}" for t in diff['tasks_added'])}
-
-### Tasks Removed ({len(diff.get('tasks_removed', []))})
-{"No tasks removed" if not diff.get('tasks_removed') else chr(10).join(f"- {t}" for t in diff['tasks_removed'])}
-
-### Tasks Modified ({len(diff.get('tasks_modified', []))})
-"""
-
-        for mod in diff.get("tasks_modified", []):
-            report += f"\n#### {mod['id']}\n"
-            report += f"**Original**: {mod['original'].get('description', 'N/A')}\n"
-            report += f"**Modified**: {mod['modified'].get('description', 'N/A')}\n"
-
-        return report
-
 
 class PlanStorage:
     """Manages plan storage and retrieval."""

@@ -175,7 +175,13 @@ class TaskPlan:
             group: The verification_group name to check
 
         Returns:
-            Dictionary with counts of pending, in_progress, completed, and verified tasks
+            Dict containing:
+                - group (str): The verification_group name
+                - total (int): Total number of tasks in the group
+                - status_counts (dict): Counts per status with keys:
+                    pending, in_progress, completed, verified, blocked
+                - all_completed (bool): True if no tasks are pending, in_progress, or blocked
+                - all_verified (bool): True if all tasks have status "verified"
         """
         status_counts = {"pending": 0, "in_progress": 0, "completed": 0, "verified": 0, "blocked": 0}
         tasks_in_group = []

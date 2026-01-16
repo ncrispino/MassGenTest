@@ -26,10 +26,63 @@ from typing import Any, Dict, List, Optional, Union
 
 import fastmcp
 
-from massgen.mcp_tools.planning.planning_dataclasses import TaskPlan
+from massgen.mcp_tools.planning.planning_dataclasses import Task, TaskPlan
 
 # Setup logging for debugging
 logger = logging.getLogger(__name__)
+
+
+def _has_extended_task_fields(task_spec: Dict[str, Any]) -> bool:
+    """Check if task dict has extended fields beyond basic add_task parameters."""
+    extended_fields = {"status", "metadata", "verification_group", "completed_at", "verified_at", "created_at"}
+    return bool(extended_fields & set(task_spec.keys()))
+
+
+def _create_task_from_dict(task_spec: Dict[str, Any]) -> Task:
+    """Create a Task object from a dict, preserving all fields including extended ones."""
+    from datetime import datetime
+
+    task_id = task_spec.get("id") or str(uuid.uuid4())
+
+    # Parse timestamps if present
+    created_at = datetime.now()
+    if task_spec.get("created_at"):
+        try:
+            created_at = datetime.fromisoformat(task_spec["created_at"])
+        except (ValueError, TypeError):
+            pass
+
+    completed_at = None
+    if task_spec.get("completed_at"):
+        try:
+            completed_at = datetime.fromisoformat(task_spec["completed_at"])
+        except (ValueError, TypeError):
+            pass
+
+    verified_at = None
+    if task_spec.get("verified_at"):
+        try:
+            verified_at = datetime.fromisoformat(task_spec["verified_at"])
+        except (ValueError, TypeError):
+            pass
+
+    # Build metadata, including verification_group if present
+    metadata = task_spec.get("metadata", {}).copy()
+    if "verification_group" in task_spec and "verification_group" not in metadata:
+        metadata["verification_group"] = task_spec["verification_group"]
+
+    return Task(
+        id=task_id,
+        description=task_spec.get("description", ""),
+        status=task_spec.get("status", "pending"),
+        priority=task_spec.get("priority", "medium"),
+        created_at=created_at,
+        completed_at=completed_at,
+        verified_at=verified_at,
+        dependencies=task_spec.get("dependencies", task_spec.get("depends_on", [])),
+        metadata=metadata,
+    )
+
 
 # Global storage for task plans (keyed by agent_id)
 _task_plans: Dict[str, TaskPlan] = {}
@@ -133,7 +186,14 @@ def _load_plan_from_filesystem(agent_id: str) -> Optional[TaskPlan]:
                 # Handle both string tasks and dict tasks
                 if isinstance(task_spec, str):
                     plan.add_task(description=task_spec)
+                elif _has_extended_task_fields(task_spec):
+                    # Task has extended fields (status, metadata, verification_group, etc.)
+                    # Create Task directly to preserve all fields
+                    task = _create_task_from_dict(task_spec)
+                    plan.tasks.append(task)
+                    plan._task_index[task.id] = task
                 else:
+                    # Basic dict task - use add_task for validation
                     plan.add_task(
                         description=task_spec.get("description", ""),
                         task_id=task_spec.get("id"),
