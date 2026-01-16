@@ -497,6 +497,22 @@ Only after scope confirmation and sufficient research:
 (create_task_plan, update_task_status, etc.) to create this deliverable - those tools are for
 tracking your own internal work progress, not for creating the project plan deliverable.
 
+## Planning Principles
+
+**Focus on outcomes, not implementation details.** Describe WHAT the final product needs, not HOW to build it. Implementation choices happen during execution.
+
+**Think about final product quality:**
+- If it's visual, it should LOOK good - include quality visuals, not just code
+- If it produces output, that output should be polished and professional
+- Consider what a user/viewer would actually experience
+
+**Verification should test the PRODUCT FIRST, then source code:**
+1. Does the final product work? (run it, use it, see it)
+2. Does it look/feel right? (visual quality, UX)
+3. Only then: is the code correct? (builds, tests pass)
+
+**Tasks should be achievable with the available tools.** Executing agents will have access to the configured tools and will figure out how to use them.
+
 ## Task List Format
 Write `project_plan.json` with this structure:
 ```json
@@ -504,13 +520,13 @@ Write `project_plan.json` with this structure:
   "tasks": [
     {{
       "id": "F001",
-      "description": "Feature Name - What this feature does and how to implement it",
+      "description": "Feature Name - What this feature accomplishes and the expected outcome",
       "status": "pending",
       "depends_on": ["F000"],
       "priority": "high|medium|low",
       "metadata": {{
         "verification": "How to verify this task is complete",
-        "verification_method": "How to perform verification (e.g., 'run pytest', 'open browser to localhost:3000', 'check image output')",
+        "verification_method": "Automated verification approach",
         "verification_group": "optional_group_name"
       }}
     }}
@@ -520,8 +536,11 @@ Write `project_plan.json` with this structure:
 
 ### Metadata Fields (Optional but Recommended)
 - **verification**: What to check - testable completion criteria (e.g., "Homepage displays correctly", "API returns 200")
-- **verification_method**: How to check - the approach or command (e.g., "run `npm test`", "open browser and inspect", "analyze screenshot")
-- **verification_group**: Group related tasks for batch verification (e.g., "frontend_pages", "api_endpoints")
+- **verification_method**: How to verify **automatically** - must be executable without human intervention:
+  - GOOD: "run `npm run build` and check exit code", "capture screenshot and analyze for layout errors", "run `pytest` and verify all pass"
+  - BAD: "open browser and visually inspect", "manually check the UI", "ask user to verify"
+- **verification_group**: Group related tasks for batch verification (e.g., "foundation", "frontend_ui", "api_endpoints").
+  During execution, tasks are marked `completed` then later `verified` in groups.
 
 ## Depth: {plan_depth.upper()}
 - Target: {cfg["target"]} features/tasks
@@ -5904,6 +5923,46 @@ Your task plan is already loaded. Use MCP planning tools to track progress:
 4. **Complete a task**: `update_task_status("T001", "completed", "How you completed it")`
 
 Supporting docs from planning phase are in `planning_docs/` for reference.
+
+### CRITICAL: Verification Workflow
+
+**Do NOT just write code and mark tasks complete. You MUST verify your work actually runs.**
+
+#### Task Status Flow
+- `pending` → `in_progress` → `completed` → `verified`
+- **completed**: Implementation is done (code written)
+- **verified**: Task has been tested and confirmed working
+
+#### How to Use Verification
+1. Mark task `completed` when implementation is done
+2. At logical checkpoints, verify groups of completed tasks together
+3. Mark tasks `verified` after verification passes
+
+#### Verification Checkpoints (when to verify)
+Tasks have `verification_group` labels (e.g., "foundation", "frontend_ui", "api"). Verify when:
+
+1. **After completing all tasks in a verification_group** - e.g., after all "foundation" tasks, run `npm run dev`
+2. **After major milestones** - e.g., project setup, feature completion
+3. **Before declaring work complete** - Run full build (`npm run build`)
+
+Use `get_task_plan()` to see tasks grouped by `verification_group` under `verification_groups`.
+
+#### Verification Commands
+Tasks have `verification_method` in metadata - USE IT:
+```
+update_task_status("F001", "completed", "Created Next.js project")
+# ... complete more foundation tasks ...
+# Verify the group:
+# npm run dev → works!
+update_task_status("F001", "verified", "Dev server runs on localhost:3000")
+```
+
+**A task should NOT be marked `verified` if:**
+- The code doesn't compile/build
+- The dev server crashes on startup
+- The feature doesn't render or function as described
+
+Fix issues before marking as verified.
 
 ### Evaluating CURRENT_ANSWERS
 

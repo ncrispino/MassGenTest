@@ -556,20 +556,28 @@ async def create_server() -> fastmcp.FastMCP:
         """
         Update the status of a task.
 
+        Status flow: pending -> in_progress -> completed -> verified
+        - 'completed': Implementation is done, but may need verification
+        - 'verified': Task has been tested and confirmed working
+
         Args:
             task_id: ID of task to update
-            status: New status (pending/in_progress/completed/blocked)
-            completion_notes: Optional notes documenting how the task was completed (recommended for completed status)
+            status: New status (pending/in_progress/completed/verified/blocked)
+            completion_notes: Optional notes (for 'completed': how it was done; for 'verified': what was tested)
 
         Returns:
             Dictionary with updated task details and newly ready tasks
 
         Example:
-            update_task_status("research_oauth", "completed", "Reviewed OAuth 2.0 spec and compared providers")
+            # Mark task as completed
+            update_task_status("setup_project", "completed", "Created Next.js app with Tailwind")
+
+            # Later, after verification passes
+            update_task_status("setup_project", "verified", "npm run build passes, dev server runs")
         """
         try:
             # Validate status
-            valid_statuses = ["pending", "in_progress", "completed", "blocked"]
+            valid_statuses = ["pending", "in_progress", "completed", "verified", "blocked"]
             if status not in valid_statuses:
                 raise ValueError(
                     f"Invalid status '{status}'. Must be one of: {valid_statuses}",
@@ -656,12 +664,14 @@ async def create_server() -> fastmcp.FastMCP:
             plan = get_task_plan()
             print(f"Total tasks: {plan['summary']['total_tasks']}")
             print(f"Ready tasks: {plan['summary']['ready_tasks']}")
+            print(f"Awaiting verification: {plan['summary']['awaiting_verification']}")
         """
         try:
             plan = _get_or_create_plan(mcp.agent_id, mcp.orchestrator_id)
 
             ready_tasks = plan.get_ready_tasks()
             blocked_tasks = plan.get_blocked_tasks()
+            awaiting_verification = plan.get_tasks_awaiting_verification()
 
             return {
                 "success": True,
@@ -670,10 +680,13 @@ async def create_server() -> fastmcp.FastMCP:
                 "summary": {
                     "total_tasks": len(plan.tasks),
                     "completed_tasks": sum(1 for t in plan.tasks if t.status == "completed"),
+                    "verified_tasks": sum(1 for t in plan.tasks if t.status == "verified"),
                     "in_progress_tasks": sum(1 for t in plan.tasks if t.status == "in_progress"),
                     "ready_tasks": len(ready_tasks),
                     "blocked_tasks": len(blocked_tasks),
+                    "awaiting_verification": sum(len(tasks) for tasks in awaiting_verification.values()),
                 },
+                "verification_groups": {group: [t.to_dict() for t in tasks] for group, tasks in awaiting_verification.items()},
             }
 
         except Exception as e:
