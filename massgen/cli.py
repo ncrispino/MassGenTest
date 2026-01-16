@@ -6888,11 +6888,27 @@ async def main(args):
             from rich.console import Console
             from rich.panel import Panel
 
+            # Default broadcast to "false" for plan-and-execute (batch workflow)
+            # "human" broadcast is not supported because planning runs as subprocess with piped I/O
+            broadcast = getattr(args, "broadcast", None)
+            if broadcast == "human":
+                print("❌ --broadcast human is not currently supported with --plan-and-execute")
+                print("   Planning runs as a subprocess and cannot receive human input.")
+                print("")
+                print("   For human interaction, run planning and execution separately:")
+                print('     1. uv run massgen --plan --broadcast human "your task"')
+                print("     2. uv run massgen --execute-plan latest")
+                print("")
+                print("   Or use --broadcast false (default) or --broadcast agents for autonomous mode.")
+                sys.exit(1)
+            if broadcast is None:
+                broadcast = "false"
+
             final_answer, plan_session = await run_plan_and_execute(
                 config=config,
                 question=args.question,
                 plan_depth=getattr(args, "plan_depth", "medium") or "medium",
-                broadcast_mode=getattr(args, "broadcast", "human") or "human",
+                broadcast_mode=broadcast,
                 automation=args.automation,
                 debug=args.debug,
                 config_path=str(resolved_path) if resolved_path else None,
