@@ -292,6 +292,38 @@ class ToolCallCard(Static):
         self._subagent_tasks: list[dict] = []  # Parsed subagent task list
         self._workspace_content: Optional[str] = None  # Subagent workspace output
 
+        # Timer for updating elapsed time while running
+        self._elapsed_timer = None
+
+    def on_mount(self) -> None:
+        """Start the elapsed time timer when mounted."""
+        if self._status == "running":
+            self._start_elapsed_timer()
+
+    def on_unmount(self) -> None:
+        """Stop the timer when unmounted."""
+        self._stop_elapsed_timer()
+
+    def _start_elapsed_timer(self) -> None:
+        """Start periodic refresh for elapsed time display."""
+        if self._elapsed_timer is None:
+            # Update every 100ms for smooth display
+            self._elapsed_timer = self.set_interval(0.1, self._refresh_elapsed)
+
+    def _stop_elapsed_timer(self) -> None:
+        """Stop the elapsed time timer."""
+        if self._elapsed_timer is not None:
+            self._elapsed_timer.stop()
+            self._elapsed_timer = None
+
+    def _refresh_elapsed(self) -> None:
+        """Refresh the display to update elapsed time."""
+        if self._status == "running":
+            self.refresh()
+        else:
+            # Tool completed, stop the timer
+            self._stop_elapsed_timer()
+
     def render(self) -> Text:
         """Render the card as a single-line summary."""
         if self._is_subagent:
@@ -569,6 +601,7 @@ class ToolCallCard(Static):
         self._result = result
         self._result_full = result_full if result_full else result
         self._end_time = datetime.now()
+        self._stop_elapsed_timer()  # Stop the timer now that tool is complete
         self.remove_class("status-running")
         self.add_class("status-success")
         self.refresh()
@@ -582,6 +615,7 @@ class ToolCallCard(Static):
         self._status = "error"
         self._error = error
         self._end_time = datetime.now()
+        self._stop_elapsed_timer()  # Stop the timer now that tool is complete
         self.remove_class("status-running")
         self.add_class("status-error")
         self.refresh()

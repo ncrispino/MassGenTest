@@ -742,18 +742,12 @@ class TimelineSection(Vertical):
             # Skip the scroll indicator and truncation notice if present
             content_children = [c for c in children if "scroll-indicator" not in c.classes and "truncation-notice" not in c.classes]
 
-            # Debug logging
-            from massgen.frontend.displays.textual_terminal_display import tui_log
-
-            tui_log(f"_trim_old_items: {len(content_children)} children, max={self.MAX_TIMELINE_ITEMS}")
-
-            # Now check if we still exceed the limit
+            # Check if we exceed the limit
             if len(content_children) <= self.MAX_TIMELINE_ITEMS:
                 return
 
             # Calculate how many to remove
             items_to_remove = len(content_children) - self.MAX_TIMELINE_ITEMS
-            tui_log(f"_trim_old_items: need to remove {items_to_remove} items")
 
             if items_to_remove <= 0:
                 return
@@ -774,31 +768,24 @@ class TimelineSection(Vertical):
 
             # Remove the oldest items (from the beginning of the list)
             removed_count = 0
-            children_before = len(list(container.children))
             for child in content_children[:items_to_remove]:
                 # Don't remove tool cards that might still be running
                 if hasattr(child, "tool_id") and child.tool_id in self._tools:
                     tool_card = self._tools.get(child.tool_id)
                     if tool_card and hasattr(tool_card, "_status") and tool_card._status == "running":
-                        tui_log(f"_trim_old_items: skipping running tool {child.tool_id}")
                         continue
                     # Remove from tools dict
                     self._tools.pop(child.tool_id, None)
                 child.remove()
                 removed_count += 1
 
-            children_after = len(list(container.children))
-            tui_log(f"_trim_old_items: removed {removed_count} items (children: {children_before} -> {children_after})")
-
+            # NOTE: Don't decrement _item_count - it's used for unique widget IDs
+            # and must be monotonically increasing to avoid duplicate IDs
             if removed_count > 0:
-                # NOTE: Don't decrement _item_count - it's used for unique widget IDs
-                # and must be monotonically increasing to avoid duplicate IDs
                 container.refresh(layout=True)
 
-        except Exception as e:
-            from massgen.frontend.displays.textual_terminal_display import tui_log
-
-            tui_log(f"_trim_old_items ERROR: {e}")
+        except Exception:
+            pass
 
     def add_tool(self, tool_data: ToolDisplayData) -> ToolCallCard:
         """Add a tool card to the timeline.

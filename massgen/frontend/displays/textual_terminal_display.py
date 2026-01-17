@@ -2749,9 +2749,6 @@ if TEXTUAL_AVAILABLE:
                     "size": {"width": widget.size.width, "height": widget.size.height} if hasattr(widget, "size") else None,
                     "region": {"x": widget.region.x, "y": widget.region.y, "width": widget.region.width, "height": widget.region.height} if hasattr(widget, "region") else None,
                     "content_size": {"width": widget.content_size.width, "height": widget.content_size.height} if hasattr(widget, "content_size") else None,
-                    "virtual_size": {"width": widget.virtual_size.width, "height": widget.virtual_size.height} if hasattr(widget, "virtual_size") else None,
-                    "scroll_y": widget.scroll_y if hasattr(widget, "scroll_y") else None,
-                    "max_scroll_y": widget.max_scroll_y if hasattr(widget, "max_scroll_y") else None,
                     "styles": {
                         "width": str(widget.styles.width) if hasattr(widget.styles, "width") else None,
                         "height": str(widget.styles.height) if hasattr(widget.styles, "height") else None,
@@ -2761,7 +2758,7 @@ if TEXTUAL_AVAILABLE:
                     },
                     "children": [],
                 }
-                if depth < 10:  # Limit depth (increased from 6 to see timeline children)
+                if depth < 6:  # Limit depth to avoid huge dumps
                     for child in widget.children:
                         info["children"].append(get_widget_info(child, depth + 1))
                 return info
@@ -2800,29 +2797,31 @@ if TEXTUAL_AVAILABLE:
                         }
                         # Get first and last few children for debugging
                         children = list(container.children)
-
-                        def get_child_info(child, idx):
-                            info = {
-                                "index": idx,
-                                "type": type(child).__name__,
-                                "id": child.id,
-                                "classes": list(child.classes),
-                                "size": {"width": child.size.width, "height": child.size.height},
-                                "region": {"y": child.region.y, "height": child.region.height},
-                            }
-                            # For Static widgets, try to get the renderable content
-                            if hasattr(child, "renderable"):
-                                content = str(child.renderable)[:100]  # First 100 chars
-                                info["content_preview"] = content if content else "(empty)"
-                            return info
-
                         for i, child in enumerate(children[:5]):  # First 5
-                            ts_info["container"]["children"].append(get_child_info(child, i))
+                            ts_info["container"]["children"].append(
+                                {
+                                    "index": i,
+                                    "type": type(child).__name__,
+                                    "id": child.id,
+                                    "classes": list(child.classes),
+                                    "size": {"width": child.size.width, "height": child.size.height},
+                                    "region": {"y": child.region.y, "height": child.region.height},
+                                },
+                            )
                         if len(children) > 10:
                             ts_info["container"]["children"].append({"...": f"{len(children) - 10} more items..."})
                         for i, child in enumerate(children[-5:]):  # Last 5
                             if len(children) > 5:
-                                ts_info["container"]["children"].append(get_child_info(child, len(children) - 5 + i))
+                                ts_info["container"]["children"].append(
+                                    {
+                                        "index": len(children) - 5 + i,
+                                        "type": type(child).__name__,
+                                        "id": child.id,
+                                        "classes": list(child.classes),
+                                        "size": {"width": child.size.width, "height": child.size.height},
+                                        "region": {"y": child.region.y, "height": child.region.height},
+                                    },
+                                )
                     except Exception as e:
                         ts_info["container_error"] = str(e)
                     timeline_debug.append(ts_info)
@@ -6413,6 +6412,16 @@ Type your question and press Enter to ask the agents.
                 return self._render_timeline_tab()
             return ""
 
+        def _format_duration(self, timestamp: float) -> str:
+            """Format elapsed time since timestamp."""
+            elapsed = time.time() - timestamp
+            if elapsed < 60:
+                return f"{int(elapsed)}s"
+            elif elapsed < 3600:
+                return f"{elapsed/60:.1f}m"
+            else:
+                return f"{elapsed/3600:.1f}h"
+
         def _render_answers_tab(self) -> str:
             """Render answers list."""
             if not self.answers:
@@ -6429,12 +6438,16 @@ Type your question and press Enter to ask the agents.
                 badge = " [bold yellow]🏆[/]" if is_winner else ""
                 model_info = f" ({model})" if model else ""
 
+                # Duration since answer was submitted
+                timestamp = answer.get("timestamp")
+                duration_info = f" [dim]({self._format_duration(timestamp)} ago)[/]" if timestamp else ""
+
                 # Content preview
                 content = answer.get("content", "")[:60].replace("\n", " ")
                 if len(answer.get("content", "")) > 60:
                     content += "..."
 
-                lines.append(f"  {i}. [bold]{agent}[/]{model_info} - {label}{badge}")
+                lines.append(f"  {i}. [bold]{agent}[/]{model_info} - {label}{badge}{duration_info}")
                 lines.append(f"     [dim]{content}[/]")
 
             return "\n".join(lines)
@@ -6463,7 +6476,9 @@ Type your question and press Enter to ask the agents.
                 for i, vote in enumerate(self.votes, 1):
                     voter = vote.get("voter", "?")[:10]
                     target = vote.get("voted_for", "?")[:10]
-                    lines.append(f"  {i}. [dim]{voter}[/] → [bold]{target}[/]")
+                    timestamp = vote.get("timestamp")
+                    duration_info = f" [dim]({self._format_duration(timestamp)} ago)[/]" if timestamp else ""
+                    lines.append(f"  {i}. [dim]{voter}[/] → [bold]{target}[/]{duration_info}")
             elif not self.vote_counts:
                 lines.append("[dim]No votes yet[/]")
 
