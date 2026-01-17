@@ -7647,7 +7647,11 @@ async def main(args):
 
         # Run mode based on whether question was provided
         try:
-            if args.question:
+            # Check if using textual display - textual always uses interactive mode
+            # with question as initial_question (textual doesn't support single-question mode)
+            is_textual_display = ui_config.get("display_type") == "textual_terminal"
+
+            if args.question and not is_textual_display:
                 await run_single_question(
                     args.question,
                     agents,
@@ -7670,8 +7674,11 @@ async def main(args):
             else:
                 # Pass the config path and session_id to interactive mode
                 config_file_path = str(resolved_path) if args.config and resolved_path else None
-                # Check if we have an initial question from config builder
+                # Check if we have an initial question from config builder or CLI arg (for textual mode)
                 initial_q = getattr(args, "interactive_with_initial_question", None)
+                # For textual display, use args.question as initial_question if provided
+                if is_textual_display and args.question:
+                    initial_q = args.question
                 # Remove config_path and enable_rate_limit from kwargs to avoid duplicate argument
                 interactive_kwargs = {k: v for k, v in kwargs.items() if k not in ("config_path", "enable_rate_limit")}
                 await run_interactive_mode(

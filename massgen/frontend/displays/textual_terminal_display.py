@@ -5763,8 +5763,17 @@ Type your question and press Enter to ask the agents.
             self.remove_class("status-waiting", "status-working", "status-streaming", "status-completed", "status-error")
             self.add_class(f"status-{status}")
 
-            header = self.query_one(f"#{self._header_dom_id}")
-            header.update(self._header_text())
+            # Update both left and right header labels (header is a Horizontal container)
+            try:
+                left_label = self.query_one(f"#{self._header_dom_id}_left", Label)
+                left_label.update(self._header_text_left())
+            except Exception:
+                pass
+            try:
+                right_label = self.query_one(f"#{self._header_dom_id}_right", Label)
+                right_label.update(self._header_text_right())
+            except Exception:
+                pass
 
         def _start_header_timer(self) -> None:
             """Start the header timer to update elapsed time."""
@@ -5782,9 +5791,15 @@ Type your question and press Enter to ask the agents.
             if self._start_time is None:
                 self._stop_header_timer()
                 return
+            # Update both left and right header labels (header is a Horizontal container)
             try:
-                header = self.query_one(f"#{self._header_dom_id}")
-                header.update(self._header_text())
+                left_label = self.query_one(f"#{self._header_dom_id}_left", Label)
+                left_label.update(self._header_text_left())
+            except Exception:
+                pass
+            try:
+                right_label = self.query_one(f"#{self._header_dom_id}_right", Label)
+                right_label.update(self._header_text_right())
             except Exception:
                 pass
 
