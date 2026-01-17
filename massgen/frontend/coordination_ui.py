@@ -259,9 +259,20 @@ class CoordinationUI:
                 elif chunk_type == "hook_execution":
                     hook_info = getattr(chunk, "hook_info", None)
                     tool_call_id = getattr(chunk, "tool_call_id", None)
+                    from massgen.logger_config import logger as hook_logger
+
+                    hook_logger.info(
+                        f"[CoordinationUI] hook_execution chunk received: source={source}, "
+                        f"tool_call_id={tool_call_id}, has_hook_info={hook_info is not None}, "
+                        f"has_display={self.display is not None}, "
+                        f"display_has_method={hasattr(self.display, 'update_hook_execution') if self.display else False}",
+                    )
                     if self.display and source and hook_info:
                         if hasattr(self.display, "update_hook_execution"):
+                            hook_logger.info("[CoordinationUI] Calling display.update_hook_execution")
                             self.display.update_hook_execution(source, tool_call_id, hook_info)
+                        else:
+                            hook_logger.warning("[CoordinationUI] display missing update_hook_execution method")
                     if self.logger:
                         self.logger.log_chunk(source, str(hook_info), chunk_type)
                     continue
@@ -541,6 +552,10 @@ class CoordinationUI:
         Returns:
             Final coordinated response
         """
+        from massgen.logger_config import logger as coord_logger
+
+        coord_logger.info(f"[CoordinationUI] coordinate() method CALLED - question: {question[:50]}...")
+
         # Initialize variables that may be referenced in finally block
         selected_agent = ""
         vote_results = {}
@@ -726,6 +741,12 @@ class CoordinationUI:
                 source = getattr(chunk, "source", None)
                 chunk_type = getattr(chunk, "type", "")
 
+                # Debug: Log all chunk types to trace hook_execution flow
+                if chunk_type == "hook_execution":
+                    from massgen.logger_config import logger as debug_logger
+
+                    debug_logger.info(f"[CoordinationUI-DEBUG] Got hook_execution chunk! source={source}")
+
                 # Check for phase changes and notify status bar (for interactive mode)
                 if hasattr(orchestrator, "workflow_phase"):
                     current_phase = orchestrator.workflow_phase
@@ -810,6 +831,27 @@ class CoordinationUI:
                         self.logger.log_chunk(source, content, chunk_type)
                     continue
 
+                # Handle hook execution events - route to display (interactive mode)
+                elif chunk_type == "hook_execution":
+                    hook_info = getattr(chunk, "hook_info", None)
+                    tool_call_id = getattr(chunk, "tool_call_id", None)
+                    from massgen.logger_config import logger as hook_logger
+
+                    hook_logger.info(
+                        f"[CoordinationUI-interactive] hook_execution chunk received: source={source}, "
+                        f"tool_call_id={tool_call_id}, has_hook_info={hook_info is not None}, "
+                        f"has_display={self.display is not None}, "
+                        f"display_has_method={hasattr(self.display, 'update_hook_execution') if self.display else False}",
+                    )
+                    if self.display and source and hook_info:
+                        if hasattr(self.display, "update_hook_execution"):
+                            hook_logger.info("[CoordinationUI-interactive] Calling display.update_hook_execution")
+                            self.display.update_hook_execution(source, tool_call_id, hook_info)
+                        else:
+                            hook_logger.warning("[CoordinationUI-interactive] display missing update_hook_execution method")
+                    if self.logger:
+                        self.logger.log_chunk(source, str(hook_info), chunk_type)
+                    continue
                 # builtin_tool_results handling removed - now handled as simple content
 
                 # Handle reasoning streams
@@ -1076,6 +1118,10 @@ class CoordinationUI:
         Returns:
             Final coordinated response
         """
+        from massgen.logger_config import logger as coord_logger
+
+        coord_logger.info(f"[CoordinationUI] coordinate_with_context() method CALLED - question: {question[:50]}..., messages={len(messages)}")
+
         # Initialize variables that may be referenced in finally block
         selected_agent = ""
         vote_results = {}
@@ -2001,20 +2047,22 @@ class CoordinationUI:
             # On any error, fallback to immediate display
             print(content, end="", flush=True)
 
-    async def prompt_for_broadcast_response(self, broadcast_request: Any) -> Optional[str]:
+    async def prompt_for_broadcast_response(self, broadcast_request: Any) -> Optional[Any]:
         """Prompt human for response to a broadcast question.
 
         Args:
             broadcast_request: BroadcastRequest object with question details
 
         Returns:
-            Human's response string, or None if skipped/timeout
+            Human's response string (for simple questions) or List[StructuredResponse] (for structured questions),
+            or None if skipped/timeout
         """
 
         # Skip human input in automation mode
         if self.config.get("automation_mode", False):
+            question_preview = broadcast_request.question_text[:100] if broadcast_request.question_text else "structured questions"
             print(f"\n📢 [Automation Mode] Skipping human input for broadcast from {broadcast_request.sender_agent_id}")
-            print(f"   Question: {broadcast_request.question[:100]}{'...' if len(broadcast_request.question) > 100 else ''}\n")
+            print(f"   Question: {question_preview}{'...' if len(question_preview) >= 100 else ''}\n")
             return None
 
         # Delegate to display if it supports broadcast prompts
@@ -2025,6 +2073,22 @@ class CoordinationUI:
         print("\n" + "=" * 70)
         print(f"📢 BROADCAST FROM {broadcast_request.sender_agent_id.upper()}")
         print("=" * 70)
+
+        # Check if structured question
+        if broadcast_request.is_structured:
+            return await self._prompt_structured_fallback(broadcast_request)
+        else:
+            return await self._prompt_simple_fallback(broadcast_request)
+
+    async def _prompt_simple_fallback(self, broadcast_request: Any) -> Optional[str]:
+        """Fallback terminal prompt for simple free-form questions.
+
+        Args:
+            broadcast_request: BroadcastRequest with simple question
+
+        Returns:
+            User's text response or None if skipped/timeout
+        """
         print(f"\n{broadcast_request.question}\n")
         print("─" * 70)
         print("Options:")
@@ -2058,6 +2122,112 @@ class CoordinationUI:
         except Exception as e:
             print(f"\n❌ Error getting response: {e}\n")
             return None
+
+    async def _prompt_structured_fallback(self, broadcast_request: Any) -> Optional[List]:
+        """Fallback terminal prompt for structured questions with options.
+
+        Args:
+            broadcast_request: BroadcastRequest with structured questions
+
+        Returns:
+            List of StructuredResponse objects or None if skipped/timeout
+        """
+        from massgen.broadcast.broadcast_dataclasses import StructuredResponse
+
+        questions = broadcast_request.structured_questions
+        responses = []
+
+        for q_idx, question in enumerate(questions):
+            # Show progress for multi-question
+            if len(questions) > 1:
+                print(f"\n[Question {q_idx + 1} of {len(questions)}]")
+
+            print(f"\n{question.text}\n")
+            print("─" * 70)
+
+            # Display numbered options
+            print("Options:")
+            for i, option in enumerate(question.options, 1):
+                desc = f" - {option.description}" if option.description else ""
+                print(f"  {i}. {option.label}{desc}")
+
+            print("\n─" * 70)
+            print("How to respond:")
+            if question.multi_select:
+                print("  • Enter numbers separated by commas (e.g., 1,3)")
+            else:
+                print("  • Enter a number to select an option")
+            if question.allow_other:
+                print("  • Type 'other: your text' for a custom answer")
+            if not question.required:
+                print("  • Press Enter alone to skip")
+            print(f"  • Timeout: {broadcast_request.timeout} seconds")
+            print("=" * 70)
+
+            try:
+                prompt_text = "Your selection: " if question.multi_select else "Your choice: "
+                raw_input = await asyncio.wait_for(
+                    asyncio.get_event_loop().run_in_executor(
+                        None,
+                        input,
+                        prompt_text,
+                    ),
+                    timeout=float(broadcast_request.timeout),
+                )
+
+                raw_input = raw_input.strip()
+
+                # Parse response
+                selected_options = []
+                other_text = None
+
+                if not raw_input:
+                    if question.required:
+                        print("⚠️  Required question - selecting first option")
+                        selected_options = [question.options[0].id] if question.options else []
+                    else:
+                        print("⏭️  Skipped")
+                elif raw_input.lower().startswith("other:"):
+                    other_text = raw_input[6:].strip()
+                    print(f"✓ Custom answer: {other_text[:50]}...")
+                else:
+                    # Parse number selections
+                    try:
+                        nums = [int(n.strip()) for n in raw_input.split(",") if n.strip()]
+                        for num in nums:
+                            if 1 <= num <= len(question.options):
+                                selected_options.append(question.options[num - 1].id)
+                            else:
+                                print(f"⚠️ Option {num} out of range, ignoring")
+
+                        if not question.multi_select and len(selected_options) > 1:
+                            print("⚠️ Single-select - using first selection only")
+                            selected_options = selected_options[:1]
+
+                        if selected_options:
+                            labels = [opt.label for opt in question.options if opt.id in selected_options]
+                            print(f"✓ Selected: {', '.join(labels)}")
+                    except ValueError:
+                        # Treat as "other" if not parseable
+                        other_text = raw_input
+                        print(f"✓ Custom answer: {other_text[:50]}...")
+
+                response = StructuredResponse(
+                    question_index=q_idx,
+                    selected_options=selected_options,
+                    other_text=other_text,
+                )
+                responses.append(response)
+
+            except asyncio.TimeoutError:
+                print("\n⏱️  Timeout - skipping remaining questions\n")
+                return responses if responses else None
+            except Exception as e:
+                print(f"\n❌ Error: {e}\n")
+                return responses if responses else None
+
+        print(f"\n✓ All {len(questions)} questions answered!\n")
+        return responses
 
 
 # Convenience functions for common use cases

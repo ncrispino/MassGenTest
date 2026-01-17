@@ -15,12 +15,15 @@ from textual.message import Message
 from textual.widgets import Static
 
 
-class InjectionSubCard(Static):
+class InjectionSubCard(Static, can_focus=True):
     """Collapsible sub-card for displaying injection content within a tool card.
 
     Shows a collapsed preview by default, expandable to show full injection content.
     Used to display hook injections (pre or post tool) attached to their parent tool card.
     """
+
+    # Enable mouse interaction
+    ALLOW_SELECT = False
 
     # Message for click events
     class Clicked(Message):
@@ -56,15 +59,40 @@ class InjectionSubCard(Static):
         self.hook_name = hook_name
         self.hook_type = hook_type
         self.content = content
-        self.preview = preview or self._generate_preview(content)
+        # Always generate our own preview from full content for cleaner display
+        # The passed preview may contain decorative characters
+        self.preview = self._generate_preview(content)
         self.execution_time_ms = execution_time_ms
         self.timestamp = datetime.now()
         self._expanded = False
 
     def _generate_preview(self, content: str, max_length: int = 80) -> str:
-        """Generate a preview from the content."""
-        # Flatten to single line for preview
-        preview = content.replace("\n", " ").strip()
+        """Generate a preview from the content.
+
+        Extracts meaningful text from injection content, skipping decorative
+        lines like '======' banners and extracting the core message.
+        """
+        # Split into lines and filter out decorative/empty lines
+        lines = content.split("\n")
+        meaningful_lines = []
+        for line in lines:
+            stripped = line.strip()
+            # Skip empty lines, separator lines, and pure decoration
+            if not stripped:
+                continue
+            if stripped.startswith("=") and stripped.count("=") > 10:
+                continue
+            if stripped.startswith("-") and stripped.count("-") > 10:
+                continue
+            meaningful_lines.append(stripped)
+
+        # Build preview from meaningful content
+        if meaningful_lines:
+            preview = " ".join(meaningful_lines)
+        else:
+            # Fallback: flatten everything
+            preview = content.replace("\n", " ").strip()
+
         if len(preview) > max_length:
             return preview[:max_length] + "..."
         return preview
@@ -94,9 +122,14 @@ class InjectionSubCard(Static):
         """Set initial CSS class on mount."""
         self.add_class("collapsed")
 
-    def on_click(self) -> None:
+    def on_click(self, event) -> None:
         """Handle click to toggle expand/collapse."""
+        from massgen.logger_config import logger
+
+        logger.info(f"[InjectionSubCard] CLICKED! hook={self.hook_name}, expanded_before={self._expanded}")
+        event.stop()  # Prevent parent ToolCallCard from also handling this click
         self.toggle()
+        logger.info(f"[InjectionSubCard] After toggle: expanded={self._expanded}")
         self.post_message(self.Clicked(self))
 
     def render(self) -> Text:

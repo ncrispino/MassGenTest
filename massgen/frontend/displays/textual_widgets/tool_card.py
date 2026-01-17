@@ -288,6 +288,7 @@ class ToolCallCard(Static):
         # Hook execution tracking (for display in TUI)
         self._pre_hooks: list = []  # Hooks that ran before tool
         self._post_hooks: list = []  # Hooks that ran after tool
+        self._injection_expanded: bool = False  # Track if injection content is expanded
 
         # Subagent-specific state
         self._is_subagent = self._category["category"] == "subagent"
@@ -299,11 +300,9 @@ class ToolCallCard(Static):
         self._elapsed_timer = None
 
     def on_mount(self) -> None:
-        """Start the elapsed time timer when mounted and create injection subcards."""
+        """Start the elapsed time timer when mounted."""
         if self._status == "running":
             self._start_elapsed_timer()
-        # Create injection subcards for any hooks that were added before mounting
-        self._update_injection_subcards()
 
     def on_unmount(self) -> None:
         """Stop the timer when unmounted."""
@@ -433,20 +432,68 @@ class ToolCallCard(Static):
                 error_preview = error_preview[:107] + "..."
             text.append(error_preview, style="dim red")
 
-        # Post-hooks (shown below result)
+        # Post-hooks with injection content - render inline
         for hook in self._post_hooks:
-            hook_name = hook.get("hook_name", "unknown")
-            injection_preview = hook.get("injection_preview", "")
+            injection_content = hook.get("injection_content")
+            if injection_content:
+                # Generate clean preview without decorative lines
+                preview = self._generate_injection_preview(injection_content)
 
-            text.append("\n  🪝 ", style="dim magenta")
-            text.append(f"{hook_name}", style="dim magenta")
+                if self._injection_expanded:
+                    # Expanded view - show full content
+                    text.append("\n  ▼ ", style="dim")
+                    text.append("📥 ", style="bold #d2a8ff")
+                    text.append(hook.get("hook_name", "injection"), style="bold #d2a8ff")
+                    execution_time = hook.get("execution_time_ms")
+                    if execution_time:
+                        text.append(f" ({execution_time:.1f}ms)", style="dim")
+                    text.append("\n")
 
-            if injection_preview:
-                preview = injection_preview[:40] + "..." if len(injection_preview) > 40 else injection_preview
-                preview = preview.replace("\n", " ")
-                text.append(f": +{preview}", style="dim")
+                    # Render content lines (limit to prevent huge displays)
+                    max_lines = 20
+                    content_lines = injection_content.split("\n")
+                    for i, line in enumerate(content_lines[:max_lines]):
+                        text.append("    ", style="dim")
+                        text.append(line, style="#c9b8e0")
+                        if i < min(len(content_lines), max_lines) - 1:
+                            text.append("\n")
+
+                    if len(content_lines) > max_lines:
+                        text.append("\n")
+                        text.append(f"    ... ({len(content_lines) - max_lines} more lines)", style="dim italic")
+                else:
+                    # Collapsed view - show arrow and preview
+                    text.append("\n  ▶ ", style="dim")
+                    text.append("📥 ", style="bold #d2a8ff")
+                    text.append(hook.get("hook_name", "injection"), style="bold #d2a8ff")
+                    text.append(": ", style="dim")
+                    text.append(preview, style="#c9b8e0")
 
         return text
+
+    def _generate_injection_preview(self, content: str, max_length: int = 60) -> str:
+        """Generate a clean preview from injection content."""
+        # Split into lines and filter out decorative/empty lines
+        lines = content.split("\n")
+        meaningful_lines = []
+        for line in lines:
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith("=") and stripped.count("=") > 10:
+                continue
+            if stripped.startswith("-") and stripped.count("-") > 10:
+                continue
+            meaningful_lines.append(stripped)
+
+        if meaningful_lines:
+            preview = " ".join(meaningful_lines)
+        else:
+            preview = content.replace("\n", " ").strip()
+
+        if len(preview) > max_length:
+            return preview[:max_length] + "..."
+        return preview
 
     def _render_subagent(self) -> Text:
         """Render specialized subagent card with task bullets and workspace.
@@ -580,11 +627,27 @@ class ToolCallCard(Static):
             return f"({mins}m{secs}s)"
 
     def on_click(self) -> None:
-        """Handle click - toggle expansion for subagents, or show modal for others."""
+        """Handle click - toggle expansion for subagents/injections, or show modal for others."""
         if self._is_subagent:
             self.toggle_expanded()
+        elif self._has_injection_content():
+            # Toggle injection expansion for cards with injection content
+            self._injection_expanded = not self._injection_expanded
+            # Update CSS class for height adjustment
+            if self._injection_expanded:
+                self.add_class("has-injection")
+            else:
+                self.remove_class("has-injection")
+            self.refresh()
         else:
             self.post_message(self.ToolCardClicked(self))
+
+    def _has_injection_content(self) -> bool:
+        """Check if any post-hook has injection content."""
+        for hook in self._post_hooks:
+            if hook.get("injection_content"):
+                return True
+        return False
 
     def set_params(self, params: str, params_full: Optional[str] = None) -> None:
         """Set the tool parameters.
@@ -654,7 +717,6 @@ class ToolCallCard(Static):
                 "timestamp": datetime.now(),
             },
         )
-        self._update_injection_subcards()
         self.refresh()
 
     def add_post_hook(
@@ -672,6 +734,11 @@ class ToolCallCard(Static):
             execution_time_ms: How long the hook took
             injection_content: Full injection content (if any)
         """
+        from massgen.logger_config import logger
+
+        logger.info(
+            f"[ToolCallCard] add_post_hook: tool={self.tool_name}, hook={hook_name}, " f"has_content={bool(injection_content)}, is_mounted={self.is_mounted}",
+        )
         self._post_hooks.append(
             {
                 "hook_name": hook_name,
@@ -681,58 +748,7 @@ class ToolCallCard(Static):
                 "timestamp": datetime.now(),
             },
         )
-        self._update_injection_subcards()
         self.refresh()
-
-    def _update_injection_subcards(self) -> None:
-        """Create or update InjectionSubCard widgets for hooks with content.
-
-        This method removes any existing injection sub-cards and creates new ones
-        based on the current _post_hooks list. Only hooks with injection_content
-        will get sub-cards.
-
-        Note: This only runs when the widget is mounted. If hooks are added before
-        mounting, subcards will be created when on_mount is called.
-        """
-        # Can't mount children if we're not mounted yet
-        if not self.is_mounted:
-            return
-
-        # Import here to avoid circular imports
-        from .injection_card import InjectionSubCard
-
-        # Remove existing injection sub-cards
-        for child in list(self.query("InjectionSubCard")):
-            child.remove()
-
-        # Add sub-cards for post-hooks with injection content
-        for hook in self._post_hooks:
-            content = hook.get("injection_content")
-            if content:
-                subcard = InjectionSubCard(
-                    hook_name=hook["hook_name"],
-                    hook_type="post",
-                    content=content,
-                    preview=hook.get("injection_preview"),
-                    execution_time_ms=hook.get("execution_time_ms"),
-                    classes="injection-subcard",
-                )
-                self.mount(subcard)
-
-        # Add sub-cards for pre-hooks with injection content (if any)
-        for hook in self._pre_hooks:
-            content = hook.get("injection_content")
-            if content:
-                subcard = InjectionSubCard(
-                    hook_name=hook["hook_name"],
-                    hook_type="pre",
-                    content=content,
-                    preview=hook.get("injection_preview"),
-                    execution_time_ms=hook.get("execution_time_ms"),
-                    classes="injection-subcard",
-                )
-                # Mount at beginning for pre-hooks
-                self.mount(subcard, before=0)
 
     # === Subagent-specific methods ===
 

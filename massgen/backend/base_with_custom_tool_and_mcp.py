@@ -1714,7 +1714,11 @@ class CustomToolAndMCPBackend(LLMBackend):
                 )
 
                 # Emit hook execution events for display (post-hooks)
+                logger.info(
+                    f"[PostToolUse] Hook results - executed_hooks count: {len(post_result.executed_hooks)}, " f"has_inject: {post_result.inject is not None}",
+                )
                 for hook_exec in post_result.executed_hooks:
+                    logger.info(f"[PostToolUse] Emitting hook_execution chunk for {hook_exec.get('hook_name', 'unknown')}")
                     yield StreamChunk(
                         type="hook_execution",
                         source=self.agent_id,

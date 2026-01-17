@@ -554,10 +554,12 @@ class GeneralHookManager:
             context["tool_output"] = tool_output
 
         if not hooks:
+            logger.info(f"[GeneralHookManager] No hooks registered for agent_id={agent_id}, hook_type={hook_type}")
             return HookResult.allow()
 
         # Filter to matching hooks
         matching_hooks = [h for h in hooks if h.matches(function_name)]
+        logger.info(f"[GeneralHookManager] {len(matching_hooks)} matching hooks for {function_name} (out of {len(hooks)} registered)")
 
         if not matching_hooks:
             return HookResult.allow()
@@ -608,6 +610,9 @@ class GeneralHookManager:
                     execution_time_ms=execution_time_ms,
                     injection_preview=injection_preview,
                     injection_content=injection_content,
+                )
+                logger.info(
+                    f"[GeneralHookManager] Tracked hook execution: {hook.name} ({hook_type_str}) - " f"decision={result.decision}, has_inject={result.inject is not None}",
                 )
 
                 # Handle ask decision

@@ -3424,6 +3424,12 @@ Your answer:"""
                             tool_call_id=chunk_tool_call_id,
                         )
 
+                    elif chunk_type == "hook_execution":
+                        # Hook execution chunks - pass through for TUI display
+                        # chunk_data is already a StreamChunk with hook_info and tool_call_id
+                        log_stream_chunk("orchestrator", "hook_execution", str(chunk_data.hook_info), agent_id)
+                        yield chunk_data
+
                     elif chunk_type == "done":
                         # Stream completed - this is just an end-of-stream marker
                         # DON'T emit "completed" status here - that's handled by the "result" handler
@@ -5671,6 +5677,17 @@ Your answer:"""
                             chunk.content,
                             getattr(chunk, "tool_call_id", None),
                         )
+                    elif chunk_type == "hook_execution":
+                        # Forward hook execution chunks for TUI display
+                        # Include hook_info and tool_call_id for injection subcard display
+                        hook_chunk = StreamChunk(
+                            type="hook_execution",
+                            content=chunk.content,
+                            source=agent_id,
+                            hook_info=getattr(chunk, "hook_info", None),
+                            tool_call_id=getattr(chunk, "tool_call_id", None),
+                        )
+                        yield ("hook_execution", hook_chunk)
                     elif chunk_type == "debug":
                         # Forward debug chunks
                         yield ("debug", chunk.content)

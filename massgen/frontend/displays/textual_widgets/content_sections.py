@@ -865,6 +865,8 @@ class TimelineSection(Vertical):
                 - injection_preview: Optional preview of injected content
                 - injection_content: Optional full injection content
         """
+        from massgen.logger_config import logger
+
         # Find the tool card to attach the hook to
         tool_card = None
         if tool_call_id:
@@ -874,6 +876,14 @@ class TimelineSection(Vertical):
         if not tool_card and self._tools:
             # Get the most recently added tool
             tool_card = list(self._tools.values())[-1] if self._tools else None
+
+        hook_name = hook_info.get("hook_name", "unknown")
+        has_content = bool(hook_info.get("injection_content"))
+        logger.info(
+            f"[TimelineSection] add_hook_to_tool: tool_call_id={tool_call_id}, "
+            f"hook={hook_name}, has_content={has_content}, tool_found={tool_card is not None}, "
+            f"known_tools={list(self._tools.keys())}",
+        )
 
         if tool_card:
             hook_type = hook_info.get("hook_type", "pre")
