@@ -9,16 +9,121 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Recent Releases
 
+**v0.1.40 (January 19, 2026)** - Textual TUI Interactive Mode (Experimental)
+Interactive terminal UI with `--display textual` for interactive MassGen sessions. Real-time agent output streaming, context path injection, human feedback integration, keyboard-driven navigation, workspace file browser, answer browser with side-by-side comparisons, and comprehensive modals for metrics/costs/votes/timeline. Enhanced plan execution with mode selection UI and improved final answer presentation.
+
+**v0.1.39 (January 16, 2026)** - Plan and Execute Workflow
+Complete plan-then-execute workflow with `--plan-and-execute` for autonomous planning and execution, `--execute-plan` to run existing plans. Task verification workflow with `verified` status and verification groups for batch validation. Plan storage system in `.massgen/plans/` with frozen snapshots and execution tracking. Response API function call message sanitization fixes.
+
 **v0.1.38 (January 15, 2026)** - Task Planning, Two-Tier Workspaces & Project Instructions
 Task planning mode with `--plan` flag creates structured plans for future workflows (plan-only, no auto-execution). Two-tier git-backed workspaces with scratch/deliverable separation and automatic snapshot commits. Project instruction auto-discovery (CLAUDE.md/AGENTS.md) following the agents.md standard. Batch image analysis with multi-image comparison support. Circuit breaker for timeout denial loops, soft→hard timeout race condition fix, and Docker health monitoring with log capture on MCP failures.
 
-**v0.1.37 (January 12, 2026)** - Execution Traces & Thinking Mode Improvements
-Execution trace files preserve full agent history for compression recovery and cross-agent coordination. Claude Code thinking mode support with streaming buffer integration. Gemini thinking mode fixes and standardized agent labeling across backends. OpenRouter documentation and workspace anonymization improvements.
-
-**v0.1.36 (January 9, 2026)** - Hook Framework & Unified @path Context Handling
-General hook framework for agent lifecycle events with PreToolUse/PostToolUse hooks, content injection strategies, and custom hook support. Unified `@path` syntax for inline context path references in CLI and Web UI with autocomplete file picker. Claude Code native hooks integration. Docker resource cleanup improvements when recreating agents for new path references.
-
 ---
+
+## [0.1.40] - 2026-01-19
+
+### Added
+- **Textual TUI Interactive Mode**: Interactive terminal UI with `--display textual` for interactive MassGen sessions
+  - Real-time agent output streaming with syntax highlighting
+  - Agent tab bar for switching between agents and post-evaluation views
+  - Keyboard-driven navigation with extensive keyboard shortcuts
+  - Keyboard navigation with `j/k` scrolling and `:q` to quit
+  - Comprehensive modals:
+    - `?` or `h`: Keyboard shortcuts help
+    - `f`: Full agent output
+    - `c`: Cost breakdown (token usage and costs)
+    - `m`: Tool metrics
+    - `v`: Vote results
+    - `o`: Orchestrator events
+    - `s`: System status
+    - `p`: MCP server status
+    - `b`: Answer browser with side-by-side comparisons
+    - `t`: Coordination timeline
+    - `w`: Workspace file browser with tree navigation and file preview
+  - Context path injection UI with `@` syntax support
+  - Human feedback integration with prompt modal
+  - Enhanced final answer presentation with formatting
+  - Plan execution mode selection UI
+  - Scrolling improvements with visual indicators
+  - Tool input/output display with color-coded formatting
+
+### Changed
+- **Final Answer View**: Improved presentation and formatting in Textual TUI
+- **Subagent Display**: Fixed subagent rendering and progress bar updates
+- **Context Path Handling**: Enhanced context path validation and display
+- **Broadcasting**: Improved broadcasting behavior for questions similar to context injection
+
+### Fixed
+- **Tool Inputs Not Showing**: Fixed issue where tool inputs were not displayed in later answers
+- **Empty Space Issue**: Resolved empty space rendering problem in agent answers
+- **Scrolling**: Fixed scrolling behavior and visual indicators
+- **Cancellation**: Improved Ctrl+C handling and graceful shutdown
+- **Menu Display**: Fixed issue with too many items being displayed in menus
+- **Click Handling**: Resolved click event issues in TUI
+- **Path Permissions**: Fixed workspace path permission handling
+- **Task Plan Display**: Fixed task plan rendering in TUI
+
+### Documentation, Configurations and Resources
+- **Textual TUI Architecture**: New `docs/dev_notes/textual_tui_architecture.md` for TUI implementation details
+- **Textual UI Developer Skill**: New `massgen/skills/textual-ui-developer/SKILL.md` for TUI development workflows
+- **OpenSpec Proposals**: Multiple design documents in `openspec/changes/`:
+  - `add-tui-modes/` - TUI modes design and specs
+  - `tui-production-upgrade/` - Enhanced TUI widgets
+  - `update-textual-tui-polish/` - TUI polish and refinements
+- **Updated CLAUDE.md**: Enhanced project instructions with TUI development guidance
+- **Updated Config**: Modified `massgen/configs/basic/multi/three_agents_default.yaml` for TUI testing
+
+### Technical Details
+- **Major Focus**: Textual TUI interactive mode, keyboard navigation, workspace browser, performance optimization
+- **Contributors**: @ncrispino, @praneeth999, @HenryQi and the MassGen team
+
+## [0.1.39] - 2026-01-16
+
+### Added
+- **Plan and Execute Workflow**: Complete plan-then-execute workflow separating "what to build" from "how to build it"
+  - `--plan-and-execute`: Create plan then immediately execute it
+  - `--execute-plan <id|path|latest>`: Execute an existing plan without re-planning
+  - `--broadcast <human|agents|false>`: Control planning collaboration (auto-switches to `false` in automation mode)
+
+- **Task Verification Workflow**: New `verified` status for distinguishing implementation from validation
+  - Status flow: `pending` → `in_progress` → `completed` → `verified`
+  - `verification_group` labels for batch verification (e.g., "foundation", "frontend_ui")
+  - `get_tasks_awaiting_verification()` and `get_verification_group_status()` helpers
+  - Agents verify entire groups at logical checkpoints
+
+- **Plan Storage System**: Persistent plan management in `.massgen/plans/`
+  - Plan structure: `plan_metadata.json`, `execution_log.jsonl`, `plan_diff.json`
+  - `frozen/` directory for immutable planning-phase snapshots
+  - `workspace/` directory for modified plan after execution
+  - Plan IDs use timestamp format: `YYYYMMDD_HHMMSS_microseconds`
+
+### Changed
+- **Planning Prompt Improvements**: Updated guidance to focus on outcomes over implementation
+  - "Describe WHAT the final product needs, not HOW to build it"
+  - Verification methods must be automated (not manual inspection)
+  - Quality focus: "If it's visual, it should LOOK good"
+
+### Fixed
+- **Response API Function Call Messages**: Sanitized function_call messages for OpenAI Response API compatibility ([#792](https://github.com/massgen/MassGen/pull/792))
+  - Filter function_call messages to only include valid fields (type, name, arguments, call_id, id)
+  - Remove invalid fields like 'content' that cause `Unknown parameter` errors
+  - Ensure 'arguments' field is JSON-serialized string, not an object
+  - Fixes: `Unknown parameter: 'input[N].content'` and `Invalid type for 'input[N].arguments'`
+
+- **Plan Execution Edge Cases**: Various fixes for plan execution workflow
+  - Single-agent config handling for both `agent:` and `agents:` shapes
+  - Plan collection path fixed to look for `tasks/plan.json` (file) not `plan/` (directory)
+  - Subprocess deadlock prevention by merging stderr into stdout
+  - Argparse handling for questions starting with `-` via `--` end-of-options marker
+  - Progress calculation now counts `verified` tasks as completed
+
+### Documentations, Configurations and Resources
+- **Planning Mode Guide**: Updated `docs/source/user_guide/advanced/planning_mode.rst` with plan-and-execute workflow
+- **Roadmap**: New `ROADMAP_v0.1.40.md` for next release planning
+
+### Technical Details
+- **Major Focus**: Plan-and-execute workflow, task verification, plan storage system
+- **Contributors**: @ncrispino, @HenryQi, @db-ol and the MassGen team
 
 ## [0.1.38] - 2026-01-15
 

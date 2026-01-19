@@ -227,7 +227,50 @@ Most configurations use environment variables for API keys:so
 
 ## Release History & Examples
 
-### v0.1.38 - Latest
+### v0.1.40 - Latest
+**New Features:** Textual TUI Interactive Mode, Context Path @ Syntax, Performance & Stability Improvements
+
+⚠️ **Note**: These features are experimental and under active development.
+
+**Key Features:**
+- **Textual TUI Interactive Mode**: Launch with `--display textual` for interactive terminal UI with real-time agent streaming and keyboard shortcuts
+- **Context Path @ Syntax**: Include files/directories inline with `@path/to/file` syntax with autocomplete support in TUI
+- **Interactive Modals**: Access costs (`c`), votes (`v`), workspace browser (`w`), answer comparisons (`b`), and keyboard shortcuts (`?` or `h`)
+
+**Try It:**
+```bash
+# Install or upgrade
+pip install --upgrade massgen
+
+# Launch interactive TUI with three agents
+massgen --display textual \
+  --config massgen/configs/basic/multi/three_agents_default.yaml \
+  "Explain the difference between async and parallel programming"
+
+# Use context path injection to include files
+massgen --display textual "Refactor this code @src/app.py"
+```
+
+### v0.1.39
+**New Features:** Plan and Execute Workflow, Task Verification System, Plan Storage, Response API Fix
+
+**Key Features:**
+- **Plan and Execute Workflow**: `--plan-and-execute` creates a plan then immediately executes it, `--execute-plan` runs existing plans
+- **Task Verification System**: New `verified` status with verification groups for batch validation at checkpoints
+- **Plan Storage**: Persistent plans in `.massgen/plans/` with frozen snapshots and execution tracking
+- **Response API Fix**: Function call message sanitization for OpenAI compatibility
+
+**Try It:**
+```bash
+# Plan and execute in one command - creates a plan then runs it
+massgen --plan-and-execute --plan-depth medium \
+  "Build a REST API for a todo application"
+
+# Execute an existing plan (prompt auto-fills from plan)
+massgen --execute-plan latest
+```
+
+### v0.1.38
 **New Features:** Task Planning Mode, Two-Tier Workspace, Project Instructions Auto-Discovery, Batch Image Analysis, Reliability Improvements
 
 **Key Features:**
@@ -239,9 +282,6 @@ Most configurations use environment variables for API keys:so
 
 **Try It:**
 ```bash
-# Install or upgrade
-pip install --upgrade massgen
-
 # Task planning mode - creates a plan (no auto-execution)
 uv run massgen --plan --plan-depth medium \
   "Build a REST API for a todo application"

@@ -69,7 +69,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🆕 Latest Features</h3></summary>
 
-- [v0.1.38 Features](#-latest-features-v0138)
+- [v0.1.40 Features](#-latest-features-v0140)
 </details>
 
 <details open>
@@ -122,15 +122,15 @@ This project started with the "threads of thought" and "iterative refinement" id
 <details open>
 <summary><h3>🗺️ Roadmap</h3></summary>
 
-- [Recent Achievements (v0.1.38)](#recent-achievements-v0138)
-- [Previous Achievements (v0.0.3 - v0.1.37)](#previous-achievements-v003---v0137)
+- [Recent Achievements (v0.1.40)](#recent-achievements-v0140)
+- [Previous Achievements (v0.0.3 - v0.1.39)](#previous-achievements-v003---v0139)
 - [Key Future Enhancements](#key-future-enhancements)
   - Bug Fixes & Backend Improvements
   - Advanced Agent Collaboration
   - Expanded Model, Tool & Agent Integrations
   - Improved Performance & Scalability
   - Enhanced Developer Experience
-- [v0.1.39 Roadmap](#v0139-roadmap)
+- [v0.1.41 Roadmap](#v0141-roadmap)
 </details>
 
 <details open>
@@ -155,29 +155,29 @@ This project started with the "threads of thought" and "iterative refinement" id
 
 ---
 
-## 🆕 Latest Features (v0.1.38)
+## 🆕 Latest Features (v0.1.40)
 
-**🎉 Released: January 15, 2026** | **Next Update: January 17, 2026**
+**🎉 Released: January 19, 2026** | **Next Update: January 19, 2026**
 
-**What's New in v0.1.38:**
-- **📋 Task Planning Mode** - Create structured plans with `--plan` flag for future workflows (plan-only, no auto-execution)
-- **📁 Two-Tier Workspace** - Git-backed scratch/deliverable separation keeping exploratory work separate from final outputs
-- **📖 Project Instructions Auto-Discovery** - Automatic loading of `CLAUDE.md` and `AGENTS.md` for project context
-- **🖼️ Batch Image Analysis** - Process multiple images simultaneously with `read_media` tool
-- **🔧 Timeout & Reliability Fixes** - Circuit breaker prevents infinite loops, fixed soft-to-hard timeout race conditions
+⚠️ **Note**: v0.1.40 features are experimental and under active development.
 
-**Try v0.1.38 Features:**
+**What's New in v0.1.40:**
+- **🖥️ Textual TUI Interactive Mode** - Interactive terminal UI with real-time agent streaming and keyboard shortcuts
+- **📎 Context Path @ Syntax** - Include files/directories inline with `@path/to/file` syntax and autocomplete
+- **💬 Interactive Modals** - Access costs (`c`), votes (`v`), workspace browser (`w`), answer comparisons (`b`), and more
+
+**Try v0.1.40 Features:**
 ```bash
 # Install or upgrade
 pip install --upgrade massgen
 
-# Task planning mode - creates a plan (no auto-execution)
-uv run massgen --plan --plan-depth medium \
-  "Build a REST API for a todo application"
+# Launch interactive TUI with three agents
+massgen --display textual \
+  --config massgen/configs/basic/multi/three_agents_default.yaml \
+  "Explain the difference between async and parallel programming"
 
-# Will read from CLAUDE.md/AGENTS.md in cwd, if it exists
-uv run massgen --config massgen/configs/basic/multi/three_agents_default.yaml \
-  "Explain the current functionality of this repo @./"
+# Use context path injection to include files
+massgen --display textual "Refactor this code @src/app.py"
 ```
 
 → [See full release history and examples](massgen/configs/README.md#release-history--examples)
@@ -1188,7 +1188,7 @@ result = asyncio.run(massgen.run(
 print(result["final_answer"])  # Consensus answer from winning agent
 ```
 
-> **Full API reference:** [Programmatic API Guide](https://docs.massgen.ai/en/latest/user_guide/programmatic_api.html)
+> **Full API reference:** [Programmatic API Guide](https://docs.massgen.ai/en/latest/user_guide/integration/python_api.html)
 
 ---
 
@@ -1212,34 +1212,27 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 ⚠️ **Early Stage Notice:** As MassGen is in active development, please expect upcoming breaking architecture changes as we continue to refine and improve the system.
 
-### Recent Achievements (v0.1.38)
+### Recent Achievements (v0.1.40)
 
-**🎉 Released: January 15, 2026**
+**🎉 Released: January 19, 2026**
 
-#### Task Planning Mode
-- **Plan-Only Mode**: New `--plan` flag creates structured plans for future workflows (no auto-execution) with `--plan-depth` options (shallow/medium/deep)
-- **Codebase Exploration**: Auto-adds current directory to context paths for planning agents to explore existing code
-- **User Q&A**: Interactive clarifying questions via `ask_others` tool during planning process
+#### Textual TUI Interactive Mode
+- **Interactive Terminal UI**: Use `--display textual` for interactive sessions with real-time agent streaming, syntax highlighting, and keyboard navigation (`j/k` scrolling, `:q` to quit)
+- **Comprehensive Modals**: Access metrics (`c`), costs, votes (`v`), timeline (`t`), workspace browser (`w`), answer comparisons (`b`), and keyboard shortcuts (`?` or `h`)
+- **Context Path Injection**: Inline file inclusion with `@path/to/file` syntax and autocomplete UI
+- **Human Feedback Integration**: Interactive prompt modal for agent questions during execution
+- **Plan Execution UI**: Mode selection interface with enhanced final answer presentation
 
-#### Two-Tier Workspace System
-- **Git-Backed Separation**: Scratch workspace for exploration vs deliverable workspace for final outputs
-- **Automatic Tracking**: Changes tracked via git for easy rollback and history
+#### Documentation
+- **Textual TUI Architecture**: `docs/dev_notes/textual_tui_architecture.md`
+- **Textual UI Developer Skill**: `massgen/skills/textual-ui-developer/SKILL.md`
+- **OpenSpec Proposals**: `openspec/changes/add-tui-modes/`, `tui-production-upgrade/`, `update-textual-tui-polish/`
 
-#### Project Instructions Auto-Discovery
-- **CLAUDE.md/AGENTS.md Support**: Automatically loads project-specific instructions from standard locations
-- **Context Injection**: Project instructions prepended to agent system messages
+### Previous Achievements (v0.0.3 - v0.1.39)
 
-#### Batch Image Analysis
-- **Multi-Image Support**: Process multiple images in single `read_media` call for comparison and batch analysis
+✅ **Plan and Execute Workflow (v0.1.39)**: Complete plan-then-execute workflow with `--plan-and-execute` for autonomous planning and execution, `--execute-plan` to run existing plans without re-planning, task verification workflow with `verified` status and verification groups for batch validation, plan storage system in `.massgen/plans/` with frozen snapshots and execution tracking, Response API function call message sanitization fixes
 
-#### Reliability Improvements
-- **Circuit Breaker**: Prevents infinite tool denial loops with configurable retry limits
-- **Timeout Race Fix**: Guaranteed progression from soft to hard timeout
-- **MCP Tool Restoration**: Tools properly restored after hard timeout restarts
-- **Vote Tracking Fix**: Ignored votes no longer leak into final results
-- **Docker Health Monitoring**: Container diagnostics on MCP failures
-
-### Previous Achievements (v0.0.3 - v0.1.37)
+✅ **Task Planning & Two-Tier Workspaces (v0.1.38)**: Task planning mode with `--plan` flag for structured work breakdown (plan-only, no auto-execution), git-backed two-tier workspaces separating scratch exploration from final deliverables, automatic CLAUDE.md/AGENTS.md discovery for project context, batch image analysis with multi-image comparison, circuit breaker for timeout denial loops, Docker health monitoring
 
 ✅ **Execution Traces & Thinking Mode (v0.1.37)**: Full execution history preserved as `execution_trace.md` for compression recovery and cross-agent coordination, Claude Code and Gemini reasoning content streaming buffer integration, standardized agent labeling across all backends
 
@@ -1459,19 +1452,19 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 
 We welcome community contributions to achieve these goals.
 
-### v0.1.39 Roadmap
+### v0.1.41 Roadmap
 
-Version 0.1.39 focuses on OpenAI Responses API improvements and computer use model support:
+Version 0.1.41 focuses on OpenAI Responses API improvements and log analysis model selection:
 
 #### Planned Features
 - **OpenAI Responses /compact Endpoint** (@ncrispino): Use OpenAI's native `/compact` endpoint for context compression instead of custom summarization
-- **Fara-7B for Computer Use** (@ncrispino): Support for Fara-7B model for GUI automation and computer use tasks
+- **Model Selector for Log Analysis**: Choose which model to use for `massgen logs analyze` self-analysis mode
 
 Key technical approach:
 - **Native Context Compression**: Leverage OpenAI's API-level compression for better token efficiency
-- **Alternative Computer Use Model**: Fara-7B integration with existing computer use infrastructure
+- **Flexible Log Analysis**: Allow users to balance cost vs quality by selecting analysis model
 
-For detailed milestones and technical specifications, see the [full v0.1.39 roadmap](ROADMAP_v0.1.39.md).
+For detailed milestones and technical specifications, see the [full v0.1.41 roadmap](ROADMAP_v0.1.41.md).
 
 ---
 
