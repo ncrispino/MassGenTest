@@ -563,26 +563,9 @@ The tool returns immediately with running status:
          "status_file": "/path/to/logs/oauth-research/full_logs/status.json"
        }
      ],
-    "note": "Results will be automatically injected when subagents complete."
+    "note": "Poll for subagent completion to retrieve results when ready."
    }
 
-Continuing Subagents
---------------------
-
-You can resume any subagent (completed, timed out, or failed) using ``continue_subagent``.
-The subagent's conversation is restored via its session ID and your new message is appended.
-
-.. code-block:: json
-
-   {
-     "tool": "continue_subagent",
-     "arguments": {
-       "subagent_id": "oauth-research",
-       "message": "Please continue and include OAuth 2.1 differences"
-     }
-   }
-
-To find continuable subagents, use ``list_subagents()`` and look for ``continuable: true``.
 
 Configuration
 ~~~~~~~~~~~~~
@@ -596,12 +579,7 @@ Configure async subagent behavior in your YAML config:
        enable_subagents: true
        async_subagents:
          enabled: true  # Allow async spawning (default: true)
-         injection_strategy: "tool_result"  # How to inject results
 
-**Injection Strategies:**
-
-* ``tool_result`` (default): Append result to the next tool call's output. Best for seamless integration.
-* ``user_message``: Inject as a separate user message. May be useful for very long results.
 
 When to Use Async Mode
 ~~~~~~~~~~~~~~~~~~~~~~
