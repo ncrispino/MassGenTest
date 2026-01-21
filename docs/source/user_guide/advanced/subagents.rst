@@ -230,7 +230,6 @@ Use ``refine: false`` to disable multi-round refinement for faster, single-pass 
        "tasks": [
          {"task": "Summarize the repo structure in README.md", "subagent_id": "summary"}
        ],
-       "context": "Quick repo summary for onboarding",
        "refine": false
      }
    }
@@ -285,7 +284,6 @@ Pass files to subagents using ``context_files``:
          ]
        }
      ],
-     "context": "Improving code quality in the utils module"
    }
 
 .. warning::
@@ -546,7 +544,6 @@ Pass ``async_=True`` to spawn subagents in the background:
        "tasks": [
          {"task": "Research OAuth 2.0 best practices", "subagent_id": "oauth-research"}
        ],
-       "context": "Building secure authentication system",
        "async_": true
      }
    }
@@ -586,30 +583,6 @@ The subagent's conversation is restored via its session ID and your new message 
    }
 
 To find continuable subagents, use ``list_subagents()`` and look for ``continuable: true``.
-
-Automatic Result Injection
-~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-When an async subagent completes, its result is automatically injected into the parent agent's context
-on the next tool call. The parent doesn't need to poll or wait—results appear seamlessly:
-
-.. code-block:: text
-
-   ============================================================
-   ASYNC SUBAGENT RESULTS (1 completed)
-   ============================================================
-   <subagent_result id="oauth-research" status="completed">
-     <execution_time>45.2s</execution_time>
-     <workspace>/path/to/subagents/oauth-research/workspace</workspace>
-     <token_usage input="1500" output="800" />
-     <answer success="true">
-   OAuth 2.0 best practices include:
-   1. Always use HTTPS
-   2. Use short-lived access tokens
-   ...
-     </answer>
-   </subagent_result>
-   ============================================================
 
 Configuration
 ~~~~~~~~~~~~~
