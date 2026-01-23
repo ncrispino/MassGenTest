@@ -90,8 +90,8 @@ Screen {
 }
 
 #welcome_tagline {
-    color: $accent-success;
-    text-style: bold;
+    color: $accent-info;
+    text-style: none;
     margin-top: 2;
 }
 
@@ -101,7 +101,7 @@ Screen {
 }
 
 #welcome_agents {
-    color: $fg-muted;
+    color: $fg-primary;
     margin-top: 1;
 }
 

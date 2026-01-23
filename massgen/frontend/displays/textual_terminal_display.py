@@ -6259,7 +6259,7 @@ Type your question and press Enter to ask the agents.
 
         def compose(self) -> ComposeResult:
             yield Label(self.MASSGEN_LOGO, id="welcome_logo")
-            yield Label("🤖 Multi-Agent Collaboration System", id="welcome_tagline")
+            yield Label("Multi-Agent Collaboration System", id="welcome_tagline")
             # Show agent list
             if self.agents_info:
                 agents_list = "  •  ".join(self.agents_info)
@@ -6271,7 +6271,7 @@ Type your question and press Enter to ask the agents.
             cwd = Path.cwd()
             cwd_short = f"~/{cwd.name}" if len(str(cwd)) > 30 else str(cwd)
             # Use fixed-width format: ○/● indicator + consistent text
-            yield Static(f"[dim]○ Ctrl+P: File access to {cwd_short}  •  @ for other paths[/]", id="cwd_hint")
+            yield Static(f"[dim]Ctrl+P file access to {cwd_short}  •  @ for other paths[/]", id="cwd_hint")
             yield Static("[dim]Ctrl+G help  •  Ctrl+C quit[/]", id="shortcuts_hint")
 
     class HeaderWidget(Static):

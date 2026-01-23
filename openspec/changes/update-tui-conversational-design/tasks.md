@@ -61,31 +61,47 @@ Each phase section ends with a **CHECKPOINT** task to remind you to pause for ap
 - Active tabs use underline indicator (border-bottom: tall) instead of full border
 - Agent color palette now applies to underline only on active tab
 
-## 3. Phase 3: Tool Cards
+## 3. Phase 3: Tool Cards ✓ COMPLETED
 
 ### 3.1 Collapsible Implementation
-- [ ] 3.1.1 Add `collapsed` state to `ToolCallCard`
-- [ ] 3.1.2 Implement collapsed rendering (tool name + status + time only)
-- [ ] 3.1.3 Add click handler to expand/collapse
-- [ ] 3.1.4 Default to collapsed state
+- [x] 3.1.1 Add `collapsed` state to `ToolCallCard`
+- [x] 3.1.2 Implement collapsed rendering (tool name + status + time + inline preview)
+- [x] 3.1.3 Add click handler to expand/collapse (context-aware: left edge collapses, elsewhere opens modal)
+- [x] 3.1.4 Default to collapsed state
 
 ### 3.2 Visual Styling
-- [ ] 3.2.1 Update CSS for rounded card appearance
-- [ ] 3.2.2 Soften category colors (less saturated)
-- [ ] 3.2.3 Remove emoji icons, use text prefixes
-- [ ] **3.2.4 CHECKPOINT: User approval for tool cards**
+- [x] 3.2.1 Update CSS - thinner borders (`solid` instead of `wide`/`thick`), more padding
+- [x] 3.2.2 Soften category colors (less saturated)
+- [x] 3.2.3 Remove emoji icons, use text symbols (◉ for running, ○ for background)
+- [x] **3.2.4 CHECKPOINT: User approval for tool cards ✓**
+
+**Implementation Notes:**
+- Files modified: `tool_card.py`, `task_plan_card.py`, `textual_terminal_display.py`, `dark.tcss`, `light.tcss`
+- Click behavior: collapsed→expand, expanded+left edge→collapse, expanded+elsewhere→modal
+- Inline preview auto-resizes based on terminal width (`_get_available_preview_width`)
+- Continuous vertical lines for reasoning blocks (removed gaps between thinking blocks)
+- Task plan pinned at top with Ctrl+T toggle, resets on new round
+- Help modal updated with all keyboard shortcuts
 
 ## 4. Phase 4: Welcome Screen
 
 ### 4.1 Layout Improvements
-- [ ] 4.1.1 Keep ASCII logo (user preference)
-- [ ] 4.1.2 Center input prompt area
-- [ ] 4.1.3 Add subtle tagline below logo
+- [x] 4.1.1 Keep ASCII logo (user preference)
+- [x] 4.1.2 Center input prompt area (already centered via CSS)
+- [x] 4.1.3 Make tagline subtle (removed emoji, changed to muted color)
 
 ### 4.2 Help Hints
-- [ ] 4.2.1 Make keyboard hints smaller/muted
-- [ ] 4.2.2 Use bullet separators (•) instead of pipes
+- [x] 4.2.1 Make keyboard hints smaller/muted (use [dim] markup)
+- [x] 4.2.2 Clean up hint formatting (removed ○ prefix, consistent bullet separators)
 - [ ] **4.2.3 CHECKPOINT: User approval for welcome screen**
+
+**Implementation Notes:**
+- Files modified: `textual_terminal_display.py`, `dark.tcss`, `light.tcss`
+- Tagline changed from "🤖 Multi-Agent Collaboration System" to plain "Multi-Agent Collaboration System"
+- Tagline color: `$accent-info` (cyan) in dark theme, `#0891b2` (teal) in light theme
+- Agent list color: `$fg-primary` (bright) in dark theme, `#1f2937` (dark gray) in light theme
+- CWD hint cleaned up: removed leading `○` and colon for consistency
+- Visual hierarchy: logo (bold blue) → tagline (cyan) → agents (bright) → hint (blue accent) → shortcuts (muted)
 
 ## 5. Phase 5: Task Lists + Progress
 

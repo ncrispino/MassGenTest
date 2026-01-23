@@ -29,13 +29,13 @@ Screen {
 }
 
 #welcome_tagline {
-    color: #4caf50;
-    text-style: bold;
+    color: #0891b2;
+    text-style: none;
     margin-top: 2;
 }
 
 #welcome_agents {
-    color: #666666;
+    color: #1f2937;
     margin-top: 1;
 }
 
