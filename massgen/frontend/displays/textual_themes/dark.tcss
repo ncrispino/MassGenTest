@@ -29,14 +29,16 @@ $fg-on-accent: #ffffff;
 $border-default: #30363d;
 $border-highlight: #484f58;
 $border-muted: #21262d;
+$border-soft: #282e36;
+$border-accent: #3a424d;
 
-/* Semantic Accent Colors */
-$accent-primary: #58a6ff;
-$accent-success: #3fb950;
-$accent-warning: #d29922;
-$accent-error: #f85149;
-$accent-info: #39c5cf;
-$accent-special: #a371f7;
+/* Semantic Accent Colors (desaturated for softer appearance) */
+$accent-primary: #5199d9;
+$accent-success: #3a9d52;
+$accent-warning: #c4912a;
+$accent-error: #e04a42;
+$accent-info: #3ab0b5;
+$accent-special: #9568d9;
 
 /* Agent Colors - for distinguishing agents */
 $agent-1: #58a6ff;
@@ -4129,4 +4131,71 @@ WizardModal #wizard_hints {
 .error-message {
     color: $accent-error;
     padding: 1;
+}
+
+/* =============================================================================
+ * Phase 7: Utility CSS Classes
+ * =============================================================================
+ * Reusable utility classes for future UI enhancements
+ */
+
+/* Rounded card container */
+.rounded-card {
+    border: round $border-default;
+    padding: 1 2;
+    margin: 1 0;
+    background: $bg-surface;
+}
+
+/* Hero input styling */
+.input-hero {
+    border: round $border-default;
+    background: $bg-surface;
+    padding: 1 2;
+    margin: 1 2;
+}
+
+/* Mode pill (status badges) */
+.mode-pill {
+    border: round $border-soft;
+    padding: 0 1;
+    margin: 0 1;
+    min-width: 8;
+    background: $bg-surface-2;
+}
+
+/* Progress bar styling */
+.progress-bar {
+    height: 1;
+    width: 100%;
+    background: $border-muted;
+}
+
+.progress-bar-fill {
+    height: 1;
+    background: $accent-primary;
+}
+
+/* Diff highlighting for code changes */
+.diff-add {
+    color: $accent-success;
+    background: #0d2818;
+}
+
+.diff-remove {
+    color: $accent-error;
+    background: #2d1010;
+}
+
+/* Tree node styling */
+.tree-node {
+    padding-left: 2;
+}
+
+.tree-node-expanded {
+    color: $fg-primary;
+}
+
+.tree-node-collapsed {
+    color: $fg-muted;
 }

@@ -6296,14 +6296,14 @@ Type your question and press Enter to ask the agents.
         def _build_status_line(self) -> str:
             """Build compact status line with optional question preview."""
             num_agents = len(self.agents_info)
-            base = f"🤖 MassGen | {num_agents} agents | Turn {self.turn}"
+            base = f"MassGen • {num_agents} agents • Turn {self.turn}"
 
             # Add truncated question if available
             if self.question and self.question != "Welcome! Type your question below...":
                 # Truncate question to fit in header (max ~100 chars for better visibility)
                 q = self.question.replace("\n", " ").strip()
                 q = q[:100] + "..." if len(q) > 100 else q
-                return f"{base} | 💬 {q}"
+                return f"{base} • {q}"
             return base
 
         def update_question(self, question: str) -> None:
@@ -6324,7 +6324,7 @@ Type your question and press Enter to ask the agents.
             max_attempts: int,
         ):
             """Show restart banner."""
-            banner_text = f"⚠️ RESTART ({attempt}/{max_attempts}): {reason}"
+            banner_text = f"RESTART ({attempt}/{max_attempts}): {reason}"
             self.update(banner_text)
 
         def show_restart_context(self, reason: str, instructions: str):

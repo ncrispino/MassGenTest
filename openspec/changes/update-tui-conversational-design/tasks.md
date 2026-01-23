@@ -185,25 +185,38 @@ Each phase section ends with a **CHECKPOINT** task to remind you to pause for ap
 - JSON is pretty-printed before highlighting
 - Integrated into ToolDetailModal for arguments and output display
 
-## 7. Phase 7: Header + Final Polish
+## 7. Phase 7: Header + Final Polish ✓ COMPLETED
 
 ### 7.1 Header Simplification
-- [ ] 7.1.1 Remove emoji from HeaderWidget
-- [ ] 7.1.2 Use bullet separator (•) instead of pipe
+- [x] 7.1.1 Remove emoji from HeaderWidget (🤖, 💬, ⚠️ removed)
+- [x] 7.1.2 Use bullet separator (•) instead of pipe
 
 ### 7.2 Color Refinements
-- [ ] 7.2.1 Slightly desaturate accent colors in dark.tcss
-- [ ] 7.2.2 Update light.tcss to match new aesthetic
-- [ ] 7.2.3 Add softer border colors
+- [x] 7.2.1 Desaturate accent colors in dark.tcss (15-20% softer)
+- [x] 7.2.2 Update light.tcss to match new aesthetic
+- [x] 7.2.3 Add softer border colors ($border-soft, $border-accent)
 
 ### 7.3 New CSS Classes
-- [ ] 7.3.1 Add `.rounded-card` class
-- [ ] 7.3.2 Add `.input-hero` class
-- [ ] 7.3.3 Add `.mode-pill` class
-- [ ] 7.3.4 Add `.progress-bar` class
-- [ ] 7.3.5 Add `.diff-add` and `.diff-remove` classes
-- [ ] 7.3.6 Add `.tree-node` class for workspace tree
-- [ ] **7.3.7 CHECKPOINT: User approval for header + final polish**
+- [x] 7.3.1 Add `.rounded-card` class
+- [x] 7.3.2 Add `.input-hero` class
+- [x] 7.3.3 Add `.mode-pill` class
+- [x] 7.3.4 Add `.progress-bar` and `.progress-bar-fill` classes
+- [x] 7.3.5 Add `.diff-add` and `.diff-remove` classes
+- [x] 7.3.6 Add `.tree-node`, `.tree-node-expanded`, `.tree-node-collapsed` classes
+- [x] **7.3.7 CHECKPOINT: User approval for header + final polish ✓**
+
+**Implementation Notes:**
+- Files modified: `textual_terminal_display.py`, `dark.tcss`, `light.tcss`
+- Header now displays: `MassGen • {num_agents} agents • Turn {turn} • {question}`
+- Desaturated accent colors for softer appearance:
+  - Primary: `#58a6ff` → `#5199d9`
+  - Success: `#3fb950` → `#3a9d52`
+  - Warning: `#d29922` → `#c4912a`
+  - Error: `#f85149` → `#e04a42`
+  - Info: `#39c5cf` → `#3ab0b5`
+  - Special: `#a371f7` → `#9568d9`
+- Light theme updated: `#0066cc` → `#1a6bb8`, `#0891b2` → `#0e7490`, `#1a7f37` → `#2e7d4a`
+- New utility CSS classes added for Phase 8 preparation
 
 ## 8. Phase 8: Professional Visual Polish
 

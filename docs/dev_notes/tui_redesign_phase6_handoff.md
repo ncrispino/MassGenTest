@@ -9,145 +9,132 @@
 | Phase 3 | Tool Cards & Timeline | ✓ Complete |
 | Phase 4 | Welcome Screen | ✓ Complete |
 | Phase 5 | Task Lists + Progress | ✓ Complete |
-| **Phase 6** | **Modals + Enhanced Previews** | **Next** |
+| **Phase 6** | **Modals + Enhanced Previews** | **✓ Complete (commit fa11307e)** |
 
-## Phase 6 Tasks (from openspec)
+## What Was Completed in Phase 6
+
+### 6.1 Modal Visual Redesign
+
+All 5 modal files updated:
+- `task_plan_modal.py` - "Task Plan" (was "📋 Task Plan")
+- `tool_detail_modal.py` - Tool name only (emoji removed)
+- `background_tasks_modal.py` - "Background Operations" (was "⚙️ Background Operations")
+- `plan_approval_modal.py` - "Plan Approval" (was "Plan Ready for Execution")
+- `subagent_modal.py` - "Subagent . {id}" (was "🚀 {id}")
+
+**Key Technical Note**: Theme variables (`$accent-*`, `$fg-*`, etc.) do NOT work in modal `DEFAULT_CSS` blocks. These are processed separately from the main theme files. All modals now use hardcoded hex colors:
+
+| Purpose | Hex Color |
+|---------|-----------|
+| Purple (special) | `#a371f7` |
+| Yellow (warning) | `#d29922` |
+| Cyan (info) | `#39c5cf` |
+| Blue (primary) | `#58a6ff` |
+| Green (success) | `#3fb950` |
+| Red (error) | `#f85149` |
+| Muted text | `#8b949e` |
+| Primary text | `#e6edf3` |
+| Background base | `#0d1117` |
+| Surface | `#1c2128` |
+| Surface-2 | `#161b22` |
+| Surface-3 | `#21262d` |
+| Border | `#30363d` |
+
+### 6.2 Diff View (DEFERRED)
+
+Deferred to a future phase. Tasks remain in openspec for later implementation.
+
+### 6.3 Workspace Browser Improvements
+
+**Major Changes:**
+- Removed redundant `WorkspaceFilesModal` class entirely
+- Enhanced `WorkspaceBrowserModal` with:
+  - Tree view with ASCII connectors (`├──`, `└──`, `│`)
+  - Collapsible directories (click header to toggle)
+  - Dirs with >3 files collapsed by default
+  - `▶ dirname/ (count)` for collapsed, `▼ dirname/` for expanded
+  - Filter out subagent directories (UUIDs, `agent_*`, `subagent_*`, gitignored)
+
+**Files Modified:**
+- `browser_modals.py` - Main workspace browser logic
+- `workspace_modals.py` - Removed `WorkspaceFilesModal`, kept `FileInspectionModal`
+- `textual/__init__.py`, `textual/widgets/__init__.py`, `textual/widgets/modals/__init__.py` - Updated exports
+- `textual_terminal_display.py` - `/workspace` command now calls `_show_workspace_browser()`
+
+**State Tracking:**
+- `_expanded_dirs: Set[str]` - Which directories are expanded
+- `_dir_file_counts: Dict[str, int]` - File counts per directory
+- `_toggle_directory()` and `_refresh_file_list()` methods handle expansion
+
+### 6.4 Result Renderer
+
+**New File:** `massgen/frontend/displays/textual_widgets/result_renderer.py`
+
+Features:
+- Content type detection: JSON, Python, JavaScript, TypeScript, Markdown, YAML, XML, Shell
+- Uses `rich.syntax.Syntax` for syntax highlighting
+- Smart truncation (default: 50 lines, 5000 chars)
+- JSON is pretty-printed before highlighting
+- Integrated into `ToolDetailModal` for args and result display
+
+## Phase 7: Header + Final Polish ✓ COMPLETED
 
 Reference: `openspec/changes/update-tui-conversational-design/tasks.md`
 
-### 6.1 Modal Visual Redesign
-- [ ] 6.1.1 Update all modal containers to use rounded borders
-- [ ] 6.1.2 Remove emoji from modal titles
-- [ ] 6.1.3 Use bullet separators in modal headers
-- [ ] 6.1.4 Soften border colors across all modals
-- [ ] 6.1.5 Improve internal padding and margins
-- [ ] 6.1.6 Unify button styling across modals
-- [ ] 6.1.7 Polish close button with softer hover states
+### 7.1 Header Simplification
+- [x] 7.1.1 Remove emoji from HeaderWidget (🤖, 💬, ⚠️ removed)
+- [x] 7.1.2 Use bullet separator (•) instead of pipe
 
-### 6.2 Diff View for File Edits
-- [ ] 6.2.1 Create `DiffView` widget for displaying file changes
-- [ ] 6.2.2 Implement colored diff rendering (green +, red -)
-- [ ] 6.2.3 Add line numbers to diff display
-- [ ] 6.2.4 Show context lines around changes
-- [ ] 6.2.5 Add "+X -Y lines" summary header
-- [ ] 6.2.6 Integrate diff view into tool result display for write_file/edit operations
+### 7.2 Color Refinements
+- [x] 7.2.1 Desaturate accent colors in dark.tcss (15-20% softer)
+- [x] 7.2.2 Update light.tcss to match new aesthetic
+- [x] 7.2.3 Add softer border colors ($border-soft, $border-accent)
 
-### 6.3 Workspace Modal Improvements
-- [ ] 6.3.1 Implement tree view for directory structure (replace flat list)
-- [ ] 6.3.2 Add collapsible directory nodes
-- [ ] 6.3.3 Show file statistics (number of files, +X -Y lines)
-- [ ] 6.3.4 Add simple text-based file/folder icons
-- [ ] 6.3.5 Show summary line (agents, turns, consensus status)
+### 7.3 New CSS Classes
+- [x] 7.3.1 Add `.rounded-card` class
+- [x] 7.3.2 Add `.input-hero` class
+- [x] 7.3.3 Add `.mode-pill` class
+- [x] 7.3.4 Add `.progress-bar` and `.progress-bar-fill` classes
+- [x] 7.3.5 Add `.diff-add` and `.diff-remove` classes
+- [x] 7.3.6 Add `.tree-node`, `.tree-node-expanded`, `.tree-node-collapsed` classes
+- [x] **7.3.7 CHECKPOINT: User approval for header + final polish ✓**
 
-### 6.4 Better Tool Result Previews
-- [ ] 6.4.1 Create formatted preview renderer for common result types
-- [ ] 6.4.2 Replace raw dict display with readable formatting
-- [ ] 6.4.3 Implement smart truncation with "show more" expansion
-- [ ] 6.4.4 Add basic syntax highlighting for code in results
-- [ ] **6.4.5 CHECKPOINT: User approval for modals + enhanced previews**
+## Next Phase: Phase 8 - Professional Visual Polish
 
-## Files to Modify
+See `docs/dev_notes/tui_redesign_phase7_handoff.md` for Phase 8 details.
 
-### Existing Modal Files
-1. **`massgen/frontend/displays/textual_widgets/task_plan_modal.py`** - Task modal
-2. **`massgen/frontend/displays/textual_widgets/tool_detail_modal.py`** - Tool detail modal
-3. **`massgen/frontend/displays/textual_widgets/background_tasks_modal.py`** - Background tasks
-4. **`massgen/frontend/displays/textual_widgets/plan_approval_modal.py`** - Plan approval
-5. **`massgen/frontend/displays/textual_widgets/subagent_modal.py`** - Subagent modal
+## Files Likely to Modify in Phase 7
 
-### New Files to Create
-1. **`massgen/frontend/displays/textual_widgets/diff_view.py`** - New diff viewer widget
-2. **`massgen/frontend/displays/textual_widgets/workspace_modal.py`** - If doesn't exist
-
-### Theme Files
-1. **`massgen/frontend/displays/textual_themes/dark.tcss`** - Dark theme
-2. **`massgen/frontend/displays/textual_themes/light.tcss`** - Light theme
-
-## Current Modal Styles
-
-Looking at `task_plan_modal.py` as reference for current style:
-- Border: `thick #a371f7`
-- Background: `$surface`
-- Header: styled with modal-specific colors
-- Close button: `Button("✕", ...)`
-
-## Suggested Implementation Order
-
-### Step 1: Modal Visual Consistency (6.1)
-Start by auditing all modal files and creating consistent patterns:
-- Define standard border radius/style
-- Remove emoji from titles (e.g., `📋 Task Plan` → `Task Plan`)
-- Standardize button styling
-- Create reusable modal CSS classes
-
-### Step 2: Diff View Widget (6.2)
-Create new `diff_view.py`:
-```python
-class DiffView(Static):
-    """Widget for displaying file diffs with syntax highlighting."""
-
-    def __init__(self, old_content: str, new_content: str, filename: str):
-        ...
-
-    def render(self) -> Text:
-        # Show: +X -Y lines header
-        # Colored diff: green for additions, red for deletions
-        # Line numbers
-        ...
-```
-
-### Step 3: Workspace Modal (6.3)
-Implement tree view with collapsible nodes:
-```
-📁 src/
-  ├─ 📄 main.py (+45 -12)
-  ├─ 📁 utils/
-  │   └─ 📄 helpers.py (+8 -2)
-  └─ 📄 config.py (new)
-```
-
-### Step 4: Tool Result Previews (6.4)
-Create smart formatters for common result types:
-- JSON → formatted with syntax highlighting
-- File paths → clickable/highlighted
-- Errors → red with stack trace formatting
-- Success messages → green checkmarks
-
-## Design Guidelines
-
-From previous phases:
-- Use softer, less saturated colors
-- Prefer text symbols over emoji
-- Keep borders thin (`solid` not `thick`)
-- Consistent spacing and padding
-- Support both dark and light themes
+1. **`massgen/frontend/displays/textual_widgets/header_widget.py`** - Remove emoji, update separators
+2. **`massgen/frontend/displays/textual_themes/dark.tcss`** - Color refinements, new classes
+3. **`massgen/frontend/displays/textual_themes/light.tcss`** - Matching light theme updates
 
 ## Testing
 
 ```bash
-# Test with tool-heavy config
-uv run massgen --display textual --config massgen/configs/tools/mcp/filesystem_demo.yaml "List files in the current directory and show their contents"
+# Test workspace browser with collapsible dirs
+uv run massgen --display textual --config massgen/configs/tools/mcp/filesystem_demo.yaml "List files"
+# Press 'w' to open workspace browser, click on directories to expand/collapse
 
-# Verify:
-# - Modal styling is consistent
-# - Tool results are formatted nicely
-# - Diff view works for file edits
-# - Ctrl+W opens workspace modal (if implemented)
+# Test subagent modal
+uv run massgen --display textual --config three_agents.yaml "Use one subagent to research X"
+# Click on subagent card to open modal
+
+# Test tool detail modal
+uv run massgen --display textual --config massgen/configs/tools/mcp/filesystem_demo.yaml "Read a file"
+# Press 't' or click on tool card to see syntax-highlighted results
 ```
 
-## Phase 5 Context (Just Completed)
+## Known Issues / Future Improvements
 
-Key changes from Phase 5:
-- Task card shows inline progress bar: `▸ Tasks (3/5)  ━━━━━━──────────`
-- Click on task card opens modal (same as Ctrl+T)
-- Removed redundant "Tasks: X/Y" badge from header
-- Changed "← active" to "← current" for consistency
-- Progress bar uses `━` for completed, `─` for remaining
+1. **Theme variables in modals** - Would be nice to have a way to use theme vars in `DEFAULT_CSS` but this is a Textual framework limitation
+2. **Diff view** - Still deferred, would be valuable for file edit operations
+3. **Light theme** - Hardcoded colors are optimized for dark theme; light theme may need separate values
 
 ## Approval Workflow
 
-After completing Phase 6:
-1. User tests modals across different scenarios
-2. User approves or requests changes
-3. Iterate if needed
-4. Proceed to Phase 7: Header + Final Polish
+Phase 6 is complete. For Phase 7:
+1. Review tasks in openspec
+2. Implement header simplification and color refinements
+3. User runs TUI to approve
+4. Proceed to Phase 8: Professional Visual Polish
