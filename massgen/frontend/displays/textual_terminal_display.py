@@ -7913,8 +7913,11 @@ Type your question and press Enter to ask the agents.
             return ""
 
         def _format_tasks_badge(self) -> str:
-            """Format task plan badge text."""
-            return self._format_task_plan_header() or ""
+            """Format task plan badge text.
+
+            Note: Disabled - task info now shown in collapsible TaskPlanCard.
+            """
+            return ""
 
         def _header_text_right(self) -> str:
             """Compose right side of header (for compatibility)."""

@@ -83,7 +83,7 @@ Each phase section ends with a **CHECKPOINT** task to remind you to pause for ap
 - Task plan pinned at top with Ctrl+T toggle, resets on new round
 - Help modal updated with all keyboard shortcuts
 
-## 4. Phase 4: Welcome Screen
+## 4. Phase 4: Welcome Screen ✓ COMPLETED
 
 ### 4.1 Layout Improvements
 - [x] 4.1.1 Keep ASCII logo (user preference)
@@ -93,7 +93,7 @@ Each phase section ends with a **CHECKPOINT** task to remind you to pause for ap
 ### 4.2 Help Hints
 - [x] 4.2.1 Make keyboard hints smaller/muted (use [dim] markup)
 - [x] 4.2.2 Clean up hint formatting (removed ○ prefix, consistent bullet separators)
-- [ ] **4.2.3 CHECKPOINT: User approval for welcome screen**
+- [x] **4.2.3 CHECKPOINT: User approval for welcome screen ✓**
 
 **Implementation Notes:**
 - Files modified: `textual_terminal_display.py`, `dark.tcss`, `light.tcss`
@@ -103,17 +103,26 @@ Each phase section ends with a **CHECKPOINT** task to remind you to pause for ap
 - CWD hint cleaned up: removed leading `○` and colon for consistency
 - Visual hierarchy: logo (bold blue) → tagline (cyan) → agents (bright) → hint (blue accent) → shortcuts (muted)
 
-## 5. Phase 5: Task Lists + Progress
+## 5. Phase 5: Task Lists + Progress ✓ COMPLETED
 
 ### 5.1 Progress Bar
-- [ ] 5.1.1 Add visual progress bar to task section
-- [ ] 5.1.2 Show "X of Y" count display
+- [x] 5.1.1 Add visual progress bar to task section (inline mini bar: `━━━━━━───────`)
+- [x] 5.1.2 Show "X of Y" count display (header: `▸ Tasks (3/5)`)
 
 ### 5.2 Task Indicators
-- [ ] 5.2.1 Update task indicators (● in-progress, ○ pending, ✓ done)
-- [ ] 5.2.2 Add "← current" marker for active task
-- [ ] 5.2.3 Implement smart truncation with ellipsis
-- [ ] **5.2.4 CHECKPOINT: User approval for task lists + progress**
+- [x] 5.2.1 Update task indicators (● in-progress, ○ pending, ✓ done) - already existed
+- [x] 5.2.2 Add "← current" marker for active task (changed from "← active")
+- [x] 5.2.3 Implement smart truncation with ellipsis - already existed
+- [x] **5.2.4 CHECKPOINT: User approval for task lists + progress ✓**
+
+**Implementation Notes:**
+- Files modified: `task_plan_card.py`, `task_plan_modal.py`, `textual_terminal_display.py`
+- Mini progress bar added inline with header: `▸ Tasks (3/5)  ━━━━━━──────────`
+- Progress bar uses `━` for completed, `─` (thin line) for remaining
+- Changed `← active` to `← current` for consistency with spec
+- Removed redundant "Tasks: X/Y" badge from top-right (info now in collapsible card)
+- Click on task card opens full modal (same as Ctrl+T)
+- Removed expand/collapse toggle - modal provides full view
 
 ## 6. Phase 6: Modals + Enhanced Previews
 

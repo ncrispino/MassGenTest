@@ -270,7 +270,7 @@ class TaskPlanModal(ModalScreen[None]):
 
         # Status label
         if status == "in_progress":
-            text.append("  ← active", style="dim #58a6ff")
+            text.append("  ← current", style="dim #58a6ff")
         elif status == "blocked":
             text.append("  ← blocked", style="dim #f85149")
 
