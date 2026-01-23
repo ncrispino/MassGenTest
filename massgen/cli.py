@@ -458,6 +458,27 @@ Other agents will:
 
 You are in task planning mode. Your goal is to **interactively** create a comprehensive task plan.
 
+## CRITICAL: PLANNING ONLY - DO NOT BUILD THE DELIVERABLE
+
+**YOU ARE A PLANNER, NOT AN EXECUTOR.**
+
+- **DO NOT** create the actual deliverable (no final code, no implementations)
+- **DO NOT** execute the user's task - only plan it
+- **DO** create `project_plan.json` listing tasks that a FUTURE agent will execute
+- **DO** research and explore to understand the task scope
+
+**Allowed files:**
+1. `project_plan.json` - the task list for future execution (REQUIRED)
+2. Supporting docs - requirements, design decisions, technical approach
+3. Scratch/research files - scripts to parse data, analyze structure, gather info FOR PLANNING
+
+**NOT allowed:**
+- The actual deliverable the user requested (SVG, website, app, final code, etc.)
+- Implementation code that would be the end product
+
+If you find yourself building what the user asked for - STOP. You're only planning it.
+A different agent will execute this plan later.
+
 ## Planning Process
 
 Follow this process in order:
@@ -2289,6 +2310,7 @@ async def run_question_with_history(
             enable_subagents=coord_cfg.get("enable_subagents", False),
             subagent_default_timeout=coord_cfg.get("subagent_default_timeout", 300),
             subagent_max_concurrent=coord_cfg.get("subagent_max_concurrent", 3),
+            subagent_round_timeouts=coord_cfg.get("subagent_round_timeouts"),
             subagent_orchestrator=subagent_orchestrator_config,
             use_two_tier_workspace=coord_cfg.get("use_two_tier_workspace", False),
         )
@@ -2438,6 +2460,9 @@ async def run_question_with_history(
                 subagent_max_concurrent=coordination_settings.get(
                     "subagent_max_concurrent",
                     3,
+                ),
+                subagent_round_timeouts=coordination_settings.get(
+                    "subagent_round_timeouts",
                 ),
                 subagent_orchestrator=subagent_orchestrator_config,
                 use_two_tier_workspace=coordination_settings.get(
@@ -2883,6 +2908,9 @@ async def run_single_question(
                     "subagent_max_concurrent",
                     3,
                 ),
+                subagent_round_timeouts=coordination_settings.get(
+                    "subagent_round_timeouts",
+                ),
                 subagent_orchestrator=subagent_orchestrator_config,
             )
 
@@ -2995,6 +3023,7 @@ async def run_single_question(
                 enable_subagents=coord_cfg.get("enable_subagents", False),
                 subagent_default_timeout=coord_cfg.get("subagent_default_timeout", 300),
                 subagent_max_concurrent=coord_cfg.get("subagent_max_concurrent", 3),
+                subagent_round_timeouts=coord_cfg.get("subagent_round_timeouts"),
                 subagent_orchestrator=subagent_orchestrator_config,
             )
 
@@ -5172,19 +5201,21 @@ async def run_textual_interactive_mode(
                 logger.info(f"[Textual] Created {len(agents)} agent(s)")
                 adapter.update_loading_status("✅ Agents created")
 
-                # Setup agent workspaces for execute mode (copy plan files)
-                mode_state = display.get_mode_state()
-                if mode_state and mode_state.plan_mode == "execute" and mode_state.plan_session:
-                    from .plan_execution import setup_agent_workspaces_for_execution
+            # Setup agent workspaces for execute mode (copy plan files)
+            # This must run whenever agents exist and we're in execute mode
+            # (both when first created and on subsequent turns)
+            mode_state = display.get_mode_state()
+            if agents is not None and mode_state and mode_state.plan_mode == "execute" and mode_state.plan_session:
+                from .plan_execution import setup_agent_workspaces_for_execution
 
-                    task_count = setup_agent_workspaces_for_execution(
-                        agents,
-                        mode_state.plan_session,
+                task_count = setup_agent_workspaces_for_execution(
+                    agents,
+                    mode_state.plan_session,
+                )
+                if task_count > 0:
+                    logger.info(
+                        f"[Textual] Execute mode - copied plan with {task_count} tasks to agent workspaces",
                     )
-                    if task_count > 0:
-                        logger.info(
-                            f"[Textual] Execute mode - copied plan with {task_count} tasks to agent workspaces",
-                        )
 
             # Inject previous turn workspace as read-only context (same as Rich mode)
             if current_turn_num > 0 and original_config and orchestrator_cfg:
@@ -5386,6 +5417,7 @@ async def run_textual_interactive_mode(
                         enable_subagents=coord_cfg.get("enable_subagents", False),
                         subagent_default_timeout=coord_cfg.get("subagent_default_timeout", 300),
                         subagent_max_concurrent=coord_cfg.get("subagent_max_concurrent", 3),
+                        subagent_round_timeouts=coord_cfg.get("subagent_round_timeouts"),
                         subagent_orchestrator=subagent_orchestrator_config,
                     )
 
@@ -5462,6 +5494,14 @@ async def run_textual_interactive_mode(
 
             # Create orchestrator with multi-turn state
             adapter.update_loading_status("🔧 Setting up workspace...")
+
+            # Get plan session ID if in execute mode
+            plan_session_id = None
+            mode_state = display.get_mode_state()
+            if mode_state and mode_state.plan_mode == "execute" and mode_state.plan_session:
+                plan_session_id = mode_state.plan_session.plan_id
+                logger.info(f"[Textual] Execute mode - passing plan_session_id to orchestrator: {plan_session_id}")
+
             orchestrator = Orchestrator(
                 agents=agents,
                 config=orchestrator_config,
@@ -5475,6 +5515,7 @@ async def run_textual_interactive_mode(
                 enable_nlip=orchestrator_enable_nlip,
                 nlip_config=orchestrator_nlip_config,
                 generated_personas=generated_personas,
+                plan_session_id=plan_session_id,
             )
             adapter.update_loading_status("🔌 Connecting to tools...")
 
@@ -7407,14 +7448,19 @@ async def main(args):
             # Only register in global session registry if not suppressed (e.g., subagent runs)
             if not getattr(args, "no_session_registry", False):
                 registry = SessionRegistry()
+
+                # Auto-detect subagent sessions by session_id prefix
+                is_subagent = memory_session_id.startswith("subagent_")
+
                 registry.register_session(
                     session_id=memory_session_id,
                     config_path=str(resolved_path) if resolved_path else None,
                     model=model_name,
                     log_directory=log_dir_name,
+                    subagent=is_subagent,  # Label subagent sessions
                 )
                 logger.info(
-                    f"📝 Registered new session in registry: {memory_session_id}",
+                    f"📝 Registered {'subagent' if is_subagent else 'new'} session in registry: {memory_session_id}",
                 )
             else:
                 logger.debug(

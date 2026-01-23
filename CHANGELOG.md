@@ -9,16 +9,108 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Recent Releases
 
+**v0.1.42 (January 23, 2026)** - TUI Visual Redesign
+Comprehensive visual redesign of the Textual TUI with modern "Conversational AI" aesthetic. Rounded corners, professional desaturated colors, edge-to-edge layouts, redesigned agent tabs and tool cards, polished modals, and scroll indicators. New Human Input Queue for injecting messages to agents mid-stream. AG2 single-agent coordination fixes.
+
+**v0.1.41 (January 21, 2026)** - Async Subagent Execution
+Background subagent execution with `async_=True` parameter for non-blocking subagent spawning. Parent agents continue working while subagents run in background, then poll for results when ready. New subagent round timeouts for per-round timeout control. Extended subagent configuration parameters for fine-grained control over concurrency and timeouts.
+
 **v0.1.40 (January 19, 2026)** - Textual TUI Interactive Mode (Experimental)
 Interactive terminal UI with `--display textual` for interactive MassGen sessions. Real-time agent output streaming, context path injection, human feedback integration, keyboard-driven navigation, workspace file browser, answer browser with side-by-side comparisons, and comprehensive modals for metrics/costs/votes/timeline. Enhanced plan execution with mode selection UI and improved final answer presentation.
 
-**v0.1.39 (January 16, 2026)** - Plan and Execute Workflow
-Complete plan-then-execute workflow with `--plan-and-execute` for autonomous planning and execution, `--execute-plan` to run existing plans. Task verification workflow with `verified` status and verification groups for batch validation. Plan storage system in `.massgen/plans/` with frozen snapshots and execution tracking. Response API function call message sanitization fixes.
-
-**v0.1.38 (January 15, 2026)** - Task Planning, Two-Tier Workspaces & Project Instructions
-Task planning mode with `--plan` flag creates structured plans for future workflows (plan-only, no auto-execution). Two-tier git-backed workspaces with scratch/deliverable separation and automatic snapshot commits. Project instruction auto-discovery (CLAUDE.md/AGENTS.md) following the agents.md standard. Batch image analysis with multi-image comparison support. Circuit breaker for timeout denial loops, soft→hard timeout race condition fix, and Docker health monitoring with log capture on MCP failures.
-
 ---
+
+## [0.1.42] - 2026-01-23
+
+### Added
+- **TUI Visual Redesign**: Comprehensive visual overhaul with modern "Conversational AI" aesthetic ([#806](https://github.com/massgen/MassGen/pull/806))
+  - **Phase 1**: Unified input card with integrated mode toggles, rounded corners (╭╮╰╯), simplified radio-style indicators
+  - **Phase 2**: Agent tabs redesign with dot indicators (◉ active, ○ waiting, ✓ done), two-line display (name + model)
+  - **Phase 3**: Tool cards with adaptive density - collapsed by default, click to expand parameters/results
+  - **Phase 4**: Welcome screen improvements with centered input and muted help hints
+  - **Phase 5**: Task lists with visual progress bars, "X of Y" counts, and "← current" markers
+  - **Phase 6**: Modal polish with rounded containers, consistent headers, softer borders, unified button styling
+  - **Phase 7**: Header polish with bullet separators, desaturated color palette, warmer tones
+  - **Phase 8**: Professional visual polish throughout
+  - **Phase 9**: Edge-to-edge borderless container layout
+  - **Phase 11**: UX polish with collapsible reasoning blocks, scroll indicators
+  - **Phase 12**: CSS-based round navigation (partial)
+  - **Phase 13**: Backend integration with token usage updates for TUI status ribbon
+
+- **Human Input Queue**: Inject messages to agents mid-stream during execution
+  - `HumanInputHook` for queuing and injecting human input during agent execution
+  - Thread-safe queue with per-agent tracking (each message delivered once per agent)
+  - Callback support for TUI visual indicator updates
+  - Messages persist until turn ends, allowing injection to multiple agents
+
+### Fixed
+- **AG2 Single-Agent Coordination**: Fixed coordination issues for single-agent AG2 setups ([#804](https://github.com/massgen/MassGen/pull/804))
+  - Single agent can now vote for itself after producing its first answer
+  - Properly clears `restart_pending` flag for single-agent scenarios
+  - Fixes stuck coordination when using AG2 adapter with single agent
+
+- **Plan Execution in TUI**: Fixed plan-then-execute workflow in Textual TUI
+- **Planning Prompt Improvements**: Better subagent clarity and planning guidance
+
+### Changed
+- **Token Usage Updates**: Orchestrator now emits `token_usage_update` stream chunks for real-time TUI status updates
+- **Plan Session ID**: Orchestrator accepts optional `plan_session_id` to prevent workspace contamination during plan execution
+
+### Documentation, Configurations and Resources
+- **TUI Redesign Handoffs**: Design handoff documents for implementation phases
+  - New `docs/dev_notes/tui_redesign_phase6_handoff.md` for modal improvements
+  - New `docs/dev_notes/tui_redesign_phase9_11_13_handoff.md` for layout and UX polish
+- **OpenSpec Proposals**: Complete TUI redesign specification in `openspec/changes/update-tui-conversational-design/`
+  - `proposal.md` - Full 13-phase redesign proposal
+  - `design.md` - Visual design decisions and rationale
+  - `specs/tui/spec.md` - Detailed component specifications
+  - `tasks.md` - Implementation task breakdown
+  - `HANDOFF_PHASE12.md` - Phase 12 handoff for CSS round navigation
+
+### Technical Details
+- **Major Focus**: TUI visual redesign, human input injection, AG2 single-agent fixes
+- **Contributors**: @ncrispino, @HenryQi, @db-ol and the MassGen team
+## [0.1.41] - 2026-01-21
+
+### Added
+- **Async Subagent Execution**: Background subagent execution with `async_=True` parameter (MAS-214)
+  - Parent agents continue working while subagents run in background
+  - Non-blocking `spawn_subagents` returns immediately with running status
+  - Parent can poll for subagent completion and retrieve results
+  - Configurable injection strategies: `tool_result` (default) or `user_message`
+  - Batch injection when multiple subagents complete simultaneously
+
+- **Result Polling**: Check subagent completion status and retrieve results
+  - Poll for completed background subagents when ready
+  - Results returned in structured XML format with metadata
+  - Includes execution time, token usage, and workspace paths
+
+- **Subagent Round Timeouts**: Per-round timeout control for subagents
+  - New `subagent_round_timeouts` configuration section
+  - Supports `initial_round_timeout_seconds`, `subsequent_round_timeout_seconds`, `round_timeout_grace_seconds`
+  - Inherits from parent `timeout_settings` if omitted
+
+### Configuration
+- **New Subagent Parameters**: Extended YAML configuration options
+  - `enable_subagents`: Enable subagent tools for parallel task execution
+  - `subagent_default_timeout`: Default timeout in seconds (default: 300)
+  - `subagent_min_timeout`: Minimum allowed timeout (default: 60)
+  - `subagent_max_timeout`: Maximum allowed timeout (default: 600)
+  - `subagent_max_concurrent`: Maximum concurrent subagents (default: 3)
+  - `subagent_round_timeouts`: Per-round timeout settings for subagents
+  - `async_subagents`: Async execution settings (`enabled`, `injection_strategy`)
+
+### Documentation, Configurations and Resources
+- **Subagents Guide**: Updated `docs/source/user_guide/advanced/subagents.rst` with async execution section
+- **Async Example Config**: New `massgen/configs/features/async_subagent_example.yaml`
+- **OpenSpec Proposals**: Design documents in `openspec/changes/add-async-subagent-execution/`
+  - `proposal.md` - Feature proposal and impact analysis
+  - `design.md` - Architecture decisions and implementation details
+  - `specs/subagent/spec.md` - Detailed specification
+
+### Technical Details
+- **Major Focus**: Async subagent execution, subagent round timeouts, subagent configuration parameters
+- **Contributors**: @ncrispino, @HenryQi and the MassGen team
 
 ## [0.1.40] - 2026-01-19
 

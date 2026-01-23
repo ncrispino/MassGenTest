@@ -1,4 +1,4 @@
-# MassGen v0.1.40 Release Announcement
+# MassGen v0.1.42 Release Announcement
 
 <!--
 This is the current release announcement. Copy this + feature-highlights.md to LinkedIn/X.
@@ -7,21 +7,17 @@ After posting, update the social links below.
 
 ## Release Summary
 
-We're excited to release MassGen v0.1.40, adding Textual TUI Interactive Mode! 🚀
-
-⚠️ **Note**: These features are experimental and under active development.
-
-MassGen now features an interactive terminal UI with `--display textual` for interactive sessions. Experience real-time agent output streaming, keyboard-driven navigation, workspace file browser, answer browser with side-by-side comparisons, and comprehensive modals for metrics, costs, votes, and timeline visualization. Enhanced plan execution with mode selection UI and improved final answer presentation.
+We're excited to release MassGen v0.1.42, featuring Human Input Queue! 🚀 Guide your agents in real-time—inject feedback mid-stream while they work, keeping them on track without interrupting their flow. Plus, a comprehensive TUI Visual Redesign brings a modern "Conversational AI" aesthetic to the terminal. Experience it: massgen --display textual
 
 ## Install
 
 ```bash
-pip install massgen==0.1.40
+pip install massgen==0.1.42
 ```
 
 ## Links
 
-- **Release notes:** https://github.com/massgen/MassGen/releases/tag/v0.1.40
+- **Release notes:** https://github.com/massgen/MassGen/releases/tag/v0.1.42
 - **X post:** [TO BE ADDED AFTER POSTING]
 - **LinkedIn post:** [TO BE ADDED AFTER POSTING]
 
@@ -33,12 +29,29 @@ Copy everything below this line, then append content from `feature-highlights.md
 
 ---
 
-We're excited to release MassGen v0.1.40, adding Textual TUI Interactive Mode! 🚀
+We're excited to release MassGen v0.1.42, featuring Human Input Queue!
 
-Run `massgen --display textual` for an interactive terminal UI with real-time agent streaming, keyboard navigation (`j/k`, `:q`), workspace browser, answer comparisons, and modals for costs/votes/timeline.
+**Human Input Queue**
+- Inject messages to agents mid-stream while they work
+- Thread-safe queue with per-agent tracking
+- Visual indicators in TUI when input is pending
 
-Release notes: https://github.com/massgen/MassGen/releases/tag/v0.1.40
+**TUI Visual Redesign**
+The Textual terminal UI has been completely refreshed with a modern "Conversational AI" aesthetic:
+- Rounded corners and softer borders throughout
+- Professional desaturated color palette
+- Edge-to-edge layouts with proper spacing
+- Redesigned agent tabs, tool cards, and modals
+- Scroll indicators and progress bars
 
-Feature highlights:
+**AG2 Single-Agent Fix**
+- Fixed coordination issues for single-agent AG2 setups
+- Proper vote handling when only one agent present
+
+Try the new TUI: `massgen --display textual "your question"`
+
+Release notes: https://github.com/massgen/MassGen/releases/tag/v0.1.42
 
 <!-- Paste feature-highlights.md content here -->
+
+---

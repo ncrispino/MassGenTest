@@ -227,10 +227,46 @@ Most configurations use environment variables for API keys:so
 
 ## Release History & Examples
 
-### v0.1.40 - Latest
-**New Features:** Textual TUI Interactive Mode, Context Path @ Syntax, Performance & Stability Improvements
+### v0.1.42 - Latest
+**New Features:** TUI Visual Redesign, Human Input Queue, AG2 Single-Agent Fix
 
-⚠️ **Note**: These features are experimental and under active development.
+**Key Features:**
+- **TUI Visual Redesign**: Modern "Conversational AI" aesthetic with rounded corners, redesigned agent tabs, polished modals
+- **Human Input Queue**: Inject messages to agents mid-stream during execution with `HumanInputHook`
+- **AG2 Single-Agent Fix**: Single-agent AG2 setups now vote and coordinate correctly
+
+**Try It:**
+```bash
+# Install or upgrade
+pip install --upgrade massgen
+
+# Experience the redesigned TUI with interactive mode
+uv run massgen --display textual \
+  --config massgen/configs/basic/multi/three_agents_default.yaml \
+  "Compare the pros and cons of React vs Vue for building a dashboard"
+```
+
+### v0.1.41
+**New Features:** Async Subagent Execution, Subagent Round Timeouts, Extended Subagent Configuration
+
+**Key Features:**
+- **Async Subagent Execution**: Spawn subagents with `async_=True` for non-blocking parallel work while parent continues
+- **Poll for Completion**: Check subagent status and retrieve results when ready
+- **Subagent Round Timeouts**: Per-round timeout control with `subagent_round_timeouts` config section
+- **Extended Subagent Config**: `subagent_default_timeout`, `subagent_min_timeout`, `subagent_max_timeout`, `subagent_max_concurrent`
+
+**Try It:**
+```bash
+# Install or upgrade
+pip install --upgrade massgen
+
+# Async subagent execution - parent continues while subagent works in background
+uv run massgen --display textual --config massgen/configs/features/async_subagent_example.yaml \
+  "Use one subagent to research the band Geese in the background while you create a creative website about them, including similar bands."
+```
+
+### v0.1.40
+**New Features:** Textual TUI Interactive Mode, Context Path @ Syntax, Performance & Stability Improvements
 
 **Key Features:**
 - **Textual TUI Interactive Mode**: Launch with `--display textual` for interactive terminal UI with real-time agent streaming and keyboard shortcuts
@@ -1154,7 +1190,7 @@ uv run massgen --config massgen/configs/tools/code-execution/background_shell_de
 **Try It:**
 ```bash
 # Use AG2 agents for lesson planning (supports streaming)
-# Requirements: pip install pyautogen, OPENAI_API_KEY must be set
+# Requirements: pip install pyAG2, OPENAI_API_KEY must be set
 massgen --config massgen/configs/tools/custom_tools/ag2_lesson_planner_example.yaml "Create a lesson plan for photosynthesis"
 
 # Use LangGraph workflows as tools
@@ -1174,7 +1210,7 @@ massgen --config massgen/configs/tools/custom_tools/openai_assistant_lesson_plan
 massgen --config massgen/configs/tools/custom_tools/smolagent_lesson_planner_example.yaml "Create a lesson plan for photosynthesis"
 
 # Combine multiple frameworks
-# Requirements: pip install pyautogen langgraph langchain-openai langchain-core, OPENAI_API_KEY must be set
+# Requirements: pip install pyAG2 langgraph langchain-openai langchain-core, OPENAI_API_KEY must be set
 massgen --config massgen/configs/tools/custom_tools/ag2_and_langgraph_lesson_planner.yaml "Create a lesson plan for photosynthesis"
 ```
 
