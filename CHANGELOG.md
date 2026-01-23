@@ -44,7 +44,7 @@ Interactive terminal UI with `--display textual` for interactive MassGen session
   - Messages persist until turn ends, allowing injection to multiple agents
 
 ### Fixed
-- **AG2 Single-Agent Coordination**: Fixed coordination issues for single-agent AutoGen setups ([#804](https://github.com/massgen/MassGen/pull/804))
+- **AG2 Single-Agent Coordination**: Fixed coordination issues for single-agent AG2 setups ([#804](https://github.com/massgen/MassGen/pull/804))
   - Single agent can now vote for itself after producing its first answer
   - Properly clears `restart_pending` flag for single-agent scenarios
   - Fixes stuck coordination when using AG2 adapter with single agent

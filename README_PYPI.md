@@ -161,7 +161,7 @@ This project started with the "threads of thought" and "iterative refinement" id
 **What's New in v0.1.42:**
 - **🎨 TUI Visual Redesign** - Modern "Conversational AI" aesthetic with rounded corners, redesigned agent tabs, polished modals
 - **💬 Human Input Queue** - Inject messages to agents mid-stream during execution
-- **🔧 AG2 Single-Agent Fix** - Single-agent AutoGen setups now coordinate correctly
+- **🔧 AG2 Single-Agent Fix** - Single-agent AG2 setups now coordinate correctly
 
 **Try v0.1.42 Features:**
 ```bash
@@ -1222,7 +1222,7 @@ MassGen is currently in its foundational stage, with a focus on parallel, asynch
 - **TUI Integration**: Visual indicators for queued human input
 
 #### Bug Fixes
-- **AG2 Single-Agent Coordination**: Single-agent AutoGen setups now vote and coordinate correctly
+- **AG2 Single-Agent Coordination**: Single-agent AG2 setups now vote and coordinate correctly
 
 ### Previous Achievements (v0.0.3 - v0.1.41)
 

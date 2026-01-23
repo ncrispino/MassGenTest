@@ -69,7 +69,7 @@ Want to contribute or collaborate on a specific track? Reach out to the track ow
   - Thread-safe queue with per-agent tracking
   - Messages persist until turn ends, allowing injection to multiple agents
 
-- **AG2 Single-Agent Fix**: Fixed coordination issues for single-agent AutoGen setups ([#804](https://github.com/massgen/MassGen/pull/804))
+- **AG2 Single-Agent Fix**: Fixed coordination issues for single-agent AG2 setups ([#804](https://github.com/massgen/MassGen/pull/804))
 
 *See [Ongoing Work](#-ongoing-work--continuous-releases) section for detailed track information.*
 
@@ -506,7 +506,7 @@ These features are being actively developed on **separate parallel tracks** and 
 
 ### Track: AG2 Single-Agent Coordination Fix (@db-ol)
 - PR: [#804](https://github.com/massgen/MassGen/pull/804)
-- Fixed coordination issues for single-agent AutoGen setups
+- Fixed coordination issues for single-agent AG2 setups
 - Single agent can now vote for itself after producing its first answer
 - **Status:** ✅ Completed in v0.1.42
 

@@ -233,7 +233,7 @@ Most configurations use environment variables for API keys:so
 **Key Features:**
 - **TUI Visual Redesign**: Modern "Conversational AI" aesthetic with rounded corners, redesigned agent tabs, polished modals
 - **Human Input Queue**: Inject messages to agents mid-stream during execution with `HumanInputHook`
-- **AG2 Single-Agent Fix**: Single-agent AutoGen setups now vote and coordinate correctly
+- **AG2 Single-Agent Fix**: Single-agent AG2 setups now vote and coordinate correctly
 
 **Try It:**
 ```bash
@@ -1190,7 +1190,7 @@ uv run massgen --config massgen/configs/tools/code-execution/background_shell_de
 **Try It:**
 ```bash
 # Use AG2 agents for lesson planning (supports streaming)
-# Requirements: pip install pyautogen, OPENAI_API_KEY must be set
+# Requirements: pip install pyAG2, OPENAI_API_KEY must be set
 massgen --config massgen/configs/tools/custom_tools/ag2_lesson_planner_example.yaml "Create a lesson plan for photosynthesis"
 
 # Use LangGraph workflows as tools
@@ -1210,7 +1210,7 @@ massgen --config massgen/configs/tools/custom_tools/openai_assistant_lesson_plan
 massgen --config massgen/configs/tools/custom_tools/smolagent_lesson_planner_example.yaml "Create a lesson plan for photosynthesis"
 
 # Combine multiple frameworks
-# Requirements: pip install pyautogen langgraph langchain-openai langchain-core, OPENAI_API_KEY must be set
+# Requirements: pip install pyAG2 langgraph langchain-openai langchain-core, OPENAI_API_KEY must be set
 massgen --config massgen/configs/tools/custom_tools/ag2_and_langgraph_lesson_planner.yaml "Create a lesson plan for photosynthesis"
 ```
 
