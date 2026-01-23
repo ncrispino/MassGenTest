@@ -1117,18 +1117,26 @@ class TimelineSection(Vertical):
             label: Optional label for the separator
             round_number: The round this content belongs to (for view switching)
         """
+        from massgen.logger_config import logger
+
         self._item_count += 1
         widget_id = f"tl_sep_{self._item_count}"
+
+        logger.debug(
+            f"TimelineSection.add_separator: label='{label}', round={round_number}, " f"viewed_round={self._viewed_round}, widget_id={widget_id}",
+        )
 
         try:
             container = self.query_one("#timeline_container", TimelineScrollContainer)
 
-            # Check if this is a restart separator
+            # Check if this is a round separator (should be prominent)
+            is_round = label.upper().startswith("ROUND") if label else False
             is_restart = "RESTART" in label.upper() if label else False
 
-            if is_restart:
-                # Create prominent restart banner
+            if is_round or is_restart:
+                # Create prominent round/restart banner
                 widget = RestartBanner(label=label, id=widget_id)
+                logger.debug(f"TimelineSection.add_separator: Created RestartBanner for '{label}'")
             else:
                 # Regular separator
                 sep_text = Text()
@@ -1143,15 +1151,17 @@ class TimelineSection(Vertical):
             # Hide if viewing a different round
             if round_number != self._viewed_round:
                 widget.add_class("hidden")
+                logger.debug(f"TimelineSection.add_separator: Hiding widget (round {round_number} != viewed {self._viewed_round})")
+            else:
+                logger.debug(f"TimelineSection.add_separator: Widget visible (round {round_number} == viewed {self._viewed_round})")
 
             container.mount(widget)
             self._auto_scroll()
             self._trim_old_items()  # Keep timeline size bounded
+            logger.debug(f"TimelineSection.add_separator: Successfully mounted {widget_id}")
         except Exception as e:
             # Log the error but don't crash
-            import sys
-
-            print(f"[ERROR] add_separator failed: {e}", file=sys.stderr)
+            logger.error(f"TimelineSection.add_separator failed: {e}")
 
     def add_reasoning(self, content: str, round_number: int = 1) -> None:
         """Add coordination/reasoning content inline with subtle styling.
@@ -1770,6 +1780,10 @@ class RestartBanner(Static):
         margin: 1 0;
         padding: 0;
     }
+
+    RestartBanner.hidden {
+        display: none;
+    }
     """
 
     def __init__(self, label: str = "", id: Optional[str] = None) -> None:
@@ -1778,20 +1792,26 @@ class RestartBanner(Static):
 
     def render(self) -> Text:
         """Render a subtle, professional restart banner."""
+        import re
+
         text = Text()
 
         # Clean up the label - extract meaningful info
         display_label = self._label
         if "RESTART" in display_label.upper():
             # Try to extract round number
-            import re
-
             match = re.search(r"ROUND\s*(\d+)", display_label, re.IGNORECASE)
             if match:
                 round_num = match.group(1)
                 display_label = f"⟳ Round {round_num} Complete"
             else:
                 display_label = "⟳ New Round Starting"
+        elif display_label.upper().startswith("ROUND"):
+            # Simple "Round X" label - format as round start indicator
+            match = re.search(r"ROUND\s*(\d+)", display_label, re.IGNORECASE)
+            if match:
+                round_num = match.group(1)
+                display_label = f"▶ Round {round_num}"
 
         # Subtle dotted line style - professional and understated
         line_char = "┄"

@@ -1080,12 +1080,13 @@ SuggestionRow.selected {
 /* Shows above input bar when input is queued for injection during execution */
 #queued_input_banner {
     height: auto;
-    max-height: 3;
-    background: rgba(210, 153, 34, 0.15);
-    border: solid $accent-warning;
+    max-height: 5;
+    background: $bg-surface-2;
+    border: solid $border-default;
+    border-left: thick $accent-primary;
     padding: 0 1;
     margin-left: 1;
-    margin-bottom: 1;
+    margin-bottom: 0;
     display: none;
 }
 
@@ -1095,12 +1096,13 @@ SuggestionRow.selected {
 
 QueuedInputBanner {
     height: auto;
-    max-height: 3;
-    background: rgba(210, 153, 34, 0.15);
-    border: solid $accent-warning;
+    max-height: 5;
+    background: $bg-surface-2;
+    border: solid $border-default;
+    border-left: thick $accent-primary;
     padding: 0 1;
     margin-left: 1;
-    margin-bottom: 1;
+    margin-bottom: 0;
     display: none;
 }
 

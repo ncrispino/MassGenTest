@@ -589,9 +589,7 @@ class ToolCallCard(Static):
             # Args preview
             if self._params:
                 text.append("\n  ")
-                args_display = self._params
-                if len(args_display) > 80:
-                    args_display = args_display[:77] + "..."
+                args_display = self._truncate_params_display(self._params, 77)
                 text.append(args_display, style="dim")
 
             # Result or error preview
@@ -762,9 +760,7 @@ class ToolCallCard(Static):
         elif self._params:
             # Fallback: show params if no parsed tasks
             text.append("\n  ")
-            args_display = self._params
-            if len(args_display) > 70:
-                args_display = args_display[:67] + "..."
+            args_display = self._truncate_params_display(self._params, 67)
             text.append(args_display, style="dim")
 
         # Expanded workspace content
@@ -824,6 +820,85 @@ class ToolCallCard(Static):
             pass
         return 60  # Default
 
+    def _shorten_path(self, path: str, max_len: int) -> str:
+        """Shorten a path, keeping the end (filename/dirs) visible.
+
+        For long absolute paths, shows .../<meaningful_part> instead of
+        /very/long/path/that/gets/trun...
+        """
+        if len(path) <= max_len:
+            return path
+
+        # For paths, keep the end (filename + parent dirs) visible
+        if "/" in path or "\\" in path:
+            # Reserve 3 chars for "..."
+            suffix_len = max_len - 3
+            if suffix_len > 0:
+                return "..." + path[-suffix_len:]
+
+        # Fallback: truncate from the end (non-path values)
+        return path[: max_len - 3] + "..."
+
+    def _is_path_like(self, key: str, value: str) -> bool:
+        """Check if a key/value pair looks like a file path."""
+        # Key-based detection
+        if key in ("path", "file_path", "directory", "dir", "folder"):
+            return True
+        # Value-based detection
+        if value.startswith("/") or value.startswith("~"):
+            return True
+        if len(value) > 3 and value[1:3] == ":\\":  # Windows paths like C:\
+            return True
+        return False
+
+    def _truncate_params_display(self, params_str: str, max_len: int) -> str:
+        """Truncate params string with path-aware shortening.
+
+        For JSON params containing paths, shortens the path values to show
+        the meaningful end (filename/dirs) instead of truncating from end.
+        """
+        import json
+        import re
+
+        if len(params_str) <= max_len:
+            return params_str
+
+        # Try to parse as JSON and shorten path values
+        try:
+            params = json.loads(params_str)
+            if isinstance(params, dict):
+                shortened = {}
+                for key, val in params.items():
+                    if isinstance(val, str) and self._is_path_like(key, val):
+                        # Calculate available length per value (rough estimate)
+                        val_max = max(25, max_len // 3)
+                        shortened[key] = self._shorten_path(val, val_max)
+                    else:
+                        shortened[key] = val
+
+                result = json.dumps(shortened)
+                if len(result) <= max_len:
+                    return result
+                # Still too long, truncate but we've at least shortened paths
+                return result[: max_len - 3] + "..."
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+        # Fallback: simple truncation with regex path detection
+        # Try to find and shorten any long paths in the string
+        path_pattern = r'"(/[^"]{40,})"'
+
+        def shorten_match(m):
+            path = m.group(1)
+            shortened = self._shorten_path(path, 35)
+            return f'"{shortened}"'
+
+        result = re.sub(path_pattern, shorten_match, params_str)
+        if len(result) <= max_len:
+            return result
+
+        return result[: max_len - 3] + "..."
+
     def _get_inline_preview(self, max_len: int = 0) -> str:
         """Get inline preview of params or result for collapsed view.
 
@@ -849,7 +924,11 @@ class ToolCallCard(Static):
                             # Truncate value based on available space
                             val_max = min(len(val), max(20, max_len // 2))
                             if len(val) > val_max:
-                                val = val[: val_max - 3] + "..."
+                                # Use path-aware shortening for path-like values
+                                if self._is_path_like(key, val):
+                                    val = self._shorten_path(val, val_max)
+                                else:
+                                    val = val[: val_max - 3] + "..."
                             shown_keys.append(f"{key}={val}")
                             if len(" ".join(shown_keys)) > max_len - 20:
                                 break  # Stop if we've used most of the space

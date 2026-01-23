@@ -515,13 +515,13 @@ StatusBadge.status-waiting {
 
 /* --- Queued Input Banner --- */
 QueuedInputBanner {
-    background: rgba(206, 145, 120, 0.40);
-    border: double $accent-warning;
-    border-left: thick $accent-warning;
+    background: $bg-surface-2;
+    border: solid $border-default;
+    border-left: thick $accent-primary;
 }
 
 QueuedInputBanner:hover {
-    background: rgba(206, 145, 120, 0.50);
+    background: $bg-elevated;
 }
 
 /* --- Tool Call Card Focus --- */

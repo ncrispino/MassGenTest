@@ -24,11 +24,11 @@ class QueuedInputBanner(Static):
     QueuedInputBanner {
         height: auto;
         max-height: 5;
-        background: rgba(210, 153, 34, 0.40);
-        border: double #d29922;
-        border-left: thick #d29922;
+        background: #21262d;
+        border: solid #30363d;
+        border-left: thick #58a6ff;
         padding: 0 1;
-        margin-bottom: 1;
+        margin-bottom: 0;
         margin-left: 1;
         display: none;
     }
@@ -38,7 +38,7 @@ class QueuedInputBanner(Static):
     }
 
     QueuedInputBanner:hover {
-        background: rgba(210, 153, 34, 0.50);
+        background: #30363d;
     }
     """
 

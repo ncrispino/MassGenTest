@@ -5636,15 +5636,15 @@ Type your question and press Enter to ask the agents.
 
                         if target_label:
                             # Convert from "agent1.1" format to "A1.1" format
-                            target_short = target_label.replace("agent", "A")
+                            target_label.replace("agent", "A")
                         else:
                             # Fallback to agent number if label not available
                             target_num = tracker._get_agent_number(voted_for)
-                            target_short = f"A{target_num}" if target_num else voted_for
+                            f"A{target_num}" if target_num else voted_for
 
-                        # Simple format: just show what was voted for
-                        sep_label = f"🗳️ VOTED → {target_short}"
-                        timeline.add_separator(sep_label, round_number=current_round)
+                        # NOTE: Vote separator banner disabled - clutters UI
+                        # sep_label = f"🗳️ VOTED → {target_short}"
+                        # timeline.add_separator(sep_label, round_number=current_round)
                 except Exception:
                     pass  # Silently ignore if panel not found
 
@@ -6654,6 +6654,14 @@ Type your question and press Enter to ask the agents.
             """Start the loading spinner when the panel is mounted."""
             self._start_loading_spinner("Ready")
 
+            # Add initial "Round 1" banner
+            try:
+                timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
+                timeline.add_separator("Round 1", round_number=1)
+                logger.debug(f"AgentPanel.on_mount: Added Round 1 banner to timeline {self._timeline_section_id}")
+            except Exception as e:
+                logger.debug(f"AgentPanel.on_mount: Failed to add Round 1 banner: {e}")
+
         def set_in_use(self, in_use: bool) -> None:
             """Set whether this panel is in use (for single-agent mode).
 
@@ -7174,7 +7182,8 @@ Type your question and press Enter to ask the agents.
             # Detect session completion for restart tracking
             if "completed" in normalized.cleaned_content.lower():
                 self._session_completed = True
-                self._show_completion_footer()
+                # NOTE: Completion footer disabled - clutters UI
+                # self._show_completion_footer()
 
             # Add status to timeline as a subtle line
             # Phase 12: Pass round_number for CSS visibility
@@ -7207,7 +7216,8 @@ Type your question and press Enter to ask the agents.
             # Mark presentation shown for restart detection
             if "Providing answer" in normalized.original:
                 self._presentation_shown = True
-                self._show_completion_footer()
+                # NOTE: Completion footer disabled - clutters UI
+                # self._show_completion_footer()
 
             # Add to timeline with response styling
             # Phase 12: Pass round_number for CSS visibility
@@ -7933,9 +7943,9 @@ Type your question and press Enter to ask the agents.
                 timeline = self.query_one(f"#{self._timeline_section_id}", TimelineSection)
                 timeline.switch_to_round(round_number)
 
-                # Add a restart separator visible in the new round
+                # Add "Round X" banner at the top of each new round
                 if round_number > 1:
-                    timeline.add_separator(f"RESTART Round {round_number}", round_number=round_number)
+                    timeline.add_separator(f"Round {round_number}", round_number=round_number)
             except Exception:
                 pass
 
