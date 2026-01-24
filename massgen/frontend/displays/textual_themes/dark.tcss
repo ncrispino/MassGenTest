@@ -2685,9 +2685,9 @@ TimelineSection .timeline-text.post-eval {
     height: auto;
     max-height: 12;
     margin: 0;
-    padding: 0;
+    padding: 0 0 1 0;
     background: $bg-base;
-    border-bottom: solid $border-default;
+    border-bottom: solid #3d444d 50%;
 }
 
 .pinned-task-plan.hidden {
@@ -2695,7 +2695,7 @@ TimelineSection .timeline-text.post-eval {
 }
 
 .pinned-task-plan.collapsed {
-    max-height: 2;
+    max-height: 3;
     overflow: hidden;
 }
 
@@ -2710,9 +2710,9 @@ TaskPlanCard {
     border-left: solid #484f58;
 }
 
-/* Update animation - brief highlight */
+/* Update animation - subtle border pulse instead of full background */
 TaskPlanCard.updated {
-    background: #2d2d4a;
+    border-left: solid #58a6ff;
 }
 
 TaskPlanCard .task-header {

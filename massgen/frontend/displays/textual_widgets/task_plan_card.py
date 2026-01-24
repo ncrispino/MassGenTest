@@ -139,6 +139,7 @@ class TaskPlanCard(Static):
         self._focused_task_id = focused_task_id
         self._operation = operation
         self._reminder: Optional[str] = None
+        self._changed_task_ids: set = set()  # Track recently changed tasks for highlighting
 
     def render(self) -> Text:
         """Render the card content directly."""
@@ -150,6 +151,11 @@ class TaskPlanCard(Static):
 
     def _refresh_content(self) -> None:
         """Refresh the displayed content."""
+        self.refresh()
+
+    def _clear_highlights(self) -> None:
+        """Clear task change highlights."""
+        self._changed_task_ids = set()
         self.refresh()
 
     def set_reminder(self, content: str) -> None:
@@ -212,7 +218,9 @@ class TaskPlanCard(Static):
 
         # Render each visible task - clean minimal style
         for task in visible_tasks:
-            is_focused = task.get("id") == self._focused_task_id
+            task_id = task.get("id")
+            is_focused = task_id == self._focused_task_id
+            is_changed = task_id in self._changed_task_ids
             status = task.get("status", "pending")
 
             # Simple icons: ✓ done, → active, · pending
@@ -229,6 +237,10 @@ class TaskPlanCard(Static):
             # Focus highlight
             if is_focused and status != "completed":
                 style = "#58a6ff"
+
+            # Changed task highlight (brief flash) - bright color
+            if is_changed:
+                style = "bold #7ee787"  # Bright green for changed tasks
 
             # Description (truncate based on terminal width)
             desc = task.get("description", "Untitled task")
@@ -299,16 +311,29 @@ class TaskPlanCard(Static):
             focused_task_id: Task to focus on
             operation: Type of operation
         """
+        # Detect which tasks changed (status changed)
+        old_status_map = {t.get("id"): t.get("status") for t in self._tasks if t.get("id")}
+        self._changed_task_ids = set()
+
+        for task in tasks:
+            task_id = task.get("id")
+            if task_id:
+                old_status = old_status_map.get(task_id)
+                new_status = task.get("status")
+                # Highlight if status changed or it's a new task
+                if old_status is None or old_status != new_status:
+                    self._changed_task_ids.add(task_id)
+
         self._tasks = tasks
         self._focused_task_id = focused_task_id
         self._operation = operation
 
         # Update display
-        try:
-            content_widget = self.query_one(Static)
-            content_widget.update(self._build_content())
-        except Exception:
-            pass
+        self.refresh()
+
+        # Clear highlights after brief delay
+        if self._changed_task_ids and self.app:
+            self.app.set_timer(0.8, self._clear_highlights)
 
     @classmethod
     def from_mcp_result(cls, result: Dict[str, Any], operation: str = "create") -> "TaskPlanCard":

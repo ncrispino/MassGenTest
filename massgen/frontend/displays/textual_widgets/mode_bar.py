@@ -567,6 +567,7 @@ class WorkflowStatusLine(Static):
         self._agent_names = agent_names or {}
         self._working_agents = set(agent_ids)
         self._voted_agents = {}
+        _mode_log(f"WorkflowStatusLine.set_agents: count={self._agent_count}, names={self._agent_names}")
         self._update_message()
 
     def _get_agent_name(self, agent_id: str) -> str:
@@ -583,8 +584,9 @@ class WorkflowStatusLine(Static):
         """Update the workflow phase.
 
         Args:
-            phase: Current phase - "idle", "initial_answer", "enforcement", "presenting"
+            phase: Current phase - "idle", "coordinating", "presenting" (from orchestrator)
         """
+        _mode_log(f"WorkflowStatusLine.set_phase: '{phase}' (was '{self._current_phase}')")
         self._current_phase = phase
         self._update_message()
 
@@ -605,11 +607,13 @@ class WorkflowStatusLine(Static):
             voter_id: The agent casting the vote
             voted_for_id: The agent being voted for
         """
+        _mode_log(f"WorkflowStatusLine.record_vote: {voter_id} -> {voted_for_id}")
         self._voted_agents[voter_id] = voted_for_id
         self._update_message()
 
     def show_consensus(self, winner_name: str = "") -> None:
         """Show that consensus was reached."""
+        _mode_log(f"WorkflowStatusLine.show_consensus: winner='{winner_name}'")
         self._current_phase = "consensus"
         self.remove_class("active")
         self.add_class("consensus")
@@ -630,6 +634,7 @@ class WorkflowStatusLine(Static):
     def _update_message(self) -> None:
         """Update the displayed message based on current state."""
         if self._agent_count == 0:
+            _mode_log("WorkflowStatusLine._update_message: agent_count=0, hiding")
             self.update("")
             self.add_class("hidden")
             return
@@ -638,6 +643,7 @@ class WorkflowStatusLine(Static):
         self.remove_class("consensus")
 
         message = self._generate_message()
+        _mode_log(f"WorkflowStatusLine._update_message: phase='{self._current_phase}', votes={len(self._voted_agents)}, msg='{message[:50] if message else ''}'")
         if message:
             self.add_class("active")
             self.update(f'"{message}"')

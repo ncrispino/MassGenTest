@@ -7193,11 +7193,8 @@ Type your question and press Enter to ask the agents.
                     pass
 
                 if existing_card:
-                    # Update existing card
+                    # Update existing card (per-task highlighting handled inside)
                     existing_card.update_tasks(tasks, focused_task_id=focused_task_id, operation=operation)
-                    # Brief highlight animation
-                    existing_card.add_class("updated")
-                    self.set_timer(0.5, lambda: existing_card.remove_class("updated"))
                 else:
                     # Create new card
                     card = TaskPlanCard(
