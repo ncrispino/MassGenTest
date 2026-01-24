@@ -401,6 +401,9 @@ class CoordinationUI:
                     if hasattr(self, "_in_post_evaluation") and self._in_post_evaluation:
                         if self.display and hasattr(self.display, "show_post_evaluation_content"):
                             self.display.show_post_evaluation_content(content, source)
+                            # Fix 3: Continue to next chunk to prevent double-processing
+                            # Content has been routed to post-eval panel, skip regular processing
+                            continue
 
                 # Track selected agent for post-evaluation
                 if content and "🏆 Selected Agent:" in content:
@@ -1046,6 +1049,9 @@ class CoordinationUI:
                     if hasattr(self, "_in_post_evaluation") and self._in_post_evaluation:
                         if self.display and hasattr(self.display, "show_post_evaluation_content"):
                             self.display.show_post_evaluation_content(content, source)
+                            # Fix 3: Continue to next chunk to prevent double-processing
+                            # Content has been routed to post-eval panel, skip regular processing
+                            continue
 
                 # Track selected agent for post-evaluation
                 if content and "🏆 Selected Agent:" in content:
@@ -1562,13 +1568,14 @@ class CoordinationUI:
                             delattr(self, attr_name)
 
                 # Handle post-evaluation content streaming
-                _routed_to_post_eval = False
                 if source and content and chunk_type == "content":
                     # Check if we're in post-evaluation by looking for the status message
                     if hasattr(self, "_in_post_evaluation") and self._in_post_evaluation:
                         if self.display and hasattr(self.display, "show_post_evaluation_content"):
                             self.display.show_post_evaluation_content(content, source)
-                            _routed_to_post_eval = True
+                            # Fix 3: Continue to next chunk to prevent double-processing
+                            # Content has been routed to post-eval panel, skip regular processing
+                            continue
 
                 # Track selected agent for post-evaluation
                 if content and "🏆 Selected Agent:" in content:
@@ -1834,6 +1841,11 @@ class CoordinationUI:
         Uses buffered filtering to handle streaming: small chunks are accumulated
         until we see a newline or have enough content to check for workspace JSON.
         """
+        # Filter coordination messages that duplicate tool cards/notifications
+        # These are yielded by orchestrator when processing workspace tool calls
+        if "Providing answer:" in content or "🗳️ Voting for" in content:
+            return
+
         # Update agent status - if agent is streaming content, they're working
         # But don't override "completed" status
         current_status = self.display.get_agent_status(agent_id)
@@ -1848,81 +1860,89 @@ class CoordinationUI:
         self._agent_content_buffers[agent_id] += content
 
         # Check if we should process the buffer:
-        # The goal is to accumulate enough content to reliably detect workspace JSON
-        # while not delaying display too much for normal content.
+        # Keep accumulating until we can reliably determine if there's workspace JSON
         buffer = self._agent_content_buffers[agent_id]
         buffer_len = len(buffer)
 
-        # First, check if this looks like a JSON block in progress
-        # If so, wait until we see the closing brace/bracket
-        looks_like_json = buffer.lstrip().startswith("{") or buffer.lstrip().startswith("[")
-        if looks_like_json:
-            # Count braces to detect if JSON is complete
+        # Check if buffer might contain workspace JSON (look at the WHOLE buffer)
+        has_workspace_pattern = '"action_type"' in buffer or '"answer_data"' in buffer or '"action": "new_answer"' in buffer or '"action": "vote"' in buffer or "```json" in buffer
+
+        if has_workspace_pattern:
+            # Buffer has workspace JSON patterns - wait for it to complete
             open_braces = buffer.count("{") - buffer.count("}")
             open_brackets = buffer.count("[") - buffer.count("]")
-            json_complete = open_braces == 0 and open_brackets == 0 and buffer_len > 5
 
-            if not json_complete and buffer_len < 500:
-                # JSON still incomplete, keep buffering (up to 500 chars max)
+            # JSON is complete when braces are balanced AND we have closing braces
+            json_complete = open_braces == 0 and open_brackets == 0 and "}" in buffer
+
+            # For code fences, need both opening and closing
+            if "```json" in buffer:
+                fence_count = buffer.count("```")
+                json_complete = fence_count >= 2
+
+            if not json_complete and buffer_len < 2000:
+                # JSON still incomplete, keep buffering
                 return
 
-        # Flush conditions for non-JSON or complete JSON:
-        # 1. Buffer is large enough to reliably match patterns (100+ chars)
-        # 2. Buffer contains newline AND is at least 30 chars
-        # 3. Sentence-ending punctuation with substantial content (30+ chars)
-        # 4. Closing braces/brackets with substantial content (suggests JSON block end)
-        ends_with_sentence = buffer.rstrip().endswith((".", "!", "?"))
-        ends_with_json_close = buffer.rstrip().endswith(("}", "]"))
-        has_newline = "\n" in buffer
+        # No workspace patterns, or JSON is complete - check flush conditions
+        # For regular content (no JSON patterns), flush more aggressively for streaming UX
+        if not has_workspace_pattern:
+            ends_with_sentence = buffer.rstrip().endswith((".", "!", "?", ":", "\n"))
+            should_flush = buffer_len >= 80 or (ends_with_sentence and buffer_len >= 20)
 
-        should_flush = buffer_len >= 100 or (has_newline and buffer_len >= 30) or (ends_with_sentence and buffer_len >= 30) or (ends_with_json_close and buffer_len >= 30)
-
-        if not should_flush:
-            # Keep buffering
-            return
+            if not should_flush:
+                return
 
         # Process the buffered content
         self._agent_content_buffers[agent_id] = ""
 
-        # Check if this is workspace tool JSON (action_type, answer_data, etc.)
-        # If so, convert it to a tool card instead of filtering
-        if ContentNormalizer.is_workspace_tool_json(buffer):
-            workspace_action = self._parse_workspace_action(buffer)
+        # Use unified extraction to handle all workspace JSON formats:
+        # - Pure JSON: {"action_type": ...}
+        # - Code fence: ```json\n{...}\n```
+        # - Code fence with text: "Here's my vote:\n```json\n{...}\n```"
+        # - Embedded JSON: "I'll vote for Agent 1. {"action_type": ...}"
+        extraction_result = ContentNormalizer.extract_workspace_json(buffer)
+        if extraction_result:
+            json_str, text_before, text_after = extraction_result
+            workspace_action = self._parse_workspace_action(json_str)
+
             if workspace_action:
                 action_type, params = workspace_action
-                # Create a tool message that will be displayed as a tool card
+
+                # For new_answer and vote actions:
+                # - Don't emit text_before (content is in JSON, shown via answer card/vote notification)
+                # - Don't create tool card here (send_new_answer/vote display will create it)
+                # This prevents duplicate content and duplicate tool cards
+                if action_type in ("new_answer", "vote"):
+                    # Just log and return - orchestrator's send_new_answer/vote will handle display
+                    if self.logger:
+                        tool_msg = f"🔧 Calling workspace/{action_type}"
+                        if params:
+                            tool_msg += f" {params}"
+                        self.logger.log_agent_content(agent_id, tool_msg, "tool")
+                    return
+
+                # For other workspace actions, emit text_before and create tool card
+                if text_before and not ContentNormalizer.is_workspace_state_content(text_before):
+                    await self._emit_agent_content(agent_id, text_before)
+
+                # Create tool card for the workspace action
                 tool_msg = f"🔧 Calling workspace/{action_type}"
                 if params:
                     tool_msg += f" {params}"
                 self.display.update_agent_content(agent_id, tool_msg, "tool")
                 if self.logger:
                     self.logger.log_agent_content(agent_id, tool_msg, "tool")
+
+                # Emit any text after the JSON as content (rare but possible)
+                if text_after and not ContentNormalizer.is_workspace_state_content(text_after):
+                    await self._emit_agent_content(agent_id, text_after)
+                return
             else:
-                # Couldn't parse, just log and skip
+                # Couldn't parse the JSON, just log and skip
                 if self.logger:
                     self.logger.log_agent_content(agent_id, buffer, "filtered_workflow_json")
-            return
-
-        # Check if buffer contains embedded workspace JSON (mixed content)
-        # If so, try to extract and create tool card, then emit the non-JSON part
-        workspace_action = self._parse_workspace_action(buffer)
-        if workspace_action:
-            action_type, params = workspace_action
-            # Create tool card for the workspace action
-            tool_msg = f"🔧 Calling workspace/{action_type}"
-            if params:
-                tool_msg += f" {params}"
-            self.display.update_agent_content(agent_id, tool_msg, "tool")
-            if self.logger:
-                self.logger.log_agent_content(agent_id, tool_msg, "tool")
-
-            # Extract the non-JSON part (reasoning) to display
-            json_start = buffer.find("{")
-            if json_start > 0:
-                reasoning_part = buffer[:json_start].strip()
-                if reasoning_part and not ContentNormalizer.is_workspace_state_content(reasoning_part):
-                    await self._emit_agent_content(agent_id, reasoning_part)
-            return
+                return
 
         # Filter workspace state content (CWD, File created, etc.)
         # This is internal coordination info that shouldn't be shown to users
@@ -1960,9 +1980,17 @@ class CoordinationUI:
                 status = self.orchestrator.get_status()
                 if status:
                     selected_agent = status.get("selected_agent")
-                    if selected_agent and selected_agent == agent_id:
+
+                    # Cache selected_agent when first detected (Fix 2: persist across status changes)
+                    if selected_agent:
+                        self._cached_selected_agent = selected_agent
+
+                    # Use cached value as fallback if current status doesn't have it
+                    effective_selected_agent = selected_agent or getattr(self, "_cached_selected_agent", None)
+
+                    if effective_selected_agent and effective_selected_agent == agent_id:
                         vote_results = status.get("vote_results", {})
-                        self.display.stream_final_answer_chunk(content, selected_agent, vote_results)
+                        self.display.stream_final_answer_chunk(content, effective_selected_agent, vote_results)
                         if self.logger:
                             self.logger.log_agent_content(agent_id, content, "thinking")
                         return
@@ -2124,6 +2152,11 @@ class CoordinationUI:
 
     async def _process_orchestrator_content(self, content: str):
         """Process content from orchestrator."""
+        # Filter coordination messages that duplicate tool cards/notifications
+        # These are yielded by orchestrator when processing workspace tool calls
+        if "Providing answer:" in content or "🗳️ Voting for" in content:
+            return
+
         # Handle final answer - merge with voting info
         if "Final Coordinated Answer" in content:
             # Don't create event yet - wait for actual answer content to merge

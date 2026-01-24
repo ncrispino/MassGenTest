@@ -146,6 +146,9 @@ class ExecutionStatusLine(Widget):
         """Render the status line showing all agents' states."""
         text = Text()
 
+        # Opening border
+        text.append("╭ ", style="dim")
+
         # Pulsing dots animation: .  ..  ...  ..
         pulse_patterns = ["   ", ".  ", ".. ", "..."]
         pulse_dots = pulse_patterns[self._pulse_frame]
@@ -175,14 +178,23 @@ class ExecutionStatusLine(Widget):
             if state in ("working", "streaming", "thinking", "tool_use"):
                 # Pulsing dots for working states - use agent color
                 text.append(pulse_dots, style=f"{agent_color} bold")
-            elif state in ("voted", "done"):
-                # Checkmark for completed
+            elif state == "voted":
+                # Green checkmark for voted (waiting for consensus)
                 text.append("✓  ", style="green")
+            elif state == "done":
+                # Dim checkmark for done (final presentation in progress)
+                text.append("✓  ", style="dim")
+            elif state == "cancelled":
+                # X for cancelled (yellow)
+                text.append("✗  ", style="yellow")
             elif state == "error":
-                # X for error
+                # X for error (red)
                 text.append("✗  ", style="red")
             else:
                 # Dim dot for idle
                 text.append("○  ", style="dim")
+
+        # Closing border (with space to avoid overlap with dots)
+        text.append(" ╮", style="dim")
 
         return text

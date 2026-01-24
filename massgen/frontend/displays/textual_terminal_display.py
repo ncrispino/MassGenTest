@@ -1236,6 +1236,13 @@ class TextualTerminalDisplay(TerminalDisplay):
         if not content:
             return
 
+        # Auto-set status to streaming when content arrives and agent is idle/waiting
+        # This ensures the status indicator updates immediately when streaming starts
+        current_status = self.agent_status.get(agent_id, "idle")
+        if current_status in ("idle", "waiting"):
+            self.agent_status[agent_id] = "streaming"  # Update local dict first
+            self._call_app_method("update_agent_status", agent_id, "streaming")
+
         display_type = "status" if content_type == "thinking" and self._is_critical_content(content, content_type) else content_type
 
         prepared = self._prepare_agent_content(agent_id, content, display_type)
@@ -4101,20 +4108,29 @@ Type your question and press Enter to ask the agents.
             # Phase 13.2: Update ExecutionStatusLine with agent state
             if self._execution_status_line:
                 # Map to ExecutionStatusLine states
+                # "voted" = green checkmark (waiting for consensus)
+                # "done" = dim checkmark (final presentation in progress)
                 STATE_MAP = {
                     "working": "working",
-                    "thinking": "thinking",
-                    "streaming": "streaming",
-                    "tool_call": "tool_use",
-                    "mcp_tool_called": "tool_use",
-                    "custom_tool_called": "tool_use",
-                    "voted": "voted",
-                    "completed": "done",
-                    "done": "done",
+                    "thinking": "working",
+                    "streaming": "working",
+                    "processing": "working",
+                    "tool_call": "working",
+                    "mcp_tool_called": "working",
+                    "custom_tool_called": "working",
+                    "mcp_tool_response": "working",
+                    "custom_tool_response": "working",
+                    "voting": "working",
+                    "voted": "voted",  # Green checkmark - agent voted
+                    "waiting": "voted",  # Waiting for others after voting
+                    "complete": "voted",  # Finished, waiting for consensus
+                    "completed": "voted",
+                    "done": "done",  # Dim checkmark - final presentation happening
                     "error": "error",
+                    "cancelled": "cancelled",
                     "idle": "idle",
                 }
-                mapped_state = STATE_MAP.get(status, "idle")
+                mapped_state = STATE_MAP.get(status, "working")
                 self._execution_status_line.set_agent_state(agent_id, mapped_state)
             # Update execution status bar with new agent icons
             self._update_execution_status()
@@ -4131,7 +4147,7 @@ Type your question and press Enter to ask the agents.
 
             # Also update the status ribbon timeout display
             if self._status_ribbon:
-                remaining = timeout_state.get("remaining_seconds")
+                remaining = timeout_state.get("remaining_soft")
                 self._status_ribbon.set_timeout(agent_id, remaining)
 
         def update_hook_execution(
@@ -4464,6 +4480,16 @@ Type your question and press Enter to ask the agents.
                 self._tab_bar.set_active(agent_id)
                 self._tab_bar.set_winner(agent_id)
 
+            # 1.5. Update ExecutionStatusLine: dim checkmarks for non-presenting, dots for presenter
+            if self._execution_status_line:
+                for aid in self._execution_status_line._agent_ids:
+                    if aid == agent_id:
+                        # Presenting agent goes back to working dots
+                        self._execution_status_line.set_agent_state(aid, "working")
+                    else:
+                        # Non-presenting agents get dim checkmark
+                        self._execution_status_line.set_agent_state(aid, "done")
+
             # 2. Show the agent panel for the winner (remove hidden class)
             if agent_id in self.agent_widgets:
                 if self._active_agent_id and self._active_agent_id in self.agent_widgets:
@@ -4594,6 +4620,11 @@ Type your question and press Enter to ask the agents.
             if self._tab_bar:
                 self._tab_bar.set_active(winner_id)
                 self._tab_bar.set_winner(winner_id)
+
+            # 1.5. Update ExecutionStatusLine: all agents to done (no streaming in quick mode)
+            if self._execution_status_line:
+                for aid in self._execution_status_line._agent_ids:
+                    self._execution_status_line.set_agent_state(aid, "done")
 
             # 2. Show the winner's panel (hide others)
             if winner_id in self.agent_widgets:
@@ -6364,10 +6395,15 @@ Type your question and press Enter to ask the agents.
                     self._execution_status_timer.stop()
                     self._execution_status_timer = None
 
-                # Set all agents to idle
+                # Set all agents to idle in status bar
                 if hasattr(self, "_status_bar") and self._status_bar:
                     for agent_id in self._status_bar._agent_order:
                         self._status_bar.set_agent_activity(agent_id, "idle")
+
+                # Update ExecutionStatusLine to show cancelled state
+                if hasattr(self, "_execution_status_line") and self._execution_status_line:
+                    for agent_id in self._execution_status_line._agent_ids:
+                        self._execution_status_line.set_agent_state(agent_id, "cancelled")
 
                 # Stop all pulsing animations
                 self._stop_all_pulses()

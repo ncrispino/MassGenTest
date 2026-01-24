@@ -817,8 +817,8 @@ class PresentationContentHandler(BaseContentHandler):
 
         content = normalized.cleaned_content
 
-        # Filter "Providing answer:" prefix
-        if content.startswith("Providing answer:"):
+        # Filter "Providing answer:" prefix (may have emoji like 💡)
+        if "Providing answer:" in content:
             return None
 
         return content
