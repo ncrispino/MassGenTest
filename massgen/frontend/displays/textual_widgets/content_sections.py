@@ -499,17 +499,28 @@ class TimelineScrollContainer(ScrollableContainer):
         except Exception as e:
             self._log(f"RESIZE: scrollbar error: {e}")
 
-    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
-        """Detect when user scrolls away from bottom."""
+    def refresh_scrollbar(self) -> None:
+        """Force refresh of the vertical scrollbar.
+
+        Call this after mounting content to ensure the scrollbar
+        position indicator reflects the new content size and scroll position.
+        Textual automatically syncs scrollbar position from scroll_y.
+        """
         try:
             vscroll = self.vertical_scrollbar
-            scrollbar_pos = vscroll.position if vscroll else "N/A"
-            window_size = vscroll.window_size if vscroll else "N/A"
-            window_virtual_size = vscroll.window_virtual_size if vscroll else "N/A"
-            self._log(f"watch_scroll_y: scroll_y={new_value:.1f} max={self.max_scroll_y:.1f} | scrollbar pos={scrollbar_pos} window_size={window_size} virtual={window_virtual_size}")
-            # Note: Removed manual scrollbar sync - Textual handles this automatically
+            if vscroll:
+                vscroll.refresh()
+                self._log(f"refresh_scrollbar: scroll_y={self.scroll_y:.1f} max={self.max_scroll_y:.1f}")
         except Exception as e:
-            self._log(f"watch_scroll_y: old={old_value:.1f} new={new_value:.1f} max={self.max_scroll_y:.1f} auto={self._auto_scrolling} (scrollbar error: {e})")
+            self._log(f"refresh_scrollbar error: {e}")
+
+    def watch_scroll_y(self, old_value: float, new_value: float) -> None:
+        """Detect when user scrolls away from bottom.
+
+        Textual automatically syncs scrollbar position from scroll_y,
+        so we only need to handle scroll mode detection here.
+        """
+        self._log(f"watch_scroll_y: scroll_y={new_value:.1f} max={self.max_scroll_y:.1f} auto={self._auto_scrolling}")
 
         if self._auto_scrolling:
             return  # Ignore programmatic scrolls
@@ -535,8 +546,16 @@ class TimelineScrollContainer(ScrollableContainer):
             self._user_scrolled_up = False
             self.post_message(self.ScrollModeExited())
 
-    def scroll_end(self, animate: bool = False) -> None:
-        """Auto-scroll to end, marking it as programmatic."""
+    def scroll_end(self, animate: bool = True, duration: float = 0.15) -> None:
+        """Auto-scroll to end with smooth animation.
+
+        Textual automatically syncs the scrollbar when scroll_y changes,
+        so we just need to call scroll_to/scroll_end and let Textual handle it.
+
+        Args:
+            animate: Whether to animate the scroll (default True for smooth UX)
+            duration: Animation duration in seconds (default 0.15s)
+        """
         self._log(f"scroll_end called: pending={self._scroll_pending} max_scroll_y={self.max_scroll_y:.1f} current_scroll_y={self.scroll_y:.1f}")
 
         # Debounce: if scroll is already pending, don't queue another
@@ -551,17 +570,17 @@ class TimelineScrollContainer(ScrollableContainer):
             self._scroll_pending = False
             # Set flag BEFORE scroll - it stays set until reset_auto_scroll is called
             self._auto_scrolling = True
-            super(TimelineScrollContainer, self).scroll_end(animate=animate)
-            self._log(f"do_scroll after super().scroll_end: scroll_y={self.scroll_y:.1f}")
-            # Force scrollbar refresh
-            try:
-                if self.vertical_scrollbar:
-                    self.vertical_scrollbar.refresh()
-                    self._log("do_scroll: forced scrollbar refresh")
-            except Exception as e:
-                self._log(f"do_scroll: scrollbar refresh error: {e}")
-            # Reset flag after a brief delay to allow scroll events to be processed
-            self.set_timer(0.1, self._reset_auto_scroll)
+
+            # Use scroll_to with easing for smooth natural-feeling scroll
+            # Textual handles scrollbar sync automatically when scroll_y changes
+            if animate and self.max_scroll_y > 0:
+                self.scroll_to(y=self.max_scroll_y, animate=True, duration=duration, easing="out_cubic")
+            else:
+                super(TimelineScrollContainer, self).scroll_end(animate=False)
+
+            self._log(f"do_scroll after scroll: scroll_y={self.scroll_y:.1f}")
+            # Reset flag after animation completes
+            self.set_timer(duration + 0.1 if animate else 0.1, self._reset_auto_scroll)
 
         # Defer scroll until after layout is complete
         self.call_after_refresh(do_scroll)

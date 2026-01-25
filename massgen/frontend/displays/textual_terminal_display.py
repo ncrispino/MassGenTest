@@ -995,11 +995,14 @@ class TextualTerminalDisplay(TerminalDisplay):
 
         default_buffer_flush = kwargs.get("buffer_flush_interval")
         if default_buffer_flush is None:
+            # Faster flush for smoother streaming - 20 FPS (0.05s) provides
+            # good balance between smooth appearance and performance
             if self._terminal_type in ("vscode", "windows_terminal"):
-                default_buffer_flush = 0.3
+                default_buffer_flush = 0.1  # Faster than before (was 0.3s)
             else:
-                adaptive_flush = max(0.1, 1 / max(self.refresh_rate, 1))
-                default_buffer_flush = min(adaptive_flush, 0.15)
+                # 0.05s (20 FPS) for smooth streaming, capped at refresh rate
+                adaptive_flush = max(0.05, 1 / max(self.refresh_rate, 1))
+                default_buffer_flush = min(adaptive_flush, 0.05)
         self.buffer_flush_interval = default_buffer_flush
         self._buffers = {agent_id: [] for agent_id in self.agent_ids}
         self._buffer_lock = threading.Lock()
@@ -4019,18 +4022,26 @@ Type your question and press Enter to ask the agents.
                 widget._update_loading_text(message)
 
         async def _flush_buffers(self):
-            """Flush buffered content to widgets."""
+            """Flush buffered content to widgets.
+
+            Uses frame-aware batching to prevent UI blocking:
+            - Limits items processed per flush to max_buffer_batch (default 5)
+            - Remaining items stay in buffer for next flush cycle
+            """
             self._pending_flush = False
             all_updates = []
+            max_items_per_agent = 5  # Limit to prevent blocking
+
             for agent_id in self.coordination_display.agent_ids:
                 with self._buffer_lock:
                     if not self._buffers[agent_id]:
                         continue
-                    buffer_copy = self._buffers[agent_id].copy()
-                    self._buffers[agent_id].clear()
+                    # Take only max_items_per_agent items per flush
+                    items_to_process = self._buffers[agent_id][:max_items_per_agent]
+                    self._buffers[agent_id] = self._buffers[agent_id][max_items_per_agent:]
 
-                if buffer_copy and agent_id in self.agent_widgets:
-                    all_updates.append((agent_id, buffer_copy))
+                if items_to_process and agent_id in self.agent_widgets:
+                    all_updates.append((agent_id, items_to_process))
 
             if all_updates:
                 with self.batch_update():

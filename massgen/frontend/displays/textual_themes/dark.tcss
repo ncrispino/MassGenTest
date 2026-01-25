@@ -2379,11 +2379,12 @@ ToolCallCard {
     background: transparent;
     border: none;
     border-left: thick $border-default;
+    transition: opacity 150ms out_cubic;
 }
 
-/* Tool card appearance animation - fade in effect */
+/* Tool card appearance animation - smooth fade in effect */
 ToolCallCard.appearing {
-    opacity: 0.3;
+    opacity: 0.0;
 }
 
 ToolCallCard.appeared {
@@ -2391,12 +2392,26 @@ ToolCallCard.appeared {
 }
 
 /* === General Animation Utility Classes === */
-/* Fade-in animation - apply .appearing then swap to .appeared */
+/* Fade-in animation - apply .appearing then swap to .appeared
+ * Transition property animates the change over 150ms with ease-out curve */
 .appearing {
-    opacity: 0.3;
+    opacity: 0.0;
 }
 
 .appeared {
+    opacity: 1.0;
+}
+
+/* Smooth opacity transitions for timeline content */
+TimelineSection .timeline-text {
+    transition: opacity 150ms out_cubic;
+}
+
+TimelineSection .timeline-text.appearing {
+    opacity: 0.0;
+}
+
+TimelineSection .timeline-text.appeared {
     opacity: 1.0;
 }
 
@@ -2589,11 +2604,12 @@ ToolBatchCard {
     margin: 1 0 1 1;  /* Match ToolCallCard spacing for consistency */
     background: transparent;
     border-left: thick $border-default;
+    transition: opacity 150ms out_cubic;
 }
 
-/* Appearance animation */
+/* Appearance animation - smooth fade in */
 ToolBatchCard.appearing {
-    opacity: 0.3;
+    opacity: 0.0;
 }
 
 ToolBatchCard.appeared {
