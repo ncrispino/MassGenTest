@@ -25,10 +25,6 @@ from .collapsible_text_card import CollapsibleTextCard
 from .tool_batch_card import ToolBatchCard, ToolBatchItem
 from .tool_card import ToolCallCard
 
-# Thresholds for when to use collapsible text cards
-COLLAPSE_LINE_THRESHOLD = 3
-COLLAPSE_CHAR_THRESHOLD = 200
-
 logger = logging.getLogger(__name__)
 
 
@@ -575,15 +571,19 @@ class TimelineSection(ScrollableContainer):
         # Answer lock mode: when True, timeline shows only the final answer card
         self._answer_lock_mode = False
         self._locked_card_id: Optional[str] = None
+        # Track if Round 1 banner has been shown
+        self._round_1_shown = False
 
     def compose(self) -> ComposeResult:
         # Scroll mode indicator (hidden by default)
         yield Static("", id="scroll_mode_indicator", classes="scroll-indicator hidden")
         # Content is mounted directly into TimelineSection (no nested container)
 
-    def on_mount(self) -> None:
-        """Add initial Round 1 banner when timeline is mounted."""
-        self.add_separator("Round 1", round_number=1)
+    def _ensure_round_1_shown(self) -> None:
+        """Ensure Round 1 banner is shown before any content."""
+        if not self._round_1_shown:
+            self._round_1_shown = True
+            self.add_separator("Round 1", round_number=1)
 
     def _log(self, msg: str) -> None:
         """Debug logging helper."""
@@ -888,6 +888,9 @@ class TimelineSection(ScrollableContainer):
         Returns:
             The created ToolCallCard
         """
+        # Ensure Round 1 banner is shown before first content
+        self._ensure_round_1_shown()
+
         # Close any open reasoning batch when tool arrives
         self._close_reasoning_batch()
 
@@ -996,6 +999,9 @@ class TimelineSection(ScrollableContainer):
         Returns:
             The created ToolBatchCard
         """
+        # Ensure Round 1 banner is shown before first content
+        self._ensure_round_1_shown()
+
         card = ToolBatchCard(
             server_name=server_name,
             id=f"batch_{batch_id}",
@@ -1253,6 +1259,9 @@ class TimelineSection(ScrollableContainer):
             text_class: CSS class (status, thinking-inline, content-inline, response)
             round_number: The round this content belongs to (for view switching)
         """
+        # Ensure Round 1 banner is shown before first content
+        self._ensure_round_1_shown()
+
         # Clean up excessive newlines only - preserve all spacing
         import re
 
@@ -1379,6 +1388,9 @@ class TimelineSection(ScrollableContainer):
         if not content.strip():
             return
 
+        # Ensure Round 1 banner is shown before first content
+        self._ensure_round_1_shown()
+
         try:
             # Close batch if label changed
             if self._current_reasoning_card is not None and self._current_batch_label != label:
@@ -1413,6 +1425,9 @@ class TimelineSection(ScrollableContainer):
             widget: Any Textual widget to add to the timeline
             round_number: The round this content belongs to (for view switching)
         """
+        # Ensure Round 1 banner is shown before first content
+        self._ensure_round_1_shown()
+
         self._item_count += 1
 
         # Tag with round class for navigation (scroll-to behavior)
@@ -1424,8 +1439,12 @@ class TimelineSection(ScrollableContainer):
         except Exception:
             pass
 
-    def clear(self) -> None:
-        """Clear all timeline content."""
+    def clear(self, add_round_1: bool = True) -> None:
+        """Clear all timeline content.
+
+        Args:
+            add_round_1: If True, add a "Round 1" separator after clearing (default: True)
+        """
         # Close any open reasoning batch
         self._close_reasoning_batch()
 
@@ -1448,6 +1467,14 @@ class TimelineSection(ScrollableContainer):
         # Reset truncation tracking to avoid stale state
         if hasattr(self, "_truncation_shown_rounds"):
             self._truncation_shown_rounds.clear()
+
+        # Reset Round 1 shown flag
+        self._round_1_shown = False
+
+        # Add initial Round 1 separator
+        if add_round_1:
+            self._round_1_shown = True  # Set flag before adding to avoid re-entry
+            self.add_separator("Round 1", round_number=1)
 
     def clear_tools_tracking(self) -> None:
         """Clear tools and batch tracking dicts without removing UI elements.

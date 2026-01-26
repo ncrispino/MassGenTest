@@ -373,7 +373,8 @@ class PlanOptionsPopover(Widget):
             screen_width = self.app.size.width
             popover_width = 70  # Match CSS width
             right_margin = 10
-            offset_x = screen_width - popover_width - right_margin
+            # Clamp to non-negative to prevent popover from rendering off left edge
+            offset_x = max(0, screen_width - popover_width - right_margin)
             self.styles.offset = (offset_x, 0)
             _popover_log(f"  Positioned at offset_x={offset_x} (screen={screen_width})")
 

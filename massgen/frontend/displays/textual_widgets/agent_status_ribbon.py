@@ -269,70 +269,6 @@ class RoundSelector(Label):
         self.post_message(self.Clicked())
 
 
-class RoundPill(Label):
-    """Minimal clickable round marker for navigation."""
-
-    can_focus = True
-
-    DEFAULT_CSS = """
-    RoundPill {
-        width: auto;
-        height: 1;
-        padding: 0;
-        margin: 0 1 0 0;
-        background: transparent;
-        color: $text-muted;
-    }
-
-    RoundPill:hover {
-        color: $text;
-        text-style: underline;
-    }
-
-    RoundPill.current {
-        color: $primary;
-        text-style: bold;
-    }
-
-    RoundPill.viewing {
-        color: $accent;
-        text-style: bold;
-    }
-
-    RoundPill.final {
-        color: $success;
-    }
-
-    RoundPill.final.current {
-        color: $success;
-        text-style: bold;
-    }
-    """
-
-    class Clicked(Message):
-        """Emitted when a round pill is clicked."""
-
-        def __init__(self, round_number: Optional[int], is_final: bool = False) -> None:
-            self.round_number = round_number
-            self.is_final = is_final
-            super().__init__()
-
-    def __init__(
-        self,
-        label: str,
-        round_number: Optional[int] = None,
-        is_final: bool = False,
-        **kwargs,
-    ) -> None:
-        super().__init__(label, **kwargs)
-        self._round_number = round_number
-        self._is_final = is_final
-
-    async def on_click(self) -> None:
-        """Handle click on the pill."""
-        self.post_message(self.Clicked(self._round_number, self._is_final))
-
-
 class AgentStatusRibbon(Widget):
     """Real-time status bar below tabs with bookmark-style round navigation.
 
@@ -882,25 +818,6 @@ class AgentStatusRibbon(Widget):
         dropdown.focus()
         self._dropdown_open = True
         logger.info("AgentStatusRibbon._toggle_dropdown: done")
-
-    def on_round_pill_clicked(self, event: RoundPill.Clicked) -> None:
-        """Handle click on a round pill - emit ViewSelected to scroll to that round."""
-        event.stop()
-
-        agent_id = self.current_agent
-
-        if event.is_final:
-            # Clicking final answer pill
-            self._viewing_final_answer[agent_id] = True
-            self.post_message(ViewSelected("final_answer", agent_id))
-        else:
-            # Clicking a round pill
-            self._viewing_final_answer[agent_id] = False
-            if event.round_number is not None:
-                self._viewed_round[agent_id] = event.round_number
-            self.post_message(ViewSelected("round", agent_id, event.round_number))
-
-        self._update_round_display()
 
     def on_view_selected(self, event: ViewSelected) -> None:
         """Handle view selection - update local state, let event bubble."""

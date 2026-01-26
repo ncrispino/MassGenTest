@@ -136,23 +136,40 @@ class CoordinationUI:
                     setattr(self, reasoning_active_key, False)
                 return reasoning_delta
 
-    def _parse_chunk_data(self, chunk: Any, content: str) -> Optional[Dict[str, Any]]:
-        """Parse structured data from a chunk, trying data attr first then JSON string.
+    def _parse_chunk_data(self, chunk: Any, content: Any) -> Optional[Dict[str, Any]]:
+        """Parse structured data from a chunk.
+
+        Tries in order:
+        1. chunk.data attribute (if exists)
+        2. content if already a dict
+        3. content parsed as JSON string
 
         Args:
             chunk: The chunk object that may have a 'data' attribute
-            content: The content string that may be JSON
+            content: The content which may be a dict or JSON string
 
         Returns:
             Parsed dict or None if parsing fails
         """
+        # Try chunk.data first
         data = getattr(chunk, "data", None)
-        if data is None and isinstance(content, str) and content:
+        if isinstance(data, dict):
+            return data
+
+        # Content might already be a dict (orchestrator passes dict directly)
+        if isinstance(content, dict):
+            return content
+
+        # Try parsing content as JSON string
+        if isinstance(content, str) and content:
             try:
-                data = json.loads(content)
+                parsed = json.loads(content)
+                if isinstance(parsed, dict):
+                    return parsed
             except (json.JSONDecodeError, ValueError):
-                data = None
-        return data if isinstance(data, dict) else None
+                pass
+
+        return None
 
     def _reset_summary_active_flags(self) -> None:
         """Reset all _summary_active_ flags for final presentation."""

@@ -4858,8 +4858,8 @@ Type your question and press Enter to ask the agents.
             for agent_id, panel in self.agent_widgets.items():
                 try:
                     timeline = panel.query_one(f"#{panel._timeline_section_id}", TimelineSection)
-                    # Clear the timeline content
-                    timeline.clear()
+                    # Clear the timeline content (add Round 1 only for turn 1)
+                    timeline.clear(add_round_1=(turn == 1))
 
                     # Add a turn separator banner if this is turn 2+
                     if turn > 1:
