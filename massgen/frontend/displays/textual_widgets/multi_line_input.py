@@ -776,13 +776,30 @@ class MultiLineInput(TextArea):
                 # Valid @ - extract prefix
                 prefix = text_before_cursor[pos + 1 :]
 
-                # Don't trigger if there's a space (path is complete)
-                if " " in prefix:
-                    return None
+                # Check if this is a quoted path (starts with ")
+                is_quoted = prefix.startswith('"')
 
-                # Don't trigger if already has :w suffix
-                if prefix.endswith(":w"):
-                    return None
+                if is_quoted:
+                    # For quoted paths, extract content after the opening quote
+                    # Allow spaces inside quotes
+                    prefix = prefix[1:]  # Remove opening quote
+
+                    # Check if the quote is closed (path is complete)
+                    if '"' in prefix:
+                        return None
+
+                    # Don't trigger if already has :w suffix (after closing quote)
+                    # This case shouldn't happen for open quotes, but check anyway
+                    if prefix.endswith(":w"):
+                        return None
+                else:
+                    # For unquoted paths, don't trigger if there's a space
+                    if " " in prefix:
+                        return None
+
+                    # Don't trigger if already has :w suffix
+                    if prefix.endswith(":w"):
+                        return None
 
                 return (pos, prefix)
 
@@ -883,7 +900,12 @@ class MultiLineInput(TextArea):
         before = text[: self._at_position]
         after = text[at_end:]
         suffix = ":w" if with_write else ""
-        new_reference = f"@{path}{suffix}"
+
+        # Auto-quote paths that contain spaces
+        if " " in path:
+            new_reference = f'@"{path}"{suffix}'
+        else:
+            new_reference = f"@{path}{suffix}"
 
         new_text = before + new_reference + after
         new_cursor_pos = len(before) + len(new_reference)
@@ -923,8 +945,15 @@ class MultiLineInput(TextArea):
         # Build new text
         before = text[: self._at_position]
         after = text[at_end:]
-        new_text = before + f"@{new_prefix}" + after
-        new_cursor_pos = len(before) + 1 + len(new_prefix)
+
+        # Auto-quote paths that contain spaces (keep quote open for continued browsing)
+        if " " in new_prefix:
+            new_reference = f'@"{new_prefix}'
+        else:
+            new_reference = f"@{new_prefix}"
+
+        new_text = before + new_reference + after
+        new_cursor_pos = len(before) + len(new_reference)
 
         # Update text
         self.load_text(new_text)

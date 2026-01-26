@@ -7966,7 +7966,9 @@ Type your question and press Enter to ask the agents.
 
                 # Use different text_class for thinking vs content
                 # This affects how TimelineSection labels the CollapsibleTextCard
-                text_class = "thinking-inline" if raw_type == "thinking" else "content-inline"
+                # NOTE: Use normalized.content_type instead of raw_type to ensure
+                # consistent labeling even if the backend sent a different content_type
+                text_class = "thinking-inline" if normalized.content_type == "thinking" else "content-inline"
 
                 def write_line(line: str):
                     # Phase 12: Pass round_number for CSS visibility
@@ -7980,7 +7982,8 @@ Type your question and press Enter to ask the agents.
                 self.current_line_label.update(Text(self._line_buffer))
             except Exception:
                 # Fallback to legacy RichLog
-                if raw_type == "thinking":
+                # Use normalized.content_type for consistency
+                if normalized.content_type == "thinking":
                     self._line_buffer = _process_line_buffer(
                         self._line_buffer,
                         cleaned,

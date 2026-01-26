@@ -1196,6 +1196,13 @@ class TimelineSection(ScrollableContainer):
         is_thinking = "thinking" in text_class
         is_content = "content" in text_class and "content-inline" in text_class
 
+        # Debug logging for routing
+        content_preview = content[:50].replace("\n", "\\n")
+        with open("/tmp/tui_debug.log", "a") as f:
+            f.write(
+                f"DEBUG add_text: text_class='{text_class}', is_thinking={is_thinking}, " f"is_content={is_content}, content_preview={content_preview}\n",
+            )
+
         if is_thinking:
             self.add_reasoning(content, round_number=round_number, label="Thinking")
             return
@@ -1291,6 +1298,15 @@ class TimelineSection(ScrollableContainer):
         This ends the accumulation of content into a single card, so the next
         content will start a new batch.
         """
+        # Debug logging for reasoning batch closure
+        if self._current_reasoning_card is not None:
+            import traceback
+
+            with open("/tmp/tui_debug.log", "a") as f:
+                f.write(f"DEBUG _close_reasoning_batch: CLOSING card={self._current_reasoning_card.id}, label={self._current_batch_label}\n")
+                f.write("       Stack trace:\n")
+                for line in traceback.format_stack()[-5:-1]:
+                    f.write(f"       {line.strip()}\n")
         self._current_reasoning_card = None
         self._current_batch_label = None
 
@@ -1310,18 +1326,32 @@ class TimelineSection(ScrollableContainer):
         if not content.strip():
             return
 
+        # Debug logging for reasoning batching
+        content_preview = content[:50].replace("\n", "\\n")
+        with open("/tmp/tui_debug.log", "a") as f:
+            f.write(
+                f"DEBUG add_reasoning: label={label}, current_card={self._current_reasoning_card is not None}, " f"current_label={self._current_batch_label}, content_preview={content_preview}\n",
+            )
+
         try:
             # Close batch if label changed
             if self._current_reasoning_card is not None and self._current_batch_label != label:
+                with open("/tmp/tui_debug.log", "a") as f:
+                    f.write(f"DEBUG add_reasoning: LABEL CHANGED from {self._current_batch_label} to {label}, closing batch\n")
                 self._close_reasoning_batch()
 
             if self._current_reasoning_card is not None:
                 # Append to existing batch
+                with open("/tmp/tui_debug.log", "a") as f:
+                    f.write(f"DEBUG add_reasoning: APPENDING to existing card={self._current_reasoning_card.id}\n")
                 self._current_reasoning_card.append_content(content)
             else:
                 # Start new batch
                 self._item_count += 1
                 widget_id = f"tl_reasoning_{self._item_count}"
+
+                with open("/tmp/tui_debug.log", "a") as f:
+                    f.write(f"DEBUG add_reasoning: CREATING NEW card={widget_id} with label={label}\n")
 
                 self._current_reasoning_card = CollapsibleTextCard(
                     content,
@@ -1334,8 +1364,9 @@ class TimelineSection(ScrollableContainer):
                 self.mount(self._current_reasoning_card)
 
             self._auto_scroll()
-        except Exception:
-            pass
+        except Exception as e:
+            with open("/tmp/tui_debug.log", "a") as f:
+                f.write(f"DEBUG add_reasoning: EXCEPTION {e}\n")
 
     def add_widget(self, widget, round_number: int = 1) -> None:
         """Add a generic widget to the timeline.
@@ -2281,11 +2312,15 @@ class FinalPresentationCard(Vertical):
         self._is_streaming = True
         self._post_eval_expanded = False
         self._post_eval_status = "none"  # none, evaluating, verified
+        self._text_widget: Optional[Static] = None  # Direct reference to text widget
         self.add_class("streaming")
 
     def compose(self) -> ComposeResult:
         from textual.containers import Horizontal, ScrollableContainer
         from textual.widgets import Button, Label
+
+        with open("/tmp/tui_debug.log", "a") as f:
+            f.write("DEBUG FinalPresentationCard.compose: STARTING\n")
 
         # Header section
         with Vertical(id="final_card_header"):
@@ -2293,8 +2328,14 @@ class FinalPresentationCard(Vertical):
             yield Label(self._build_vote_summary(), id="final_card_votes")
 
         # Content section with Static text (scrollable)
+        # NOTE: markup=False to avoid Rich markup parsing issues with special characters
+        # Store direct reference for faster updates
+        self._text_widget = Static("", id="final_card_text", markup=False)
         with ScrollableContainer(id="final_card_content"):
-            yield Static("", id="final_card_text", markup=True)
+            yield self._text_widget
+
+        with open("/tmp/tui_debug.log", "a") as f:
+            f.write("DEBUG FinalPresentationCard.compose: DONE, _text_widget set\n")
 
         # Post-evaluation section (hidden until post-eval content arrives)
         with Vertical(id="final_card_post_eval", classes="hidden"):
@@ -2340,42 +2381,105 @@ class FinalPresentationCard(Vertical):
         Args:
             chunk: Text chunk to append
         """
+        # Debug logging
+        with open("/tmp/tui_debug.log", "a") as f:
+            chunk_preview = chunk[:50].replace("\n", "\\n") if chunk else "None"
+            f.write(
+                f"DEBUG FinalPresentationCard.append_chunk: chunk_len={len(chunk) if chunk else 0}, "
+                f"is_mounted={self.is_mounted}, accumulated={len(self._final_content)}, preview={chunk_preview}\n",
+            )
+
         if not chunk:
             return
 
         # Always accumulate content first (even if widget not ready yet)
         self._final_content.append(chunk)
 
-        # Check if widget is mounted yet
-        if not self.is_mounted:
-            return  # Content will be displayed on mount via _flush_pending_content
+        # Try to update the widget directly
+        if not self._try_update_text():
+            # Widget not ready - compose might not have run yet
+            # Try to force recompose and schedule retry
+            try:
+                if self._text_widget is None:
+                    # Compose hasn't run - try to trigger it
+                    self.recompose()
+                self.set_timer(0.1, self._try_update_text)
+            except Exception:
+                pass  # Ignore if timer/recompose can't be set
 
+    def _try_update_text(self) -> bool:
+        """Try to update the text widget with accumulated content.
+
+        Called after each chunk arrives. Silently fails if widget not ready yet.
+
+        Returns:
+            True if update succeeded, False if widget not ready.
+        """
+        if not self._final_content:
+            return True  # Nothing to update
+
+        full_text = "".join(self._final_content)
+
+        # Use direct reference if available (set in compose)
+        if self._text_widget is not None:
+            try:
+                with open("/tmp/tui_debug.log", "a") as f:
+                    f.write(f"DEBUG FinalPresentationCard._try_update_text: SUCCESS (direct ref) updating with {len(full_text)} chars\n")
+                self._text_widget.update(full_text)
+                self._text_widget.refresh()
+                return True
+            except Exception as e:
+                with open("/tmp/tui_debug.log", "a") as f:
+                    f.write(f"DEBUG FinalPresentationCard._try_update_text: direct ref failed ({e})\n")
+
+        # Fallback to query
         try:
             text_widget = self.query_one("#final_card_text", Static)
-
-            # Update the Static widget with all accumulated content
-            full_text = "".join(self._final_content)
+            with open("/tmp/tui_debug.log", "a") as f:
+                f.write(f"DEBUG FinalPresentationCard._try_update_text: SUCCESS (query) updating with {len(full_text)} chars\n")
             text_widget.update(full_text)
+            text_widget.refresh()
+            return True
+        except Exception:
+            pass
 
-            # Auto-scroll to show latest content
-            try:
-                content = self.query_one("#final_card_content", ScrollableContainer)
-                content.scroll_end(animate=False)
-            except Exception:
-                pass
-
+        # Last resort: manually create the text widget if compose didn't run
+        try:
+            # Check if we have any children at all
+            if not list(self.children):
+                with open("/tmp/tui_debug.log", "a") as f:
+                    f.write("DEBUG FinalPresentationCard._try_update_text: NO CHILDREN - compose didn't run, creating manually\n")
+                # Create a simple Static widget directly
+                self._text_widget = Static(full_text, id="final_card_text_manual", markup=False)
+                self.mount(self._text_widget)
+                return True
+            else:
+                with open("/tmp/tui_debug.log", "a") as f:
+                    f.write(f"DEBUG FinalPresentationCard._try_update_text: has {len(list(self.children))} children but can't find text widget\n")
         except Exception as e:
-            logger.error(f"FinalPresentationCard.append_chunk error: {e}")
+            with open("/tmp/tui_debug.log", "a") as f:
+                f.write(f"DEBUG FinalPresentationCard._try_update_text: manual creation failed ({e})\n")
+
+        return False
 
     def on_mount(self) -> None:
         """Flush any pending content when the widget is mounted."""
+        # Debug logging
+        with open("/tmp/tui_debug.log", "a") as f:
+            f.write(
+                f"DEBUG FinalPresentationCard.on_mount: CALLED! pending={len(self._final_content)}, " f"chars={sum(len(c) for c in self._final_content)}\n",
+            )
+
+        # Flush any buffered content that arrived before mount
+        self._try_update_text()
+
+    def _on_compose(self) -> None:
+        """Called after compose() completes - use this to flush content."""
+        with open("/tmp/tui_debug.log", "a") as f:
+            f.write(f"DEBUG FinalPresentationCard._on_compose: CALLED! pending={len(self._final_content)}\n")
+        # Try to update after compose completes
         if self._final_content:
-            try:
-                text_widget = self.query_one("#final_card_text", Static)
-                full_text = "".join(self._final_content)
-                text_widget.update(full_text)
-            except Exception as e:
-                logger.error(f"FinalPresentationCard.on_mount flush error: {e}")
+            self._try_update_text()
 
     def complete(self) -> None:
         """Mark the presentation as complete and show action buttons."""

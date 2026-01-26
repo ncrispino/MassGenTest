@@ -75,10 +75,6 @@ class ExecutionStatusLine(Widget):
         self._agent_states: Dict[str, str] = {aid: "idle" for aid in agent_ids}
         self._pulse_timer = None
 
-        # Hide if single agent (no need for multi-agent status)
-        if len(agent_ids) <= 1:
-            self.add_class("hidden")
-
     def on_mount(self) -> None:
         """Start the pulse animation timer."""
         self._pulse_timer = self.set_interval(0.3, self._advance_pulse)
