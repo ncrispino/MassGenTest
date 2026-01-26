@@ -31,6 +31,9 @@ class CollapsibleTextCard(Static):
     Shows last N chunks when collapsed with "(+N chunks above)" indicator at top.
     Click to expand/collapse. Pattern matches ToolBatchCard's "show newest" UX.
 
+    Uses border-left styling matching ToolCallCard. All indentation is handled
+    via CSS padding-left so wrapped lines align correctly.
+
     Attributes:
         content: The full text content.
         label: Label shown in header ("Thinking" or "Content").
@@ -89,17 +92,20 @@ class CollapsibleTextCard(Static):
         return self._build_content()
 
     def _render_chunk(self, text: Text, chunk: str) -> None:
-        """Render a single chunk of content with indentation for visual hierarchy."""
+        """Render a single chunk of content.
+
+        No manual indentation - CSS padding-left handles alignment for all lines
+        including wrapped ones.
+        """
         for line in chunk.split("\n"):
             if line:  # Skip completely empty lines
-                # Add 4-space indent to show content belongs under header
-                text.append(f"\n    {line}", style="dim #9ca3af")
+                text.append(f"\n{line}", style="dim #9ca3af")
 
     def _build_content(self) -> Text:
         """Build the Rich Text content for display."""
         text = Text()
 
-        # Expand indicator and label
+        # Expand indicator and label (on first line)
         indicator = "▾" if self._expanded else "▸"
         text.append(f"{indicator} ", style="dim")
         text.append(f"[{self._label}]", style="dim italic #8b949e")
@@ -119,7 +125,7 @@ class CollapsibleTextCard(Static):
                 # Add separator or blank line between chunks (not after last)
                 if i < total_chunks - 1:
                     if show_separators:
-                        text.append(f"\n    {self.CHUNK_SEPARATOR}", style="dim #484f58")
+                        text.append(f"\n{self.CHUNK_SEPARATOR}", style="dim #484f58")
                     else:
                         # Blank line between content chunks for readability
                         text.append("\n")
@@ -127,7 +133,7 @@ class CollapsibleTextCard(Static):
             # Show "(+N chunks above)" at TOP if truncated
             if total_chunks > self.COLLAPSED_CHUNK_COUNT:
                 hidden = total_chunks - self.COLLAPSED_CHUNK_COUNT
-                text.append(f"\n    (+{hidden} chunks above)", style="dim italic #6e7681")
+                text.append(f"\n(+{hidden} chunks above)", style="dim italic #6e7681")
 
             # Show LAST N chunks (tail) - newest content visible
             visible_chunks = self._chunks[-self.COLLAPSED_CHUNK_COUNT :]
@@ -135,7 +141,7 @@ class CollapsibleTextCard(Static):
                 # Add separator or blank line before chunk (except first visible)
                 if i > 0:
                     if show_separators:
-                        text.append(f"\n    {self.CHUNK_SEPARATOR}", style="dim #484f58")
+                        text.append(f"\n{self.CHUNK_SEPARATOR}", style="dim #484f58")
                     else:
                         # Blank line between content chunks for readability
                         text.append("\n")

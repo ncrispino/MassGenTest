@@ -2662,14 +2662,15 @@ ToolBatchCard #batch-content {
 
 /* === Collapsible Text Cards === */
 /* Collapsible blocks for long reasoning/content text */
+/* Static widget with border-left, matching ToolCallCard pattern */
 
 CollapsibleTextCard {
     width: 100%;
     height: auto;
-    padding: 0 1 0 4;  /* top right bottom left - 4 chars left indent for wrapped text */
-    margin: 1 0;
+    padding: 0 1 0 2;
+    margin: 1 0 1 1;  /* Match ToolCallCard margin for alignment */
     background: transparent;
-    border-left: solid $border-subtle;
+    border-left: thick $border-subtle;
     transition: opacity 300ms out_expo;
 }
 
@@ -2684,7 +2685,7 @@ CollapsibleTextCard.appeared {
 
 CollapsibleTextCard:hover {
     background: $bg-surface;
-    border-left: solid $border-default;
+    border-left: solid $border-highlight;
 }
 
 CollapsibleTextCard:focus {
@@ -2698,9 +2699,14 @@ CollapsibleTextCard.expanded {
     background: $bg-card;
 }
 
-/* Content cards need extra spacing when following Thinking cards */
+/* Thinking cards - lighter muted gray vertical line */
+CollapsibleTextCard.label-thinking {
+    border-left: solid #7d8590;
+}
+
+/* Content cards - slightly different muted gray vertical line */
 CollapsibleTextCard.label-content {
-    margin-top: 2;
+    border-left: solid #6e7681;
 }
 
 /* === Content Sections === */
@@ -2795,7 +2801,6 @@ TimelineSection .timeline-text.thinking {
 TimelineSection .timeline-text.reasoning-inline,
 TimelineSection .timeline-text.thinking-inline {
     color: #6e7681;
-    border-left: none;
     padding: 0 0 0 2;
     margin: 0 0 0 1;
     text-style: italic;
