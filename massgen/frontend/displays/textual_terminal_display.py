@@ -99,6 +99,7 @@ try:
         ToolCallCard,
         ToolDetailModal,
         ToolSection,
+        ViewPlanRequested,
         ViewSelected,
     )
     from .tui_modes import TuiModeState
@@ -2283,7 +2284,9 @@ class TextualTerminalDisplay(TerminalDisplay):
 
             # Copy workspace to frozen - use the parent of plan_path as workspace source
             workspace_source = approval.plan_path.parent
-            storage.finalize_planning_phase(session, workspace_source)
+            # Use context paths captured during planning phase
+            context_paths = mode_state.planning_context_paths or []
+            storage.finalize_planning_phase(session, workspace_source, context_paths=context_paths)
 
             # Update mode state for execution
             mode_state.plan_mode = "execute"
@@ -3609,9 +3612,23 @@ if TEXTUAL_AVAILABLE:
             """
             text = submitted_text.strip() if submitted_text else self.question_input.text.strip()
             tui_log(f"_submit_question called with text: '{text[:50]}...' (len={len(text)})")
-            if not text:
-                tui_log("  Empty text, returning")
+
+            # In execute mode, allow empty submission (just press Enter to run the plan)
+            is_execute_mode = self._mode_state.plan_mode == "execute"
+            if not text and not is_execute_mode:
+                tui_log("  Empty text and not execute mode, returning")
                 return
+
+            # Hide plan options popover on submission (especially for execute mode)
+            if hasattr(self, "_plan_options_popover") and "visible" in self._plan_options_popover.classes:
+                self._plan_options_popover.hide()
+
+            # In execute mode, set up plan execution
+            if is_execute_mode:
+                text = self._setup_plan_execution(text)
+                if text is None:
+                    # Setup failed, error already shown
+                    return
 
             # Clear any persistent cancelled state when user starts a new turn
             self._clear_cancelled_state()
@@ -5366,6 +5383,20 @@ Type your question and press Enter to ask the agents.
                 self.notify("Broadcast: Fully autonomous (no questions)", severity="warning", timeout=2)
             event.stop()
 
+        def on_view_plan_requested(self, event: ViewPlanRequested) -> None:
+            """Handle request to view full plan details in a modal."""
+            tui_log(f"on_view_plan_requested: plan_id={event.plan_id}, tasks={len(event.tasks)}")
+
+            if not event.tasks:
+                self.notify("No tasks in this plan", severity="warning", timeout=2)
+                event.stop()
+                return
+
+            # Open TaskPlanModal with the plan's tasks
+            modal = TaskPlanModal(tasks=event.tasks)
+            self.push_screen(modal)
+            event.stop()
+
         def _update_plan_options_popover_state(self) -> None:
             """Update the plan options popover internal state (without recompose)."""
             if not hasattr(self, "_plan_options_popover"):
@@ -5388,6 +5419,158 @@ Type your question and press Enter to ask the agents.
             except Exception as e:
                 tui_log(f"_update_plan_options_popover_state error: {e}")
 
+        def _enter_execute_mode(self) -> None:
+            """Enter execute mode and show plan selector if plans exist.
+
+            Called from action_toggle_plan_mode when transitioning from plan → execute.
+            If no plans exist, stays in plan mode and shows a warning.
+            """
+            tui_log("_enter_execute_mode - START")
+
+            try:
+                from massgen.plan_storage import PlanStorage
+
+                storage = PlanStorage()
+                plans = storage.get_all_plans(limit=10)
+                tui_log(f"  -> found {len(plans)} plans")
+
+                if not plans:
+                    # No plans available - stay in plan mode
+                    # Revert mode bar if it was already set to "execute"
+                    if self._mode_bar:
+                        self._mode_bar.set_plan_mode("plan")
+                    self.notify(
+                        "No plans available. Create one first by submitting a query in Plan mode.",
+                        severity="warning",
+                        timeout=3,
+                    )
+                    tui_log("  -> no plans, staying in plan mode")
+                    return
+
+                # Set execute mode
+                self._mode_state.plan_mode = "execute"
+                if self._mode_bar:
+                    self._mode_bar.set_plan_mode("execute")
+
+                # Update input placeholder for execute mode
+                if hasattr(self, "question_input"):
+                    self.question_input.placeholder = "Press Enter to execute selected plan • or type instructions"
+
+                # Show the plan selector popover
+                self._show_plan_selector_popover(plans)
+
+                self.notify("Execute Mode: Select a plan to run", severity="information", timeout=3)
+                tui_log("_enter_execute_mode - END (success)")
+
+            except Exception as e:
+                tui_log(f"_enter_execute_mode error: {e}")
+                self.notify(f"Error loading plans: {e}", severity="error", timeout=3)
+
+        def _show_plan_selector_popover(self, plans: list) -> None:
+            """Show the plan options popover configured for execute mode.
+
+            Args:
+                plans: List of available PlanSession objects.
+            """
+            tui_log(f"_show_plan_selector_popover: {len(plans)} plans")
+
+            if not hasattr(self, "_plan_options_popover"):
+                tui_log("  -> popover does not exist!")
+                return
+
+            popover = self._plan_options_popover
+
+            # Update popover state for execute mode
+            popover._plan_mode = "execute"
+            popover._available_plans = plans
+            popover._current_plan_id = self._mode_state.selected_plan_id
+
+            # Reset initialized flag before recompose to ignore spurious events
+            popover._initialized = False
+            tui_log("  -> set _initialized=False, calling refresh(recompose=True)")
+
+            # Recompose to show execute mode UI (plan selector)
+            popover.refresh(recompose=True)
+
+            # Show popover after recompose completes
+            self.call_later(popover.show)
+            tui_log("  -> called call_later(popover.show)")
+
+        def _setup_plan_execution(self, user_text: str) -> Optional[str]:
+            """Set up plan execution and return the execution prompt.
+
+            Called from _submit_question when in execute mode.
+
+            Args:
+                user_text: User's input text (may be empty or contain instructions).
+
+            Returns:
+                The execution prompt to submit, or None if setup failed.
+            """
+            tui_log(f"_setup_plan_execution: user_text='{user_text[:50] if user_text else '(empty)'}'")
+
+            try:
+                from massgen.plan_execution import build_execution_prompt
+                from massgen.plan_storage import PlanStorage
+
+                # Get the selected plan
+                plan_id = self._mode_state.selected_plan_id
+                storage = PlanStorage()
+                plans = storage.get_all_plans(limit=10)
+
+                if not plans:
+                    self.notify("No plans available to execute", severity="error", timeout=3)
+                    tui_log("  -> no plans available")
+                    return None
+
+                # Find the plan to execute
+                if plan_id and plan_id != "latest":
+                    # Find specific plan
+                    plan = None
+                    for p in plans:
+                        if p.plan_id == plan_id:
+                            plan = p
+                            break
+                    if not plan:
+                        self.notify(f"Plan '{plan_id}' not found", severity="error", timeout=3)
+                        tui_log(f"  -> plan not found: {plan_id}")
+                        return None
+                else:
+                    # Use latest plan
+                    plan = plans[0]
+
+                tui_log(f"  -> using plan: {plan.plan_id}")
+
+                # Set the plan session on mode state (needed for workspace setup)
+                self._mode_state.plan_session = plan
+
+                # Load metadata to get the original planning prompt
+                try:
+                    metadata = plan.load_metadata()
+                    original_question = getattr(metadata, "planning_prompt", None) or user_text or "Execute the plan"
+                except Exception:
+                    original_question = user_text or "Execute the plan"
+
+                # If user provided additional instructions, append them
+                if user_text:
+                    execution_prompt = build_execution_prompt(f"{original_question}\n\nAdditional instructions: {user_text}")
+                else:
+                    execution_prompt = build_execution_prompt(original_question)
+
+                tui_log(f"  -> execution_prompt: {execution_prompt[:100]}...")
+
+                # Reset placeholder since we're leaving execute mode conceptually
+                if hasattr(self, "question_input"):
+                    self.question_input.placeholder = "Enter to submit • Shift+Enter for newline • @ for files • Ctrl+G help"
+
+                self.notify("Executing plan...", severity="information", timeout=3)
+                return execution_prompt
+
+            except Exception as e:
+                tui_log(f"_setup_plan_execution error: {e}")
+                self.notify(f"Failed to set up plan execution: {e}", severity="error", timeout=3)
+                return None
+
         def _handle_plan_mode_change(self, mode: str) -> None:
             """Handle plan mode toggle.
 
@@ -5395,18 +5578,28 @@ Type your question and press Enter to ask the agents.
                 mode: "normal", "plan", or "execute".
             """
             tui_log(f"_handle_plan_mode_change: {mode}")
-            self._mode_state.plan_mode = mode
-
-            # Sync mode bar state (ensures settings button visibility, etc.)
-            if self._mode_bar:
-                self._mode_bar.set_plan_mode(mode)
 
             if mode == "plan":
+                self._mode_state.plan_mode = mode
+                if self._mode_bar:
+                    self._mode_bar.set_plan_mode(mode)
                 self.notify("Plan Mode: ON - Submit query to create plan", severity="information", timeout=3)
+            elif mode == "execute":
+                # Entering execute mode - use helper which handles plan loading and popover
+                # Note: The mode bar already shows "execute", but _enter_execute_mode
+                # may revert to "plan" if no plans exist
+                self._enter_execute_mode()
             elif mode == "normal":
                 self._mode_state.reset_plan_state()
+                if self._mode_bar:
+                    self._mode_bar.set_plan_mode(mode)
+                # Hide popover if visible
+                if hasattr(self, "_plan_options_popover") and "visible" in self._plan_options_popover.classes:
+                    self._plan_options_popover.hide()
+                # Reset input placeholder
+                if hasattr(self, "question_input"):
+                    self.question_input.placeholder = "Enter to submit • Shift+Enter for newline • @ for files • Ctrl+G help"
                 self.notify("Plan Mode: OFF", severity="information", timeout=2)
-            # "execute" mode is set programmatically, not via toggle
 
         def _handle_agent_mode_change(self, mode: str) -> None:
             """Handle agent mode toggle.
@@ -5472,7 +5665,7 @@ Type your question and press Enter to ask the agents.
 
         @keyboard_action
         def action_toggle_plan_mode(self) -> None:
-            """Toggle plan mode on/off (F5 shortcut)."""
+            """Toggle plan mode: normal → plan → execute → normal (Shift+Tab shortcut)."""
             tui_log("action_toggle_plan_mode")
 
             # Block during execution (keyboard_action decorator handles this,
@@ -5486,16 +5679,26 @@ Type your question and press Enter to ask the agents.
                 return
 
             if self._mode_state.plan_mode == "normal":
+                # normal → plan
                 self._mode_state.plan_mode = "plan"
                 if self._mode_bar:
                     self._mode_bar.set_plan_mode("plan")
                 self.notify("Plan Mode: ON - Submit query to create plan", severity="information", timeout=3)
             elif self._mode_state.plan_mode == "plan":
-                self._mode_state.plan_mode = "normal"
+                # plan → execute (show plan selector if plans exist)
+                self._enter_execute_mode()
+            elif self._mode_state.plan_mode == "execute":
+                # execute → normal
+                self._mode_state.reset_plan_state()
                 if self._mode_bar:
                     self._mode_bar.set_plan_mode("normal")
+                # Hide popover if visible
+                if hasattr(self, "_plan_options_popover") and "visible" in self._plan_options_popover.classes:
+                    self._plan_options_popover.hide()
+                # Reset input placeholder
+                if hasattr(self, "question_input"):
+                    self.question_input.placeholder = "Enter to submit • Shift+Enter for newline • @ for files • Ctrl+G help"
                 self.notify("Plan Mode: OFF", severity="information", timeout=2)
-            # In execute mode, F5 does nothing
 
         @keyboard_action
         def action_trigger_override(self) -> None:
