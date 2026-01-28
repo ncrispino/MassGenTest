@@ -12,7 +12,7 @@ build:
   jobs:
     post_build:
       # Copy case_studies folder after Sphinx build completes
-      - cp -r docs/source/case_studies $READTHEDOCS_OUTPUT/html/ || echo "case_studies not found, skipping"
+      - cp -r docs/source/examples/case_studies $READTHEDOCS_OUTPUT/html/ || echo "case_studies not found, skipping"
   # commands:
   #   # Install uv
   #   - pip install uv
