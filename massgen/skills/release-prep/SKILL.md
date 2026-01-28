@@ -351,7 +351,61 @@ cd docs
 make linkcheck
 ```
 
-### 10. Generate Announcement
+### 10. Write Release Notes
+
+Create `RELEASE_NOTES_v0.1.X.md` following the established format from previous releases.
+
+**Format reference:** Check the previous release on GitHub:
+```bash
+gh release view v0.1.43
+```
+
+**Template structure:**
+```markdown
+# 🚀 Release Highlights — v0.1.X (YYYY-MM-DD)
+
+### 🎯 [Feature Name](https://docs.massgen.ai/en/latest/path/to/docs.html)
+- **Bullet Point**: Description
+- **Bullet Point**: Description
+
+### 📚 [Another Feature](https://docs.massgen.ai/en/latest/path/to/docs.html)
+- **Bullet Point**: Description
+
+### 🔧 Bug Fixes
+- **Fix Description**: What was fixed
+
+---
+
+### 📖 Getting Started
+- [**Quick Start Guide**](https://github.com/massgen/MassGen?tab=readme-ov-file#1--installation): Try the new features today
+- **Try Feature Name**:
+
+```bash
+# Example command showing the new feature
+uv run massgen [example command]
+```
+
+## What's Changed
+* PR title by @author in PR_URL
+* PR title by @author in PR_URL
+
+**Full Changelog**: https://github.com/massgen/MassGen/compare/v0.1.X-1...v0.1.X
+```
+
+**Get PRs for What's Changed:**
+```bash
+gh pr list --base dev/v0.1.X --state merged --json number,title,url,author \
+  | jq -r '.[] | "* \(.title) by @\(.author.login) in \(.url)"'
+```
+
+**Important:**
+- Use emoji section headers (🚀 🔄 📚 ⚡ 🔧 📖)
+- Link feature names to relevant docs (verify links are accurate!)
+- Include practical example commands
+- List all merged PRs in "What's Changed"
+- Add "Full Changelog" comparison link
+
+### 11. Generate Announcement
 
 Create `docs/announcements/current-release.md`:
 
