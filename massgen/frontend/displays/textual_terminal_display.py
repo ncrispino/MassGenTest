@@ -3633,20 +3633,12 @@ if TEXTUAL_AVAILABLE:
             if hasattr(self, "_plan_options_popover") and "visible" in self._plan_options_popover.classes:
                 self._plan_options_popover.hide()
 
-            # In execute mode, set up plan execution
-            if is_execute_mode:
-                text = self._setup_plan_execution(text)
-                if text is None:
-                    # Setup failed, error already shown
-                    return
-
             # Clear any persistent cancelled state when user starts a new turn
             self._clear_cancelled_state()
 
-            self.question_input.clear()
-
-            # During execution, queue input for injection (except slash commands)
-            # User must cancel (Ctrl+C) first if they want to start a new turn
+            # CRITICAL: Check execution status FIRST before execute mode
+            # During active execution, queue input (don't trigger new plan execution)
+            # Execute mode is auto-cleared by end_turn() after execution completes
             is_executing = self._is_execution_in_progress()
             has_hook = self._human_input_hook is not None
             phase = self._status_bar._current_phase if self._status_bar else "unknown"
@@ -3656,6 +3648,16 @@ if TEXTUAL_AVAILABLE:
                 tui_log("  -> Queueing input for injection")
                 self._queue_human_input(text)
                 return
+
+            # In execute mode (and NOT currently executing), set up plan execution
+            if is_execute_mode:
+                text = self._setup_plan_execution(text)
+                if text is None:
+                    # Setup failed, error already shown
+                    return
+
+            # Clear input after determining routing (queued input was already cleared)
+            self.question_input.clear()
 
             tui_log("  -> Submitting as new turn")
 

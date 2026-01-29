@@ -946,8 +946,8 @@ class TimelineSection(ScrollableContainer):
 
         try:
             self.mount(card)
+            self._trim_old_items()  # Keep timeline size bounded (do before scroll)
             self._auto_scroll()
-            self._trim_old_items()  # Keep timeline size bounded
         except Exception:
             pass
 
@@ -1049,8 +1049,8 @@ class TimelineSection(ScrollableContainer):
 
         try:
             self.mount(card)
+            self._trim_old_items()  # Keep timeline size bounded (do before scroll)
             self._auto_scroll()
-            self._trim_old_items()
         except Exception:
             pass
 
@@ -1219,6 +1219,7 @@ class TimelineSection(ScrollableContainer):
             self.mount(batch_card, after=existing_card)
             existing_card.remove()
             del self._tools[pending_tool_id]
+            self._trim_old_items()  # Keep timeline size bounded (do before scroll)
             self._auto_scroll()
         except Exception:
             pass
@@ -1341,8 +1342,8 @@ class TimelineSection(ScrollableContainer):
             widget.add_class(f"round-{round_number}")
 
             self.mount(widget)
+            self._trim_old_items()  # Keep timeline size bounded (do before scroll)
             self._auto_scroll()
-            self._trim_old_items()  # Keep timeline size bounded
         except Exception:
             pass
 
@@ -1390,8 +1391,8 @@ class TimelineSection(ScrollableContainer):
             logger.debug(f"TimelineSection.add_separator: Adding widget for round {round_number}")
 
             self.mount(widget)
+            self._trim_old_items()  # Keep timeline size bounded (do before scroll)
             self._auto_scroll()
-            self._trim_old_items()  # Keep timeline size bounded
             logger.debug(f"TimelineSection.add_separator: Successfully mounted {widget_id}")
         except Exception as e:
             # Log the error but don't crash
@@ -1447,6 +1448,7 @@ class TimelineSection(ScrollableContainer):
                 self._current_reasoning_card.add_class(f"round-{round_number}")
                 self._current_batch_label = label
                 self.mount(self._current_reasoning_card)
+                self._trim_old_items()  # Keep timeline size bounded (do before scroll)
 
             self._auto_scroll()
         except Exception:
