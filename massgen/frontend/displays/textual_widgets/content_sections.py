@@ -1483,6 +1483,10 @@ class TimelineSection(ScrollableContainer):
         Args:
             add_round_1: If True, add a "Round 1" separator after clearing (default: True)
         """
+        from massgen.logger_config import logger
+
+        logger.info(f"[TimelineSection] clear() called with add_round_1={add_round_1}")
+
         # Close any open reasoning batch
         self._close_reasoning_batch()
 
@@ -1493,26 +1497,50 @@ class TimelineSection(ScrollableContainer):
                 indicator = self.query_one("#scroll_mode_indicator", Static)
             except Exception:
                 pass
+            child_count_before = len(self.children)
             self.remove_children()
+            logger.info(f"[TimelineSection] Removed {child_count_before} children")
             if indicator:
                 self.mount(indicator)
-        except Exception:
-            pass
+                logger.info("[TimelineSection] Re-mounted scroll indicator")
+        except Exception as e:
+            logger.error(f"[TimelineSection] Error during clear: {e}", exc_info=True)
         self._tools.clear()
         self._batches.clear()  # Also clear batch tracking
         self._tool_to_batch.clear()  # Clear tool-to-batch mapping
         self._item_count = 0
+        logger.info("[TimelineSection] Cleared tracking dicts, reset _item_count to 0")
         # Reset truncation tracking to avoid stale state
         if hasattr(self, "_truncation_shown_rounds"):
             self._truncation_shown_rounds.clear()
 
         # Reset Round 1 shown flag
         self._round_1_shown = False
+        logger.info("[TimelineSection] Set _round_1_shown = False")
 
         # Add initial Round 1 separator
         if add_round_1:
+            logger.info("[TimelineSection] Adding initial Round 1 separator (from clear)")
             self._round_1_shown = True  # Set flag before adding to avoid re-entry
             self.add_separator("Round 1", round_number=1)
+            logger.info("[TimelineSection] Round 1 separator added (from clear)")
+
+    def reset_round_state(self) -> None:
+        """Reset round tracking state for a new turn."""
+        from massgen.logger_config import logger
+
+        logger.info("[TimelineSection] reset_round_state() called")
+        logger.info(f"[TimelineSection] Before reset: _viewed_round={self._viewed_round}, _round_1_shown={self._round_1_shown}")
+
+        self._viewed_round = 1
+        # NOTE: Don't reset _round_1_shown here - it's managed by clear() and prepare_for_new_turn()
+        # Resetting it here would cause duplicate "Round 1" separators
+        # Clear tools/batch tracking to prevent ID collisions
+        self._tools.clear()
+        self._batches.clear()
+        self._tool_to_batch.clear()
+
+        logger.info(f"[TimelineSection] After reset: _viewed_round={self._viewed_round}, _round_1_shown={self._round_1_shown}")
 
     def clear_tools_tracking(self) -> None:
         """Clear tools and batch tracking dicts without removing UI elements.

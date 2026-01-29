@@ -194,7 +194,7 @@ def _build_coordination_ui(ui_config: Dict[str, Any]) -> CoordinationUI:
         display_kwargs["skip_agent_selector"] = True
 
     return CoordinationUI(
-        display_type=ui_config.get("display_type", "rich_terminal"),
+        display_type=ui_config.get("display_type", "textual_terminal"),
         logging_enabled=ui_config.get("logging_enabled", True),
         enable_final_presentation=True,  # Ensures final presentation is generated/saved
         **display_kwargs,
@@ -7301,6 +7301,19 @@ async def main(args):
                 args.display,
                 "rich_terminal",
             )
+
+        # Deprecation warning for rich_terminal (unless explicitly overridden with --display rich)
+        if ui_config.get("display_type") == "rich_terminal" and not (args.display == "rich"):
+            import warnings
+
+            warnings.warn(
+                "display_type 'rich_terminal' is deprecated. The Textual TUI will be used instead. " "Update your config to use 'textual_terminal', or use '--display rich' to force Rich display.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            # Override to textual_terminal
+            ui_config["display_type"] = "textual_terminal"
+
         if args.no_logs:
             ui_config["logging_enabled"] = False
         if args.debug:
@@ -8254,7 +8267,7 @@ Environment Variables:
         type=str,
         choices=["rich", "textual"],
         default=None,
-        help="Display type: rich (default), textual (TUI)",
+        help="Display type: textual (default, recommended TUI), rich (legacy)",
     )
     parser.add_argument(
         "--textual-serve",

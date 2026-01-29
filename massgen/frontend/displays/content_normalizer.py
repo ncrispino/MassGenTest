@@ -547,14 +547,18 @@ class ContentNormalizer:
         if raw_type == "thinking":
             return "thinking"
 
+        if raw_type in ("reasoning", "reasoning_done", "reasoning_summary", "reasoning_summary_done"):
+            return "thinking"
+
         if raw_type == "content":
             return "content"
 
         # Auto-detect from content
-        if "[INJECTION]" in content or "injection" in raw_type:
+        raw_type_str = str(raw_type) if raw_type else ""
+        if "[INJECTION]" in content or "injection" in raw_type_str:
             return "injection"
 
-        if "[REMINDER]" in content or "reminder" in raw_type:
+        if "[REMINDER]" in content or "reminder" in raw_type_str:
             return "reminder"
 
         # Check if it looks like a tool event
