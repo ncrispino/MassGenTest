@@ -551,7 +551,7 @@ class TimelineSection(ScrollableContainer):
     """
 
     # Maximum number of items to keep in timeline (prevents memory/performance issues)
-    MAX_TIMELINE_ITEMS = 30  # Reduced from 75 - typical terminal shows ~10-15 items
+    MAX_TIMELINE_ITEMS = 10  # Lowered for debugging compression behavior
     SCROLL_DEBOUNCE_MS = 25  # Minimum gap between scroll operations (reduced for responsiveness)
     SCROLL_ANIMATION_THRESHOLD_MS = 300  # Threshold for animation vs instant scroll
 
@@ -575,7 +575,7 @@ class TimelineSection(ScrollableContainer):
         self._user_scrolled_up = False
         self._auto_scrolling = False
         self._scroll_pending = False
-        self._debug_scroll = False  # Debug flag (disabled for performance)
+        self._debug_scroll = True  # Debug flag (enabled for debugging compression)
         # Performance: Time-based scroll debouncing (QUICK-002)
         self._last_scroll_time: float = 0.0
         # Performance: Cancel previous timer before creating new one (QUICK-004)
@@ -687,6 +687,7 @@ class TimelineSection(ScrollableContainer):
 
     def _auto_scroll(self) -> None:
         """Scroll to end only if not in scroll mode."""
+        self._log(f"[AUTO_SCROLL] Called: scroll_mode={self._scroll_mode}, max_scroll_y={self.max_scroll_y:.2f}, scroll_y={self.scroll_y:.2f}")
         if self._scroll_mode:
             self._new_content_count += 1
             self._update_scroll_indicator()  # Update to show new content count
@@ -879,11 +880,18 @@ class TimelineSection(ScrollableContainer):
 
             total_items = len(content_children)
 
+            self._log(f"[TRIM] Starting trim: total_items={total_items}, MAX={self.MAX_TIMELINE_ITEMS}, max_scroll_y_before={self.max_scroll_y:.2f}")
+
             # If under limit, ensure all items are visible
             if total_items <= self.MAX_TIMELINE_ITEMS:
+                made_visible = False
                 for child in content_children:
                     if "viewport-culled" in child.classes:
                         child.remove_class("viewport-culled")
+                        made_visible = True
+
+                if made_visible:
+                    self._log("[TRIM] Made items visible")
                 return
 
             # Calculate how many to hide
@@ -892,25 +900,34 @@ class TimelineSection(ScrollableContainer):
             if items_to_hide <= 0:
                 return
 
+            self._log(f"[TRIM] Hiding {items_to_hide} items (keeping {self.MAX_TIMELINE_ITEMS})")
+
             # Hide oldest items (from the beginning) with viewport-culled class
+            hidden_count = 0
             for child in content_children[:items_to_hide]:
                 # Don't hide tool cards that are still running
                 if hasattr(child, "tool_id") and child.tool_id in self._tools:
                     tool_card = self._tools.get(child.tool_id)
                     if tool_card and hasattr(tool_card, "_status") and tool_card._status == "running":
+                        self._log(f"[TRIM] Skipping running tool: {child.tool_id}")
                         continue
 
                 # Add viewport-culled class to hide (display: none)
                 if "viewport-culled" not in child.classes:
                     child.add_class("viewport-culled")
+                    hidden_count += 1
 
             # Ensure remaining items are visible
+            shown_count = 0
             for child in content_children[items_to_hide:]:
                 if "viewport-culled" in child.classes:
                     child.remove_class("viewport-culled")
+                    shown_count += 1
 
-        except Exception:
-            pass
+            self._log(f"[TRIM] Actually hid {hidden_count} items, showed {shown_count} items")
+
+        except Exception as e:
+            self._log(f"[TRIM] Exception: {e}")
 
     def add_tool(self, tool_data: ToolDisplayData, round_number: int = 1) -> ToolCallCard:
         """Add a tool card to the timeline.
@@ -946,8 +963,13 @@ class TimelineSection(ScrollableContainer):
 
         try:
             self.mount(card)
-            self._trim_old_items()  # Keep timeline size bounded (do before scroll)
-            self._auto_scroll()
+
+            # Defer trim and scroll until after mount completes
+            def trim_and_scroll():
+                self._trim_old_items()
+                self._auto_scroll()
+
+            self.call_after_refresh(trim_and_scroll)
         except Exception:
             pass
 
@@ -1049,8 +1071,13 @@ class TimelineSection(ScrollableContainer):
 
         try:
             self.mount(card)
-            self._trim_old_items()  # Keep timeline size bounded (do before scroll)
-            self._auto_scroll()
+
+            # Defer trim and scroll until after mount completes
+            def trim_and_scroll():
+                self._trim_old_items()
+                self._auto_scroll()
+
+            self.call_after_refresh(trim_and_scroll)
         except Exception:
             pass
 
@@ -1219,8 +1246,13 @@ class TimelineSection(ScrollableContainer):
             self.mount(batch_card, after=existing_card)
             existing_card.remove()
             del self._tools[pending_tool_id]
-            self._trim_old_items()  # Keep timeline size bounded (do before scroll)
-            self._auto_scroll()
+
+            # Defer trim and scroll until after mount completes
+            def trim_and_scroll():
+                self._trim_old_items()
+                self._auto_scroll()
+
+            self.call_after_refresh(trim_and_scroll)
         except Exception:
             pass
 
@@ -1342,8 +1374,13 @@ class TimelineSection(ScrollableContainer):
             widget.add_class(f"round-{round_number}")
 
             self.mount(widget)
-            self._trim_old_items()  # Keep timeline size bounded (do before scroll)
-            self._auto_scroll()
+
+            # Defer trim and scroll until after mount completes
+            def trim_and_scroll():
+                self._trim_old_items()
+                self._auto_scroll()
+
+            self.call_after_refresh(trim_and_scroll)
         except Exception:
             pass
 
@@ -1391,8 +1428,13 @@ class TimelineSection(ScrollableContainer):
             logger.debug(f"TimelineSection.add_separator: Adding widget for round {round_number}")
 
             self.mount(widget)
-            self._trim_old_items()  # Keep timeline size bounded (do before scroll)
-            self._auto_scroll()
+
+            # Defer trim and scroll until after mount completes
+            def trim_and_scroll():
+                self._trim_old_items()
+                self._auto_scroll()
+
+            self.call_after_refresh(trim_and_scroll)
             logger.debug(f"TimelineSection.add_separator: Successfully mounted {widget_id}")
         except Exception as e:
             # Log the error but don't crash
@@ -1434,6 +1476,8 @@ class TimelineSection(ScrollableContainer):
             if self._current_reasoning_card is not None:
                 # Append to existing batch
                 self._current_reasoning_card.append_content(content)
+                # Just scroll for append case (no mount, no trim needed)
+                self._auto_scroll()
             else:
                 # Start new batch
                 self._item_count += 1
@@ -1448,9 +1492,13 @@ class TimelineSection(ScrollableContainer):
                 self._current_reasoning_card.add_class(f"round-{round_number}")
                 self._current_batch_label = label
                 self.mount(self._current_reasoning_card)
-                self._trim_old_items()  # Keep timeline size bounded (do before scroll)
 
-            self._auto_scroll()
+                # Defer trim and scroll until after mount completes
+                def trim_and_scroll():
+                    self._trim_old_items()
+                    self._auto_scroll()
+
+                self.call_after_refresh(trim_and_scroll)
         except Exception:
             pass
 
@@ -1473,7 +1521,8 @@ class TimelineSection(ScrollableContainer):
             self.mount(widget)
             self._log(f"Timeline items: {len(list(self.children))}")
             self._trim_old_items()  # Keep timeline size bounded (do before scroll)
-            self._auto_scroll()  # Scroll after trim to stay at bottom
+            # Defer scroll to ensure trim's layout refresh completes first
+            self.call_after_refresh(self._auto_scroll)
         except Exception:
             pass
 

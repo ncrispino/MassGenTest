@@ -99,12 +99,14 @@ TOOL_COMPLETE_PATTERNS = [
     r"^(\w+) completed",  # Tool name at start of line (not "Status changed to completed")
     r"Result from (\w+)",
     r"Results for Calling ([^\s:]+):\s*(.+)",  # MCP result pattern - capture tool name and result
+    r"[✅❌]\s*(mcp__\S+)\s+(?:completed|failed)",  # Claude Code backend completion format
 ]
 
 TOOL_FAILED_PATTERNS = [
     r"Tool ['\"]?(\w+)['\"]? failed",
     r"Error (?:in|from) (\w+)",
     r"(\w+) failed",
+    r"[❌]\s*(mcp__\S+)\s+failed",  # Claude Code backend failure format
 ]
 
 TOOL_INFO_PATTERNS = [
@@ -551,6 +553,20 @@ class ContentNormalizer:
             return "thinking"
 
         if raw_type == "content":
+            # Check if this "content" is actually a tool event (e.g., Claude Code
+            # backend emits tool completions as type="content")
+            tool_meta = ContentNormalizer.detect_tool_event(content)
+            if tool_meta:
+                if tool_meta.event == "start":
+                    return "tool_start"
+                elif tool_meta.event == "args":
+                    return "tool_args"
+                elif tool_meta.event == "complete":
+                    return "tool_complete"
+                elif tool_meta.event == "failed":
+                    return "tool_failed"
+                elif tool_meta.event == "info":
+                    return "tool_info"
             return "content"
 
         # Auto-detect from content

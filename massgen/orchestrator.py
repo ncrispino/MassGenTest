@@ -3181,6 +3181,13 @@ Your answer:"""
             # Check for cancellation after wait
             if hasattr(self, "cancellation_manager") and self.cancellation_manager and self.cancellation_manager.is_cancelled:
                 logger.info("Cancellation detected after asyncio.wait - cleaning up")
+                # Gracefully interrupt Claude Code backends before cancelling tasks
+                for agent_id, agent in self.agents.items():
+                    if hasattr(agent, "backend") and hasattr(agent.backend, "interrupt"):
+                        try:
+                            await agent.backend.interrupt()
+                        except Exception:
+                            pass
                 # Cancel remaining tasks
                 for task in active_tasks.values():
                     task.cancel()
@@ -5040,6 +5047,13 @@ Your answer:"""
 
         # Cancel and cleanup active tasks
         if hasattr(self, "_active_tasks") and self._active_tasks:
+            # Gracefully interrupt Claude Code backends before cancelling tasks
+            for agent_id, agent in self.agents.items():
+                if hasattr(agent, "backend") and hasattr(agent.backend, "interrupt"):
+                    try:
+                        await agent.backend.interrupt()
+                    except Exception:
+                        pass
             for agent_id, task in self._active_tasks.items():
                 if not task.done():
                     # Only track if not already tracked by timeout above

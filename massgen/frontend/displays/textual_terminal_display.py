@@ -1179,10 +1179,14 @@ class TextualTerminalDisplay(TerminalDisplay):
             return
 
         app_thread_id = getattr(self._app, "_thread_id", None)
-        if app_thread_id is not None and app_thread_id == threading.get_ident():
-            callback(*args, **kwargs)
-        else:
-            self._app.call_from_thread(callback, *args, **kwargs)
+        try:
+            if app_thread_id is not None and app_thread_id == threading.get_ident():
+                callback(*args, **kwargs)
+            else:
+                self._app.call_from_thread(callback, *args, **kwargs)
+        except RuntimeError:
+            # App is no longer running (e.g., early cancellation)
+            pass
 
     def set_input_handler(self, handler: Callable[[str], None]) -> None:
         """Set the callback for user-submitted input (questions or commands)"""
@@ -5268,7 +5272,6 @@ Type your question and press Enter to ask the agents.
             )
             self.push_screen(modal)
 
-        @keyboard_action
         def action_next_agent(self):
             """Switch to next agent tab, or select in dropdown if showing."""
             # If dropdown is showing, Tab selects the current item
@@ -5280,7 +5283,6 @@ Type your question and press Enter to ask the agents.
                 if next_agent:
                     self._switch_to_agent(next_agent)
 
-        @keyboard_action
         def action_prev_agent(self):
             """Switch to previous agent tab."""
             if self._tab_bar:
@@ -5288,7 +5290,6 @@ Type your question and press Enter to ask the agents.
                 if prev_agent:
                     self._switch_to_agent(prev_agent)
 
-        @keyboard_action
         def action_show_subagents(self):
             """Show subagent modal for first running subagent.
 
@@ -5978,17 +5979,14 @@ Type your question and press Enter to ask the agents.
             self.add_orchestrator_event(f"Keyboard safe mode {status}")
             self._update_safe_indicator()
 
-        @keyboard_action
         def action_agent_selector(self):
             """Show agent selector."""
             self.show_agent_selector()
 
-        @keyboard_action
         def action_coordination_table(self):
             """Show coordination table."""
             self._show_coordination_table_modal()
 
-        @keyboard_action
         def action_quit(self):
             """Quit the application."""
             self.exit()
@@ -6079,7 +6077,6 @@ Type your question and press Enter to ask the agents.
             """Show help modal (Ctrl+/ binding)."""
             self._show_help_modal()
 
-        @keyboard_action
         def action_open_vote_results(self):
             """Open vote results modal."""
             text = getattr(self, "_latest_vote_results_text", "")
@@ -6096,17 +6093,14 @@ Type your question and press Enter to ask the agents.
                 ),
             )
 
-        @keyboard_action
         def action_open_system_status(self):
             """Open system status log."""
             self._show_system_status_modal()
 
-        @keyboard_action
         def action_open_orchestrator(self):
             """Open orchestrator events modal."""
             self._show_orchestrator_modal()
 
-        @keyboard_action
         def action_open_agent_output(self):
             """Open full agent output modal for currently active agent."""
             agent_id = self._active_agent_id
@@ -6118,22 +6112,18 @@ Type your question and press Enter to ask the agents.
             else:
                 self.notify("No agent selected", severity="warning")
 
-        @keyboard_action
         def action_open_cost_breakdown(self):
             """Open cost breakdown modal."""
             self._show_cost_breakdown_modal()
 
-        @keyboard_action
         def action_open_metrics(self):
             """Open metrics modal."""
             self._show_metrics_modal()
 
-        @keyboard_action
         def action_show_shortcuts(self):
             """Show keyboard shortcuts modal."""
             self._show_modal_async(KeyboardShortcutsModal())
 
-        @keyboard_action
         def action_open_mcp_status(self):
             """Open MCP server status modal."""
             mcp_status = self._get_mcp_status()
@@ -6142,7 +6132,6 @@ Type your question and press Enter to ask the agents.
                 return
             self._show_modal_async(MCPStatusModal(mcp_status))
 
-        @keyboard_action
         def action_open_answer_browser(self):
             """Open answer browser modal."""
             if not self._answers:
@@ -6157,7 +6146,6 @@ Type your question and press Enter to ask the agents.
                 ),
             )
 
-        @keyboard_action
         def action_open_timeline(self):
             """Open timeline visualization modal."""
             if not self._answers and not self._votes:
@@ -6173,7 +6161,6 @@ Type your question and press Enter to ask the agents.
                 ),
             )
 
-        @keyboard_action
         def action_open_workspace_browser(self):
             """Open workspace browser modal to view answer snapshots."""
             from pathlib import Path
@@ -6319,7 +6306,6 @@ Type your question and press Enter to ask the agents.
                 ),
             )
 
-        @keyboard_action
         def action_open_unified_browser(self):
             """Open unified browser modal with tabs for Answers, Votes, Workspace, Timeline."""
             if not self._answers and not self._votes:
